@@ -1,0 +1,128 @@
+# CAPSULE Service SLO Alert Rules
+# 
+# SLO Targets:
+#   - Availability: 99.9% (43.2 min downtime/month)
+#   - P95 Latency (reads): < 100ms
+#   - P95 Latency (writes): < 200ms
+
+groups:
+  - name: capsule-slo-recording-rules
+    interval: 30s
+    rules:
+      # Error rate recording rules (multi-window)
+      - record: capsule:api:errors:rate5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="capsule-service", status=~"5.."}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="capsule-service"}[5m]))
+
+      - record: capsule:api:errors:rate30m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="capsule-service", status=~"5.."}[30m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="capsule-service"}[30m]))
+
+      - record: capsule:api:errors:rate1h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="capsule-service", status=~"5.."}[1h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="capsule-service"}[1h]))
+
+      - record: capsule:api:errors:rate6h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="capsule-service", status=~"5.."}[6h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="capsule-service"}[6h]))
+
+      # Latency recording rules
+      - record: capsule:api:latency:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application="capsule-service"}[5m])) by (le))
+
+      - record: capsule:api:latency:p99_5m
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{application="capsule-service"}[5m])) by (le))
+
+      # Per-tenant error rates
+      - record: capsule:tenant:errors:rate5m
+        expr: |
+          sum by (tenantId) (rate(http_server_requests_seconds_count{application="capsule-service", status=~"5..", tenantId!=""}[5m]))
+          /
+          sum by (tenantId) (rate(http_server_requests_seconds_count{application="capsule-service", tenantId!=""}[5m]))
+
+  - name: capsule-slo-alerts
+    rules:
+      # Fast burn alert: 14.4x burn rate, ~2 hours to exhaust monthly budget
+      - alert: CapsuleSLOFastBurn
+        expr: |
+          (capsule:api:errors:rate1h > (14.4 * 0.001))
+          and
+          (capsule:api:errors:rate5m > (14.4 * 0.001))
+        for: 2m
+        labels:
+          severity: critical
+          team: capsule
+          slo: availability
+          burn_rate: fast
+        annotations:
+          summary: "CAPSULE API fast error budget burn"
+          description: |
+            Error rate is consuming error budget at 14.4x sustainable rate.
+            Current 1h error rate: {{ printf "%.4f" $value }}
+            At this rate, monthly error budget will be exhausted in ~2 hours.
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#fast-burn"
+          dashboard_url: "https://grafana/d/capsule-slo"
+
+      # Slow burn alert: 3x burn rate, ~10 days to exhaust monthly budget
+      - alert: CapsuleSLOSlowBurn
+        expr: |
+          (capsule:api:errors:rate6h > (3 * 0.001))
+          and
+          (capsule:api:errors:rate30m > (3 * 0.001))
+        for: 15m
+        labels:
+          severity: warning
+          team: capsule
+          slo: availability
+          burn_rate: slow
+        annotations:
+          summary: "CAPSULE API slow error budget burn"
+          description: |
+            Error rate is consuming error budget at 3x sustainable rate.
+            Current 6h error rate: {{ printf "%.4f" $value }}
+            At this rate, monthly error budget will be exhausted in ~10 days.
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#slow-burn"
+          dashboard_url: "https://grafana/d/capsule-slo"
+
+      # Latency SLO breach
+      - alert: CapsuleLatencySLOBreach
+        expr: |
+          capsule:api:latency:p95_5m > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          team: capsule
+          slo: latency
+        annotations:
+          summary: "CAPSULE P95 latency exceeds 100ms SLO"
+          description: |
+            CAPSULE read operations P95 latency is {{ printf "%.3f" $value }}s, exceeding the 100ms SLO target.
+          runbook_url: "https://docs.butterfly/runbooks/high-latency#capsule"
+          dashboard_url: "https://grafana/d/capsule-slo"
+
+      # Per-tenant error rate alert
+      - alert: CapsuleTenantHighErrorRate
+        expr: |
+          capsule:tenant:errors:rate5m > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: capsule
+          category: tenant-health
+        annotations:
+          summary: "High error rate for tenant {{ $labels.tenantId }}"
+          description: |
+            Tenant {{ $labels.tenantId }} is experiencing {{ printf "%.2f" $value | mul 100 }}% error rate over the last 5 minutes.
+          runbook_url: "https://docs.butterfly/runbooks/tenant-issues#error-rate"
+          dashboard_url: "https://grafana/d/capsule-tenant?var-tenantId={{ $labels.tenantId }}"
+

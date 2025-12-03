@@ -349,17 +349,47 @@ jobs:
     if: always()
     steps:
       - name: Generate CI Summary
+        env:
+          BUILD_START: ${{ github.event.pull_request.created_at || github.event.head_commit.timestamp }}
         run: |
           echo "## PERCEPTION CI Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Metrics section
+          echo "### Build Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.head_ref || github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "| PR | [#${{ github.event.pull_request.number }}](https://github.com/${{ github.repository }}/pull/${{ github.event.pull_request.number }}) |" >> $GITHUB_STEP_SUMMARY
+            echo "| PR Created | ${{ github.event.pull_request.created_at }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Job results
+          echo "### Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Backend Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Chaos Tests | ${{ needs.chaos-tests.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Coverage | ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Portal Lint | ${{ needs.portal-lint.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Portal Unit Tests | ${{ needs.portal-test.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Portal E2E Tests | ${{ needs.portal-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Portal Build | ${{ needs.portal-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend Build | ${{ needs.build.result == 'success' && '✅' || needs.build.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Tests | ${{ needs.integration-tests.result == 'success' && '✅' || needs.integration-tests.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chaos Tests | ${{ needs.chaos-tests.result == 'success' && '✅' || needs.chaos-tests.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.chaos-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage | ${{ needs.coverage.result == 'success' && '✅' || needs.coverage.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal Lint | ${{ needs.portal-lint.result == 'success' && '✅' || needs.portal-lint.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.portal-lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal Unit Tests | ${{ needs.portal-test.result == 'success' && '✅' || needs.portal-test.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.portal-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal E2E Tests | ${{ needs.portal-e2e.result == 'success' && '✅' || needs.portal-e2e.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.portal-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal Build | ${{ needs.portal-build.result == 'success' && '✅' || needs.portal-build.result == 'skipped' && '⏭️' || '❌' }} ${{ needs.portal-build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Overall status
+          if [ "${{ needs.build.result }}" = "success" ] && [ "${{ needs.integration-tests.result }}" = "success" ]; then
+            echo "### ✅ Pipeline Passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Pipeline Failed" >> $GITHUB_STEP_SUMMARY
+            echo "Review failed jobs above and check [troubleshooting guide](https://github.com/${{ github.repository }}/blob/main/docs/operations/ci-cd/troubleshooting.md)" >> $GITHUB_STEP_SUMMARY
+          fi
 

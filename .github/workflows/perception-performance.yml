@@ -12,24 +12,236 @@ on:
           - ApiSmokeSimulation
           - AcquisitionIngestionSimulation
           - CriticalPathSimulation
+          - IntelligenceQuerySimulation
           - StreamCAndCapsuleSimulation
       target_url:
         description: "Target API URL (leave empty to start local stack)"
         required: false
         default: ""
         type: string
+      fail_on_threshold:
+        description: "Fail build if thresholds are violated"
+        required: false
+        default: true
+        type: boolean
+  
+  # Nightly runs for continuous monitoring
   schedule:
     - cron: "0 2 * * *"  # Nightly at 2 AM UTC
+  
+  # PR checks for performance-critical paths
+  pull_request:
+    branches:
+      - main
+      - release/*
+    paths:
+      - 'PERCEPTION/perception-acquisition/**'
+      - 'PERCEPTION/perception-integrity/**'
+      - 'PERCEPTION/perception-intelligence/**'
+      - 'PERCEPTION/perception-api/**'
+      - 'PERCEPTION/perception-signals/**'
+      - 'PERCEPTION/perception-scenarios/**'
+      - 'PERCEPTION/performance/**'
 
 env:
   JAVA_VERSION: "17"
   GATLING_DIR: PERCEPTION/performance/gatling
+  # Phase 3 Performance Targets
+  P95_THRESHOLD_MS: 200
+  P99_THRESHOLD_MS: 500
+  SUCCESS_RATE_THRESHOLD: 99.5
 
 jobs:
-  performance-smoke:
-    name: Gatling Performance Tests
+  # Quick smoke test for PRs
+  performance-pr-check:
+    name: Performance Smoke Check (PR)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Cache Scala/Gatling dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/io/gatling
+            ~/.m2/repository/org/scala-lang
+          key: ${{ runner.os }}-gatling-${{ hashFiles('PERCEPTION/performance/gatling/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-gatling-
+
+      - name: Build PERCEPTION modules
+        working-directory: PERCEPTION
+        run: |
+          mvn clean install -DskipTests -B -q
+
+      - name: Start test infrastructure
+        working-directory: PERCEPTION
+        run: |
+          docker compose -f docker-compose.dev.yml up -d kafka redis postgres
+          echo "Waiting for infrastructure to be ready..."
+          sleep 45
+          
+      - name: Start perception-api
+        working-directory: PERCEPTION
+        run: |
+          mvn -pl perception-api spring-boot:run \
+            -Dspring-boot.run.profiles=test \
+            -Dspring-boot.run.jvmArguments="-Xms1g -Xmx1g" &
+          echo "Waiting for API to start..."
+          sleep 60
+          curl -f http://localhost:8080/actuator/health || exit 1
+
+      - name: Run API Smoke Simulation
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.ApiSmokeSimulation \
+            -Dperception.api.url=http://localhost:8080
+        continue-on-error: false
+
+      - name: Validate performance thresholds
+        if: always()
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          # Find the latest simulation result
+          LATEST_DIR=$(ls -td target/gatling/*/ 2>/dev/null | head -1)
+          if [[ -z "$LATEST_DIR" ]]; then
+            echo "No Gatling results found"
+            exit 1
+          fi
+          
+          # Parse simulation.log for assertions
+          SIMULATION_LOG="${LATEST_DIR}simulation.log"
+          if [[ -f "$SIMULATION_LOG" ]]; then
+            echo "## Performance Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Check for assertion failures
+            if grep -q "FAILED" "$SIMULATION_LOG"; then
+              echo "::error::Performance thresholds violated!"
+              echo "Performance assertions FAILED - thresholds exceeded" >> $GITHUB_STEP_SUMMARY
+              exit 1
+            else
+              echo "Performance assertions PASSED" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+      - name: Stop test infrastructure
+        if: always()
+        working-directory: PERCEPTION
+        run: |
+          pkill -f "spring-boot:run" || true
+          docker compose -f docker-compose.dev.yml down -v || true
+
+      - name: Upload Gatling reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gatling-pr-check-${{ github.run_id }}
+          path: ${{ env.GATLING_DIR }}/target/gatling/
+          retention-days: 7
+
+  # Nightly comprehensive performance test
+  performance-nightly:
+    name: Nightly Performance Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'schedule'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Cache Scala/Gatling dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/io/gatling
+            ~/.m2/repository/org/scala-lang
+          key: ${{ runner.os }}-gatling-${{ hashFiles('PERCEPTION/performance/gatling/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-gatling-
+
+      - name: Start test infrastructure
+        working-directory: PERCEPTION
+        run: |
+          docker compose -f docker-compose.dev.yml up -d kafka redis postgres
+          echo "Waiting for infrastructure to be ready..."
+          sleep 30
+
+      - name: Run API Smoke Simulation
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.ApiSmokeSimulation \
+            -Dperception.api.url=${PERCEPTION_API_URL:-http://localhost:8080}
+        continue-on-error: true
+
+      - name: Run Critical Path Simulation
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.CriticalPathSimulation \
+            -Dperception.api.url=${PERCEPTION_API_URL:-http://localhost:8080}
+        continue-on-error: true
+
+      - name: Run Intelligence Query Simulation
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.IntelligenceQuerySimulation \
+            -Dperception.api.url=${PERCEPTION_API_URL:-http://localhost:8080}
+        continue-on-error: true
+
+      - name: Stop test infrastructure
+        if: always()
+        working-directory: PERCEPTION
+        run: |
+          docker compose -f docker-compose.dev.yml down -v || true
+
+      - name: Upload Gatling reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gatling-nightly-${{ github.run_id }}
+          path: ${{ env.GATLING_DIR }}/target/gatling/
+          retention-days: 30
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Nightly Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Simulations**: ApiSmoke, CriticalPath, IntelligenceQuery" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Reports available in workflow artifacts." >> $GITHUB_STEP_SUMMARY
+
+  # Manual performance test with full control
+  performance-manual:
+    name: Manual Performance Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
@@ -53,23 +265,14 @@ jobs:
             ${{ runner.os }}-gatling-
 
       - name: Start test infrastructure (local mode)
-        if: ${{ github.event.inputs.target_url == '' || github.event_name == 'schedule' }}
+        if: ${{ github.event.inputs.target_url == '' }}
         working-directory: PERCEPTION
         run: |
           docker compose -f docker-compose.dev.yml up -d kafka redis postgres
           echo "Waiting for infrastructure to be ready..."
           sleep 30
 
-      - name: Run Gatling simulation (scheduled - smoke)
-        if: ${{ github.event_name == 'schedule' }}
-        working-directory: ${{ env.GATLING_DIR }}
-        run: |
-          mvn gatling:test \
-            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.ApiSmokeSimulation \
-            -Dperception.api.url=${PERCEPTION_API_URL:-http://localhost:8080}
-
-      - name: Run Gatling simulation (manual)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Run Gatling simulation
         working-directory: ${{ env.GATLING_DIR }}
         env:
           TARGET_URL: ${{ github.event.inputs.target_url }}
@@ -80,8 +283,50 @@ jobs:
             -Dgatling.simulationClass=com.z254.butterfly.perception.performance.${SIMULATION} \
             -Dperception.api.url=${API_URL}
 
+      - name: Validate performance thresholds
+        if: ${{ github.event.inputs.fail_on_threshold == 'true' }}
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          LATEST_DIR=$(ls -td target/gatling/*/ 2>/dev/null | head -1)
+          if [[ -z "$LATEST_DIR" ]]; then
+            echo "No Gatling results found"
+            exit 1
+          fi
+          
+          SIMULATION_LOG="${LATEST_DIR}simulation.log"
+          if [[ -f "$SIMULATION_LOG" ]]; then
+            if grep -q "KO" "$SIMULATION_LOG" | head -1; then
+              echo "::warning::Some requests failed"
+            fi
+            
+            # Check for global assertion failures
+            if grep -q "Global: percentage of successful" "$SIMULATION_LOG"; then
+              SUCCESS_LINE=$(grep "Global: percentage of successful" "$SIMULATION_LOG")
+              if echo "$SUCCESS_LINE" | grep -q "FAILED"; then
+                echo "::error::Success rate threshold violated!"
+                exit 1
+              fi
+            fi
+            
+            if grep -q "Global: 95th percentile" "$SIMULATION_LOG"; then
+              P95_LINE=$(grep "Global: 95th percentile" "$SIMULATION_LOG")
+              if echo "$P95_LINE" | grep -q "FAILED"; then
+                echo "::error::P95 latency threshold violated!"
+                exit 1
+              fi
+            fi
+            
+            if grep -q "Global: 99th percentile" "$SIMULATION_LOG"; then
+              P99_LINE=$(grep "Global: 99th percentile" "$SIMULATION_LOG")
+              if echo "$P99_LINE" | grep -q "FAILED"; then
+                echo "::error::P99 latency threshold violated!"
+                exit 1
+              fi
+            fi
+          fi
+
       - name: Stop test infrastructure
-        if: ${{ always() && (github.event.inputs.target_url == '' || github.event_name == 'schedule') }}
+        if: ${{ always() && github.event.inputs.target_url == '' }}
         working-directory: PERCEPTION
         run: |
           docker compose -f docker-compose.dev.yml down -v || true
@@ -90,7 +335,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gatling-reports-${{ github.run_id }}
+          name: gatling-manual-${{ github.event.inputs.simulation }}-${{ github.run_id }}
           path: ${{ env.GATLING_DIR }}/target/gatling/
           retention-days: 30
 
@@ -99,18 +344,19 @@ jobs:
         run: |
           echo "## Performance Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Simulation**: ${{ github.event.inputs.simulation || 'ApiSmokeSimulation' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Simulation**: ${{ github.event.inputs.simulation }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target URL**: ${{ github.event.inputs.target_url || 'localhost' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Threshold Enforcement**: ${{ github.event.inputs.fail_on_threshold }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Reports available in workflow artifacts." >> $GITHUB_STEP_SUMMARY
 
-  # Load test job - only runs on manual dispatch with specific simulation
-  load-test:
-    name: Full Load Test (10k rps)
+  # Pre-release gate - blocks releases if performance regresses
+  performance-release-gate:
+    name: Release Performance Gate
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.simulation == 'AcquisitionIngestionSimulation' }}
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/release/')
 
     steps:
       - name: Checkout
@@ -123,21 +369,61 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
-      - name: Run full load test
+      - name: Run full performance suite
         working-directory: ${{ env.GATLING_DIR }}
         env:
           TARGET_URL: ${{ github.event.inputs.target_url }}
         run: |
           API_URL="${TARGET_URL:-http://localhost:8080}"
+          
+          echo "Running API Smoke..."
           mvn gatling:test \
-            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.AcquisitionIngestionSimulation \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.ApiSmokeSimulation \
+            -Dperception.api.url=${API_URL}
+          
+          echo "Running Critical Path..."
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.CriticalPathSimulation \
+            -Dperception.api.url=${API_URL}
+          
+          echo "Running Intelligence Query..."
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.IntelligenceQuerySimulation \
             -Dperception.api.url=${API_URL}
 
-      - name: Upload load test reports
+      - name: Enforce release thresholds
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          echo "## Release Performance Gate" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          FAILED=0
+          for DIR in target/gatling/*/; do
+            if [[ -f "${DIR}simulation.log" ]]; then
+              SIMULATION_NAME=$(basename "$DIR")
+              if grep -q "FAILED" "${DIR}simulation.log"; then
+                echo "::error::${SIMULATION_NAME}: Performance thresholds violated!"
+                echo "- **${SIMULATION_NAME}**: FAILED" >> $GITHUB_STEP_SUMMARY
+                FAILED=1
+              else
+                echo "- **${SIMULATION_NAME}**: PASSED" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          done
+          
+          if [[ $FAILED -eq 1 ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Release blocked due to performance regression**" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Release approved - all performance gates passed**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload release gate reports
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: gatling-load-test-${{ github.run_id }}
+          name: gatling-release-gate-${{ github.run_id }}
           path: ${{ env.GATLING_DIR }}/target/gatling/
-          retention-days: 30
-
+          retention-days: 90

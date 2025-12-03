@@ -1,0 +1,121 @@
+# ODYSSEY Service SLO Alert Rules
+# 
+# SLO Targets:
+#   - Availability: 99.9% (43.2 min downtime/month)
+#   - P95 Latency (graph queries): < 500ms
+
+groups:
+  - name: odyssey-slo-recording-rules
+    interval: 30s
+    rules:
+      # Error rate recording rules (multi-window)
+      - record: odyssey:api:errors:rate5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="odyssey", status=~"5.."}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="odyssey"}[5m]))
+
+      - record: odyssey:api:errors:rate30m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="odyssey", status=~"5.."}[30m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="odyssey"}[30m]))
+
+      - record: odyssey:api:errors:rate1h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="odyssey", status=~"5.."}[1h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="odyssey"}[1h]))
+
+      - record: odyssey:api:errors:rate6h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="odyssey", status=~"5.."}[6h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="odyssey"}[6h]))
+
+      # Graph query latency
+      - record: odyssey:graph:latency:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(odyssey_graph_query_duration_seconds_bucket[5m])) by (le))
+
+      # Per-tenant error rates
+      - record: odyssey:tenant:errors:rate5m
+        expr: |
+          sum by (tenantId) (rate(http_server_requests_seconds_count{application="odyssey", status=~"5..", tenantId!=""}[5m]))
+          /
+          sum by (tenantId) (rate(http_server_requests_seconds_count{application="odyssey", tenantId!=""}[5m]))
+
+  - name: odyssey-slo-alerts
+    rules:
+      # Fast burn alert
+      - alert: OdysseySLOFastBurn
+        expr: |
+          (odyssey:api:errors:rate1h > (14.4 * 0.001))
+          and
+          (odyssey:api:errors:rate5m > (14.4 * 0.001))
+        for: 2m
+        labels:
+          severity: critical
+          team: odyssey
+          slo: availability
+          burn_rate: fast
+        annotations:
+          summary: "ODYSSEY API fast error budget burn"
+          description: |
+            Error rate is consuming error budget at 14.4x sustainable rate.
+            Current 1h error rate: {{ printf "%.4f" $value }}
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#fast-burn"
+          dashboard_url: "https://grafana/d/odyssey-slo"
+
+      # Slow burn alert
+      - alert: OdysseySLOSlowBurn
+        expr: |
+          (odyssey:api:errors:rate6h > (3 * 0.001))
+          and
+          (odyssey:api:errors:rate30m > (3 * 0.001))
+        for: 15m
+        labels:
+          severity: warning
+          team: odyssey
+          slo: availability
+          burn_rate: slow
+        annotations:
+          summary: "ODYSSEY API slow error budget burn"
+          description: |
+            Error rate is consuming error budget at 3x sustainable rate.
+            Current 6h error rate: {{ printf "%.4f" $value }}
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#slow-burn"
+          dashboard_url: "https://grafana/d/odyssey-slo"
+
+      # Graph query latency SLO
+      - alert: OdysseyGraphLatencySLOBreach
+        expr: |
+          odyssey:graph:latency:p95_5m > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: odyssey
+          slo: latency
+        annotations:
+          summary: "ODYSSEY graph query P95 latency exceeds 500ms SLO"
+          description: |
+            Graph query P95 latency is {{ printf "%.3f" $value }}s, exceeding the 500ms SLO target.
+          runbook_url: "https://docs.butterfly/runbooks/high-latency#odyssey"
+          dashboard_url: "https://grafana/d/odyssey-slo"
+
+      # Per-tenant error rate
+      - alert: OdysseyTenantHighErrorRate
+        expr: |
+          odyssey:tenant:errors:rate5m > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          team: odyssey
+          category: tenant-health
+        annotations:
+          summary: "High error rate for tenant {{ $labels.tenantId }}"
+          description: |
+            Tenant {{ $labels.tenantId }} is experiencing {{ printf "%.2f" $value | mul 100 }}% error rate.
+          runbook_url: "https://docs.butterfly/runbooks/tenant-issues#error-rate"
+          dashboard_url: "https://grafana/d/odyssey-tenant?var-tenantId={{ $labels.tenantId }}"
+

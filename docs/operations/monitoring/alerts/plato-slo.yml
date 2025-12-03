@@ -1,0 +1,121 @@
+# PLATO Service SLO Alert Rules
+# 
+# SLO Targets:
+#   - Availability: 99.5% (3.6 hours downtime/month)
+#   - P99 Latency (engine executions): < 5s
+
+groups:
+  - name: plato-slo-recording-rules
+    interval: 30s
+    rules:
+      # Error rate recording rules
+      - record: plato:api:errors:rate5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="plato-service", status=~"5.."}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="plato-service"}[5m]))
+
+      - record: plato:api:errors:rate30m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="plato-service", status=~"5.."}[30m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="plato-service"}[30m]))
+
+      - record: plato:api:errors:rate1h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="plato-service", status=~"5.."}[1h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="plato-service"}[1h]))
+
+      - record: plato:api:errors:rate6h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="plato-service", status=~"5.."}[6h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="plato-service"}[6h]))
+
+      # Engine execution latency
+      - record: plato:engine:latency:p99_5m
+        expr: |
+          histogram_quantile(0.99, sum(rate(plato_engine_duration_seconds_bucket[5m])) by (le, engineId))
+
+      # Per-tenant error rates
+      - record: plato:tenant:errors:rate5m
+        expr: |
+          sum by (tenantId) (rate(http_server_requests_seconds_count{application="plato-service", status=~"5..", tenantId!=""}[5m]))
+          /
+          sum by (tenantId) (rate(http_server_requests_seconds_count{application="plato-service", tenantId!=""}[5m]))
+
+  - name: plato-slo-alerts
+    rules:
+      # Fast burn alert (higher threshold for 99.5% SLO)
+      - alert: PlatoSLOFastBurn
+        expr: |
+          (plato:api:errors:rate1h > (14.4 * 0.005))
+          and
+          (plato:api:errors:rate5m > (14.4 * 0.005))
+        for: 2m
+        labels:
+          severity: critical
+          team: plato
+          slo: availability
+          burn_rate: fast
+        annotations:
+          summary: "PLATO API fast error budget burn"
+          description: |
+            Error rate is consuming error budget at 14.4x sustainable rate.
+            Current 1h error rate: {{ printf "%.4f" $value }}
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#fast-burn"
+          dashboard_url: "https://grafana/d/plato-slo"
+
+      # Slow burn alert
+      - alert: PlatoSLOSlowBurn
+        expr: |
+          (plato:api:errors:rate6h > (3 * 0.005))
+          and
+          (plato:api:errors:rate30m > (3 * 0.005))
+        for: 15m
+        labels:
+          severity: warning
+          team: plato
+          slo: availability
+          burn_rate: slow
+        annotations:
+          summary: "PLATO API slow error budget burn"
+          description: |
+            Error rate is consuming error budget at 3x sustainable rate.
+            Current 6h error rate: {{ printf "%.4f" $value }}
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#slow-burn"
+          dashboard_url: "https://grafana/d/plato-slo"
+
+      # Engine execution latency SLO
+      - alert: PlatoEngineLatencySLOBreach
+        expr: |
+          plato:engine:latency:p99_5m > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: plato
+          slo: latency
+        annotations:
+          summary: "PLATO engine {{ $labels.engineId }} P99 latency exceeds 5s SLO"
+          description: |
+            Engine {{ $labels.engineId }} P99 latency is {{ printf "%.1f" $value }}s.
+          runbook_url: "https://docs.butterfly/runbooks/high-latency#plato"
+          dashboard_url: "https://grafana/d/plato-governance"
+
+      # Per-tenant error rate
+      - alert: PlatoTenantHighErrorRate
+        expr: |
+          plato:tenant:errors:rate5m > 0.02
+        for: 5m
+        labels:
+          severity: warning
+          team: plato
+          category: tenant-health
+        annotations:
+          summary: "High error rate for tenant {{ $labels.tenantId }}"
+          description: |
+            Tenant {{ $labels.tenantId }} is experiencing {{ printf "%.2f" $value | mul 100 }}% error rate.
+          runbook_url: "https://docs.butterfly/runbooks/tenant-issues#error-rate"
+          dashboard_url: "https://grafana/d/plato-tenant?var-tenantId={{ $labels.tenantId }}"
+

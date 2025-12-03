@@ -1,0 +1,84 @@
+# OWASP ZAP Baseline Scan Rules Configuration
+# Format: <rule-id>	<action>	<threshold>
+# Actions: IGNORE, WARN, FAIL
+# Thresholds: HIGH, MEDIUM, LOW (only for WARN/FAIL)
+
+# =============================================================================
+# CRITICAL - Fail build on these
+# =============================================================================
+
+# SQL Injection
+10095	FAIL	HIGH
+10096	FAIL	HIGH
+40018	FAIL	HIGH
+
+# Cross-Site Scripting (XSS)
+40012	FAIL	HIGH
+40014	FAIL	HIGH
+40016	FAIL	HIGH
+40017	FAIL	HIGH
+
+# Cross-Site Request Forgery
+20012	FAIL	HIGH
+
+# Remote Code Execution / Command Injection
+90020	FAIL	HIGH
+
+# Server-Side Request Forgery (SSRF)
+40046	FAIL	HIGH
+
+# Path Traversal
+6	FAIL	HIGH
+
+# LDAP Injection
+40015	FAIL	HIGH
+
+# =============================================================================
+# HIGH - Fail build on these
+# =============================================================================
+
+# Authentication/Session Issues
+10010	FAIL	MEDIUM
+10011	FAIL	MEDIUM
+10057	FAIL	MEDIUM
+
+# Sensitive Data Exposure
+10035	FAIL	MEDIUM
+10040	FAIL	MEDIUM
+
+# Security Misconfigurations
+10015	FAIL	MEDIUM
+10017	FAIL	MEDIUM
+10020	FAIL	MEDIUM
+10021	FAIL	MEDIUM
+
+# =============================================================================
+# MEDIUM - Warn but don't fail
+# =============================================================================
+
+# Missing Security Headers
+10038	WARN	LOW
+10036	WARN	LOW
+10037	WARN	LOW
+10039	WARN	LOW
+
+# Cookie Issues
+10029	WARN	LOW
+10054	WARN	LOW
+10055	WARN	LOW
+10056	WARN	LOW
+
+# Information Disclosure
+10045	WARN	LOW
+10095	WARN	LOW
+
+# =============================================================================
+# LOW - Informational only (ignore in automated builds)
+# =============================================================================
+
+# X-Content-Type-Options Missing (handled at app level)
+10021	IGNORE
+
+# Information leakage (usually acceptable in API responses)
+10027	IGNORE
+

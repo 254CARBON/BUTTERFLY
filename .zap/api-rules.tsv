@@ -1,0 +1,63 @@
+# OWASP ZAP API Scan Rules Configuration
+# Specialized rules for OpenAPI/REST API scanning
+
+# =============================================================================
+# CRITICAL - Fail build on these (API-specific)
+# =============================================================================
+
+# SQL Injection via API parameters
+10095	FAIL	HIGH
+10096	FAIL	HIGH
+
+# Broken Object Level Authorization (BOLA/IDOR)
+40019	FAIL	HIGH
+
+# Broken Authentication
+10102	FAIL	HIGH
+
+# Broken Function Level Authorization
+40018	FAIL	HIGH
+
+# Injection Flaws
+90019	FAIL	HIGH
+
+# Mass Assignment
+90025	FAIL	HIGH
+
+# =============================================================================
+# HIGH - Fail build on these
+# =============================================================================
+
+# Improper Assets Management (undocumented endpoints)
+10050	FAIL	MEDIUM
+
+# Excessive Data Exposure
+10033	FAIL	MEDIUM
+
+# Security Misconfiguration
+10049	FAIL	MEDIUM
+
+# Lack of Resources & Rate Limiting (detect if missing)
+10048	WARN	MEDIUM
+
+# =============================================================================
+# MEDIUM - Warn
+# =============================================================================
+
+# Insufficient Logging & Monitoring indicators
+10056	WARN	LOW
+
+# Missing Content-Type header
+10008	WARN	LOW
+
+# Parameter tampering
+10028	WARN	LOW
+
+# =============================================================================
+# API-SPECIFIC IGNORES
+# =============================================================================
+
+# These are typically false positives for REST APIs
+10015	IGNORE	# X-Frame-Options (not needed for APIs)
+10038	IGNORE	# Content-Security-Policy (not needed for APIs)
+

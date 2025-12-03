@@ -54,6 +54,26 @@ jobs:
           chmod +x butterfly-e2e/run-scenarios.sh scripts/dev-up.sh scripts/dev-down.sh
           ./butterfly-e2e/run-scenarios.sh
 
+      - name: Generate E2E Summary
+        if: always()
+        run: |
+          echo "## Butterfly E2E Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.head_ref || github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Scenarios Executed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Golden path integration" >> $GITHUB_STEP_SUMMARY
+          echo "- Negative scenarios (Kafka hiccup)" >> $GITHUB_STEP_SUMMARY
+          echo "- ODYSSEY reflex assertions" >> $GITHUB_STEP_SUMMARY
+
   full-stack-smoke:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.full_stack == 'true'
     needs: scenario-suite

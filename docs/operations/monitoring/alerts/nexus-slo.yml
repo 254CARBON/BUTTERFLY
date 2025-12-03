@@ -1,0 +1,138 @@
+# NEXUS Gateway SLO Alert Rules
+# 
+# SLO Targets (Gateway-level):
+#   - Availability: 99.99% (4.3 min downtime/month)
+#   - P95 Added Latency: < 50ms
+
+groups:
+  - name: nexus-slo-recording-rules
+    interval: 30s
+    rules:
+      # Error rate recording rules
+      - record: nexus:api:errors:rate5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus", status=~"5.."}[5m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus"}[5m]))
+
+      - record: nexus:api:errors:rate30m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus", status=~"5.."}[30m]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus"}[30m]))
+
+      - record: nexus:api:errors:rate1h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus", status=~"5.."}[1h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus"}[1h]))
+
+      - record: nexus:api:errors:rate6h
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus", status=~"5.."}[6h]))
+          /
+          sum(rate(http_server_requests_seconds_count{application="butterfly-nexus"}[6h]))
+
+      # Gateway latency
+      - record: nexus:gateway:latency:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application="butterfly-nexus"}[5m])) by (le))
+
+      # Client call latency by target service
+      - record: nexus:client:latency:p95_5m
+        expr: |
+          histogram_quantile(0.95, sum(rate(nexus_client_call_duration_seconds_bucket[5m])) by (le, client))
+
+  - name: nexus-slo-alerts
+    rules:
+      # Fast burn alert (very tight for 99.99% SLO)
+      - alert: NexusSLOFastBurn
+        expr: |
+          (nexus:api:errors:rate1h > (14.4 * 0.0001))
+          and
+          (nexus:api:errors:rate5m > (14.4 * 0.0001))
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+          slo: availability
+          burn_rate: fast
+        annotations:
+          summary: "NEXUS Gateway fast error budget burn - CRITICAL"
+          description: |
+            Gateway error rate is consuming error budget at 14.4x sustainable rate.
+            Current 1h error rate: {{ printf "%.6f" $value }}
+            As the central gateway, this affects ALL services.
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#nexus-gateway"
+          dashboard_url: "https://grafana/d/nexus-gateway"
+
+      # Slow burn alert
+      - alert: NexusSLOSlowBurn
+        expr: |
+          (nexus:api:errors:rate6h > (3 * 0.0001))
+          and
+          (nexus:api:errors:rate30m > (3 * 0.0001))
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+          slo: availability
+          burn_rate: slow
+        annotations:
+          summary: "NEXUS Gateway slow error budget burn"
+          description: |
+            Gateway error rate is consuming error budget at 3x sustainable rate.
+            Current 6h error rate: {{ printf "%.6f" $value }}
+          runbook_url: "https://docs.butterfly/runbooks/slo-breach#slow-burn"
+          dashboard_url: "https://grafana/d/nexus-gateway"
+
+      # Gateway latency SLO
+      - alert: NexusLatencySLOBreach
+        expr: |
+          nexus:gateway:latency:p95_5m > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          slo: latency
+        annotations:
+          summary: "NEXUS Gateway P95 latency exceeds 50ms SLO"
+          description: |
+            Gateway P95 latency is {{ printf "%.3f" $value }}s, exceeding the 50ms SLO target.
+            This overhead affects all downstream service calls.
+          runbook_url: "https://docs.butterfly/runbooks/high-latency#nexus"
+          dashboard_url: "https://grafana/d/nexus-gateway"
+
+      # Circuit breaker open
+      - alert: NexusCircuitBreakerOpen
+        expr: |
+          resilience4j_circuitbreaker_state{application="butterfly-nexus", state="open"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+          category: resilience
+        annotations:
+          summary: "NEXUS circuit breaker OPEN for {{ $labels.name }}"
+          description: |
+            Circuit breaker for {{ $labels.name }} is OPEN, blocking traffic to that service.
+            This indicates repeated failures to the downstream service.
+          runbook_url: "https://docs.butterfly/runbooks/circuit-breaker"
+          dashboard_url: "https://grafana/d/nexus-gateway"
+
+      # Upstream service latency degradation
+      - alert: NexusUpstreamLatencyHigh
+        expr: |
+          nexus:client:latency:p95_5m > 2
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          category: upstream
+        annotations:
+          summary: "High latency to upstream service {{ $labels.client }}"
+          description: |
+            Calls to {{ $labels.client }} have P95 latency of {{ printf "%.2f" $value }}s.
+          runbook_url: "https://docs.butterfly/runbooks/high-latency#upstream"
+          dashboard_url: "https://grafana/d/nexus-gateway?var-client={{ $labels.client }}"
+

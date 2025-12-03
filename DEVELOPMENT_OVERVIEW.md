@@ -4,6 +4,26 @@ This overview unifies the main dev entry points across CAPSULE, ODYSSEY, PERCEPT
 
 **Last Updated**: 2025-12-03
 
+---
+
+## 📚 Unified Ecosystem Documentation
+
+For comprehensive documentation covering the entire BUTTERFLY ecosystem, see the **[Documentation Portal](docs/index.md)**:
+
+| Section | Description |
+|---------|-------------|
+| [Getting Started](docs/getting-started/README.md) | Quick start guides, installation, first steps |
+| [Architecture](docs/architecture/README.md) | Ecosystem overview, data flow, identity model |
+| [Services](docs/services/README.md) | Service summaries with navigation |
+| [API Reference](docs/api/README.md) | Unified API catalog, authentication, error handling |
+| [Integration Guide](docs/integration/README.md) | Kafka contracts, webhooks, SDK documentation |
+| [Operations](docs/operations/README.md) | Deployment, monitoring, runbooks |
+| [Security](docs/security/README.md) | Security model, compliance, hardening |
+| [Development](docs/development/README.md) | Contributing, coding standards, testing |
+| [Reference](docs/reference/README.md) | Glossary, FAQ, changelog |
+
+---
+
 ## Quick Start
 
 Run the setup script to configure your development environment:
@@ -258,6 +278,27 @@ See `PERCEPTION/docs/runbooks/ci-pipeline-troubleshooting.md` for common CI fail
 4. Monitor ODYSSEY's `ReflexActionEvent` log statements
 
 ## Related Documentation
+
+### Ecosystem-Wide Documentation
+
+- **[📚 Documentation Portal](docs/index.md)** - Master documentation hub
+- [Architecture Overview](docs/architecture/ecosystem-overview.md) - Complete system architecture
+- [Security Architecture](docs/security/security-model.md) - End-to-end security design
+- [API Catalog](docs/api/api-catalog.md) - Unified API reference
+- [Glossary](docs/reference/glossary.md) - Unified terminology
+
+### Service-Specific Documentation
+
+| Service | Quick Links |
+|---------|-------------|
+| CAPSULE | [Summary](docs/services/capsule.md) • [README](CAPSULE/README.md) • [Development](CAPSULE/DEVELOPMENT.md) |
+| ODYSSEY | [Summary](docs/services/odyssey.md) • [README](ODYSSEY/README.md) • [Docs Hub](ODYSSEY/docs/README.md) |
+| PERCEPTION | [Summary](docs/services/perception.md) • [README](PERCEPTION/README.md) • [Getting Started](PERCEPTION/GETTING_STARTED.md) |
+| PLATO | [Summary](docs/services/plato.md) • [README](PLATO/README.md) • [Docs](PLATO/docs/index.md) |
+| NEXUS | [Summary](docs/services/nexus.md) • [README](butterfly-nexus/README.md) |
+| Common | [Summary](docs/services/butterfly-common.md) • [README](butterfly-common/README.md) |
+
+### Additional Resources
 
 - [DX_NOTES.md](DX_NOTES.md) - Additional developer experience notes
 - [docs/adr/](docs/adr/) - Architecture Decision Records
