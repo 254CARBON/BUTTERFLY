@@ -1,0 +1,365 @@
+name: PERCEPTION CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'PERCEPTION/**'
+      - 'butterfly-common/**'
+      - '.github/workflows/perception-ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'PERCEPTION/**'
+      - 'butterfly-common/**'
+      - '.github/workflows/perception-ci.yml'
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+  NODE_VERSION: '20'
+
+jobs:
+  # =============================================================================
+  # Backend Pipeline
+  # =============================================================================
+
+  build:
+    name: Build and Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: PERCEPTION
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Install butterfly-common
+        run: mvn -B -f ../butterfly-common/pom.xml install -DskipTests
+
+      - name: Build with Maven
+        run: mvn clean compile -B -T 1C
+
+      - name: Run unit tests
+        run: mvn test -B -T 1C -DexcludedGroups=chaos,integration
+
+      - name: Generate test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Backend Unit Test Results
+          path: PERCEPTION/**/target/surefire-reports/*.xml
+          reporter: java-junit
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    defaults:
+      run:
+        working-directory: PERCEPTION
+
+    services:
+      postgres:
+        image: postgres:15
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: perception
+          POSTGRES_PASSWORD: perception
+          POSTGRES_DB: perception_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Install butterfly-common
+        run: mvn -B -f ../butterfly-common/pom.xml install -DskipTests
+
+      - name: Run integration tests
+        run: mvn verify -B -Pintegration-tests -DskipUnitTests
+        env:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/perception_test
+          SPRING_DATASOURCE_USERNAME: perception
+          SPRING_DATASOURCE_PASSWORD: perception
+          SPRING_DATA_REDIS_HOST: localhost
+          SPRING_DATA_REDIS_PORT: 6379
+
+      - name: Generate integration test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Integration Test Results
+          path: PERCEPTION/**/target/failsafe-reports/*.xml
+          reporter: java-junit
+
+  chaos-tests:
+    name: Chaos Tests
+    runs-on: ubuntu-latest
+    needs: build
+    defaults:
+      run:
+        working-directory: PERCEPTION
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Install butterfly-common
+        run: mvn -B -f ../butterfly-common/pom.xml install -DskipTests
+
+      - name: Run chaos tests
+        run: mvn test -B -pl perception-api -Dgroups=chaos
+        env:
+          SPRING_PROFILES_ACTIVE: chaos-test
+
+      - name: Generate chaos test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Chaos Test Results
+          path: PERCEPTION/perception-api/target/surefire-reports/*.xml
+          reporter: java-junit
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: build
+    defaults:
+      run:
+        working-directory: PERCEPTION
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Install butterfly-common
+        run: mvn -B -f ../butterfly-common/pom.xml install -DskipTests
+
+      - name: Run tests with coverage
+        run: mvn test jacoco:report-aggregate -B -DexcludedGroups=chaos,integration
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: PERCEPTION/target/site/jacoco-aggregate/jacoco.xml
+          flags: perception
+          name: perception-coverage
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Check coverage threshold
+        run: |
+          # Find aggregate coverage report
+          COVERAGE_FILE="target/site/jacoco-aggregate/index.html"
+          if [ -f "$COVERAGE_FILE" ]; then
+            COVERAGE=$(grep -o 'Total[^%]*%' "$COVERAGE_FILE" | grep -o '[0-9]*%' | head -1 | tr -d '%' || echo "0")
+            echo "Code coverage: ${COVERAGE}%"
+            if [ "$COVERAGE" -lt 70 ]; then
+              echo "::warning::Coverage ${COVERAGE}% is below threshold of 70%"
+            fi
+          else
+            echo "::warning::Coverage report not found"
+          fi
+
+  # =============================================================================
+  # Frontend Pipeline (Portal)
+  # =============================================================================
+
+  portal-lint:
+    name: Portal Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: PERCEPTION/perception-portal
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: PERCEPTION/perception-portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+  portal-test:
+    name: Portal Unit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: PERCEPTION/perception-portal
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: PERCEPTION/perception-portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Vitest
+        run: npm run test
+
+  portal-e2e:
+    name: Portal E2E Tests
+    runs-on: ubuntu-latest
+    needs: [portal-lint, portal-test]
+    defaults:
+      run:
+        working-directory: PERCEPTION/perception-portal
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: PERCEPTION/perception-portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: npm run build
+
+      - name: Run Playwright E2E tests
+        run: npm run test:e2e
+        env:
+          CI: true
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: PERCEPTION/perception-portal/playwright-report/
+          retention-days: 14
+
+  portal-build:
+    name: Portal Build Validation
+    runs-on: ubuntu-latest
+    needs: [portal-lint, portal-test]
+    defaults:
+      run:
+        working-directory: PERCEPTION/perception-portal
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: PERCEPTION/perception-portal/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Check bundle size
+        run: |
+          echo "## Build Output Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          du -sh .next/ >> $GITHUB_STEP_SUMMARY || true
+
+  # =============================================================================
+  # Summary
+  # =============================================================================
+
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [build, integration-tests, chaos-tests, coverage, portal-lint, portal-test, portal-e2e, portal-build]
+    if: always()
+    steps:
+      - name: Generate CI Summary
+        run: |
+          echo "## PERCEPTION CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Backend Build | ${{ needs.build.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integration Tests | ${{ needs.integration-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chaos Tests | ${{ needs.chaos-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Coverage | ${{ needs.coverage.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal Lint | ${{ needs.portal-lint.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal Unit Tests | ${{ needs.portal-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal E2E Tests | ${{ needs.portal-e2e.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal Build | ${{ needs.portal-build.result }} |" >> $GITHUB_STEP_SUMMARY
+

@@ -1,0 +1,81 @@
+name: Butterfly E2E Harness
+
+on:
+  workflow_dispatch:
+    inputs:
+      full_stack:
+        description: "Also run the optional full-stack compose smoke (Kafka + ODYSSEY stub)"
+        required: false
+        default: false
+        type: boolean
+  pull_request:
+    paths:
+      - ".github/workflows/butterfly-e2e.yml"
+      - "butterfly-common/**"
+      - "butterfly-e2e/**"
+      - "scripts/**"
+      - "ODYSSEY/**"
+      - "DX_NOTES.md"
+      - "DEVELOPMENT_OVERVIEW.md"
+  schedule:
+    - cron: "0 5 * * *"  # nightly UTC
+
+jobs:
+  scenario-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Cache Avro codegen
+        uses: actions/cache@v4
+        with:
+          path: butterfly-common/target/generated-sources/avro
+          key: ${{ runner.os }}-avro-${{ hashFiles('butterfly-common/src/main/avro/**') }}
+
+      - name: Build fastpath CLI (warm Maven cache)
+        run: |
+          chmod +x scripts/fastpath-cli.sh
+          ./scripts/fastpath-cli.sh --help
+
+      - name: Run scenario harness (golden + negative)
+        env:
+          RUN_REFLEX_ASSERTIONS: "1"
+          START_DEV_STACK: "1"
+          FASTPATH_SKIP_STUB: "1"
+        run: |
+          chmod +x butterfly-e2e/run-scenarios.sh scripts/dev-up.sh scripts/dev-down.sh
+          ./butterfly-e2e/run-scenarios.sh
+
+  full-stack-smoke:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.full_stack == 'true'
+    needs: scenario-suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Start optional full stack (Kafka + ODYSSEY profile)
+        env:
+          FASTPATH_FULL_STACK: "1"
+          FASTPATH_SKIP_STUB: "1"
+        run: |
+          chmod +x scripts/dev-up.sh scripts/dev-down.sh scripts/fastpath-cli.sh
+          ./scripts/dev-up.sh --profile odyssey
+          sleep 25  # allow ODYSSEY to finish booting
+          ./scripts/fastpath-cli.sh publish --scenario golden-path --topic rim.fast-path --bootstrap localhost:9092 --scenarios-root butterfly-e2e/scenarios
+          ./scripts/dev-down.sh

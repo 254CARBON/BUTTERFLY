@@ -1,0 +1,214 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  # CodeQL SAST Analysis
+  codeql:
+    name: CodeQL SAST Analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [java]
+        module:
+          - butterfly-common
+          - CAPSULE
+          - ODYSSEY
+          - PLATO
+          - PERCEPTION
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: maven
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+
+      - name: Build ${{ matrix.module }}
+        run: |
+          if [ "${{ matrix.module }}" = "butterfly-common" ]; then
+            mvn -B -f butterfly-common/pom.xml compile -DskipTests
+          else
+            # Install butterfly-common first as dependency
+            mvn -B -f butterfly-common/pom.xml install -DskipTests
+            mvn -B -f ${{ matrix.module }}/pom.xml compile -DskipTests
+          fi
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}/module:${{ matrix.module }}"
+
+  # Dependency Vulnerability Scanning
+  dependency-check:
+    name: OWASP Dependency Check
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - butterfly-common
+          - CAPSULE
+          - ODYSSEY
+          - PLATO
+          - PERCEPTION
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: maven
+
+      - name: Install butterfly-common
+        if: matrix.module != 'butterfly-common'
+        run: mvn -B -f butterfly-common/pom.xml install -DskipTests
+
+      - name: Run OWASP Dependency Check
+        run: |
+          mvn -B -f ${{ matrix.module }}/pom.xml \
+            org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=9 \
+            -DsuppressionFiles=.github/dependency-check-suppressions.xml \
+            || true
+
+      - name: Upload Dependency Check Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check-${{ matrix.module }}
+          path: ${{ matrix.module }}/target/dependency-check-report.html
+          retention-days: 30
+
+  # Secret Scanning
+  secret-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+      - name: Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+  # License Compliance Check
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+          cache: maven
+
+      - name: Install butterfly-common
+        run: mvn -B -f butterfly-common/pom.xml install -DskipTests
+
+      - name: Generate License Report (butterfly-common)
+        run: |
+          mvn -B -f butterfly-common/pom.xml \
+            org.codehaus.mojo:license-maven-plugin:2.3.0:aggregate-third-party-report \
+            -Dlicense.excludedScopes=test
+
+      - name: Generate License Report (CAPSULE)
+        run: |
+          mvn -B -f CAPSULE/pom.xml \
+            org.codehaus.mojo:license-maven-plugin:2.3.0:aggregate-third-party-report \
+            -Dlicense.excludedScopes=test
+
+      - name: Upload License Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: license-reports
+          path: "**/target/site/third-party-report.html"
+          retention-days: 30
+
+  # Semgrep SAST (additional rules)
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config auto \
+            --config p/java \
+            --config p/security-audit \
+            --config p/secrets \
+            --sarif --output results.sarif \
+            --error \
+            || true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+
+  # Summary Report
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [codeql, dependency-check, secret-scan, license-check, semgrep]
+    if: always()
+    steps:
+      - name: Security Scan Summary
+        run: |
+          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL SAST | ${{ needs.codeql.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| OWASP Dependency Check | ${{ needs.dependency-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret Scanning | ${{ needs.secret-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| License Compliance | ${{ needs.license-check.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Semgrep SAST | ${{ needs.semgrep.result }} |" >> $GITHUB_STEP_SUMMARY

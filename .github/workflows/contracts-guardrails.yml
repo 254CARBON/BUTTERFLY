@@ -1,0 +1,23 @@
+name: contracts-guardrails
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  avro-sources-owned-by-common:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Fail if Avro schemas live outside butterfly-common
+        run: |
+          set -euo pipefail
+          mapfile -t schemas < <(rg --files -g '*.avsc' --iglob '!**/target/**' --iglob '!butterfly-common/src/main/avro/RimFastEvent.avsc')
+          if [ "${#schemas[@]}" -gt 0 ]; then
+            echo "Found Avro schemas outside butterfly-common (source of truth):"
+            printf ' - %s\n' "${schemas[@]}"
+            exit 1
+          fi
+          echo "Avro ownership check passed (only butterfly-common contains schemas)."

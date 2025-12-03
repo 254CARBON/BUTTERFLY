@@ -1,0 +1,39 @@
+# Module repositories (managed separately)
+PLATO/
+PERCEPTION/
+CAPSULE/
+ODYSSEY/
+butterfly-common/
+butterfly-nexus/
+butterfly-e2e/
+
+# Build artifacts
+target/
+node_modules/
+.next/
+dist/
+build/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Package manager locks (keep package-lock.json)
+yarn.lock
+pnpm-lock.yaml

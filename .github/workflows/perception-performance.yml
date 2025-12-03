@@ -1,0 +1,143 @@
+name: PERCEPTION Performance Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      simulation:
+        description: "Gatling simulation to run"
+        required: false
+        default: "ApiSmokeSimulation"
+        type: choice
+        options:
+          - ApiSmokeSimulation
+          - AcquisitionIngestionSimulation
+          - CriticalPathSimulation
+          - StreamCAndCapsuleSimulation
+      target_url:
+        description: "Target API URL (leave empty to start local stack)"
+        required: false
+        default: ""
+        type: string
+  schedule:
+    - cron: "0 2 * * *"  # Nightly at 2 AM UTC
+
+env:
+  JAVA_VERSION: "17"
+  GATLING_DIR: PERCEPTION/performance/gatling
+
+jobs:
+  performance-smoke:
+    name: Gatling Performance Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Cache Scala/Gatling dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/io/gatling
+            ~/.m2/repository/org/scala-lang
+          key: ${{ runner.os }}-gatling-${{ hashFiles('PERCEPTION/performance/gatling/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-gatling-
+
+      - name: Start test infrastructure (local mode)
+        if: ${{ github.event.inputs.target_url == '' || github.event_name == 'schedule' }}
+        working-directory: PERCEPTION
+        run: |
+          docker compose -f docker-compose.dev.yml up -d kafka redis postgres
+          echo "Waiting for infrastructure to be ready..."
+          sleep 30
+
+      - name: Run Gatling simulation (scheduled - smoke)
+        if: ${{ github.event_name == 'schedule' }}
+        working-directory: ${{ env.GATLING_DIR }}
+        run: |
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.ApiSmokeSimulation \
+            -Dperception.api.url=${PERCEPTION_API_URL:-http://localhost:8080}
+
+      - name: Run Gatling simulation (manual)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        working-directory: ${{ env.GATLING_DIR }}
+        env:
+          TARGET_URL: ${{ github.event.inputs.target_url }}
+          SIMULATION: ${{ github.event.inputs.simulation }}
+        run: |
+          API_URL="${TARGET_URL:-http://localhost:8080}"
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.${SIMULATION} \
+            -Dperception.api.url=${API_URL}
+
+      - name: Stop test infrastructure
+        if: ${{ always() && (github.event.inputs.target_url == '' || github.event_name == 'schedule') }}
+        working-directory: PERCEPTION
+        run: |
+          docker compose -f docker-compose.dev.yml down -v || true
+
+      - name: Upload Gatling reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gatling-reports-${{ github.run_id }}
+          path: ${{ env.GATLING_DIR }}/target/gatling/
+          retention-days: 30
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Simulation**: ${{ github.event.inputs.simulation || 'ApiSmokeSimulation' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID**: ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Reports available in workflow artifacts." >> $GITHUB_STEP_SUMMARY
+
+  # Load test job - only runs on manual dispatch with specific simulation
+  load-test:
+    name: Full Load Test (10k rps)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.simulation == 'AcquisitionIngestionSimulation' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Run full load test
+        working-directory: ${{ env.GATLING_DIR }}
+        env:
+          TARGET_URL: ${{ github.event.inputs.target_url }}
+        run: |
+          API_URL="${TARGET_URL:-http://localhost:8080}"
+          mvn gatling:test \
+            -Dgatling.simulationClass=com.z254.butterfly.perception.performance.AcquisitionIngestionSimulation \
+            -Dperception.api.url=${API_URL}
+
+      - name: Upload load test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gatling-load-test-${{ github.run_id }}
+          path: ${{ env.GATLING_DIR }}/target/gatling/
+          retention-days: 30
+

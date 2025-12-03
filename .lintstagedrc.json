@@ -1,0 +1,12 @@
+{
+  "PERCEPTION/perception-portal/**/*.{ts,tsx}": [
+    "eslint --max-warnings=0"
+  ],
+  "CAPSULE/capsule-ui/**/*.{ts,tsx}": [
+    "eslint --max-warnings=0"
+  ],
+  "*.{json,md,yml,yaml}": [
+    "prettier --check --ignore-unknown"
+  ]
+}
+
