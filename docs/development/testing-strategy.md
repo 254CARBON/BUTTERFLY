@@ -9,7 +9,7 @@
 
 ## Overview
 
-BUTTERFLY employs a comprehensive testing strategy with multiple test layers to ensure quality and reliability.
+BUTTERFLY employs a comprehensive testing strategy with multiple test layers to ensure quality and reliability. This document defines canonical testing expectations that apply across all services, with service-specific variations noted where applicable.
 
 ---
 
@@ -35,6 +35,139 @@ BUTTERFLY employs a comprehensive testing strategy with multiple test layers to 
 | Unit | 80%+ | < 5 minutes |
 | Integration | Critical paths | < 15 minutes |
 | E2E | Happy paths | < 30 minutes |
+
+---
+
+## Per-Service Test Matrix
+
+### What Constitutes "Green" for PRs
+
+| Service | Unit Tests | Integration Tests | E2E Tests | Chaos Tests | Coverage |
+|---------|-----------|-------------------|-----------|-------------|----------|
+| **CAPSULE** | `mvn test` ✓ | `mvn verify` ✓ | Optional | Optional | ≥80% |
+| **ODYSSEY** | `mvn test` ✓ | `mvn verify -P integration-tests` ✓ | Golden path ✓ | - | ≥80% |
+| **PERCEPTION** | `mvn test` ✓ | `mvn verify -P integration-tests` ✓ | Portal E2E ✓ | Nightly | ≥80% |
+| **PLATO** | `mvn test` ✓ | `mvn verify` ✓ | - | - | ≥80% |
+| **NEXUS** | `mvn test` ✓ | `mvn verify` ✓ | - | - | ≥80% |
+| **butterfly-common** | `mvn test` ✓ | - | - | - | ≥90% |
+
+**Legend**: ✓ = Required for PR merge, Optional = Nice-to-have, Nightly = Runs on schedule
+
+### Test Commands by Service
+
+#### CAPSULE
+
+```bash
+# Unit tests
+mvn -f CAPSULE/pom.xml test
+
+# All tests including integration
+mvn -f CAPSULE/pom.xml verify
+
+# SDK tests
+mvn -f CAPSULE/capsule-sdk-java/pom.xml test
+cd CAPSULE/capsule-sdk-python && pytest -v
+cd CAPSULE/capsule-sdk-typescript && npm test
+
+# UI tests
+cd CAPSULE/capsule-ui && npm test
+cd CAPSULE/capsule-ui && npm run test:e2e
+
+# Chaos tests
+cd CAPSULE && python chaos_test.py
+
+# Performance tests
+cd CAPSULE && python performance_test.py
+```
+
+#### ODYSSEY
+
+```bash
+# Unit tests
+mvn -f ODYSSEY/pom.xml test
+
+# Integration tests
+mvn -f ODYSSEY/pom.xml verify -P integration-tests
+
+# Specific module
+mvn -f ODYSSEY/pom.xml test -pl odyssey-core
+
+# Golden path (from apps root)
+./butterfly-e2e/run-golden-path.sh
+```
+
+#### PERCEPTION
+
+```bash
+# Unit tests
+mvn -f PERCEPTION/pom.xml test
+
+# Specific module
+mvn -f PERCEPTION/pom.xml test -pl perception-signals
+
+# Integration tests
+mvn -f PERCEPTION/pom.xml verify -P integration-tests
+
+# Chaos tests (runs in nightly CI)
+mvn -f PERCEPTION/pom.xml test -pl perception-api -Dgroups=chaos
+
+# Portal tests
+cd PERCEPTION/perception-portal && npm test
+cd PERCEPTION/perception-portal && npm run test:e2e
+```
+
+#### PLATO
+
+```bash
+# Unit tests
+mvn -f PLATO/pom.xml test
+
+# All tests
+mvn -f PLATO/pom.xml verify
+
+# Specific test class
+mvn -f PLATO/pom.xml test -Dtest=SpecServiceTest
+```
+
+#### NEXUS
+
+```bash
+# Unit tests
+mvn -f butterfly-nexus/pom.xml test
+
+# All tests
+mvn -f butterfly-nexus/pom.xml verify
+```
+
+#### butterfly-common
+
+```bash
+# Unit tests (higher coverage required)
+mvn -f butterfly-common/pom.xml test
+
+# With coverage report
+mvn -f butterfly-common/pom.xml test jacoco:report
+```
+
+### E2E Test Harness
+
+The `butterfly-e2e` module provides ecosystem-wide testing:
+
+```bash
+# Run golden path integration test
+./butterfly-e2e/run-golden-path.sh
+
+# Run full scenario suite
+./butterfly-e2e/run-scenarios.sh
+
+# Against external Kafka (skip local Docker)
+START_DEV_STACK=0 ./butterfly-e2e/run-scenarios.sh
+
+# Full stack smoke test
+docker compose -f butterfly-e2e/docker-compose.full.yml up --profile odyssey
+```
+
+**Scenario Catalog**: `butterfly-e2e/scenarios/catalog.json`
 
 ---
 

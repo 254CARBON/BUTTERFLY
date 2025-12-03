@@ -12,6 +12,18 @@
 
 NEXUS is the integration layer of BUTTERFLY—the "Cognitive Cortex" that unifies all services into a coherent whole. It provides temporal intelligence fusion, cross-system reasoning, and emergent capabilities that no single service can offer alone.
 
+### Service Type: Background Service (Headless)
+
+NEXUS operates as a **background service** with no dedicated UI. It is designed for programmatic interaction via REST APIs and WebSocket endpoints.
+
+| Aspect | Details |
+|--------|---------|
+| **UI Strategy** | Reuses CAPSULE UI for management and visualization |
+| **Primary Interface** | REST API + WebSocket endpoints |
+| **Management Portal** | Access via shared CAPSULE UI |
+
+> **Note**: All user-facing management, monitoring, and configuration for NEXUS is handled through the **CAPSULE UI portal**. NEXUS itself remains a headless background service focused on cross-service integration and temporal intelligence.
+
 ## Purpose
 
 > "NEXUS integrates the ecosystem—fusing past, present, and future into unified intelligence."

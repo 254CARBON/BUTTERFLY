@@ -461,17 +461,68 @@ jobs:
 
 ## Quality Gates
 
-### Merge Requirements
+### Merge Requirements (PR Checklist)
 
-| Check | Requirement |
-|-------|-------------|
-| Build | Must pass |
-| Unit tests | Must pass |
-| Integration tests | Must pass |
-| Security scan | No critical/high CVEs |
-| Code coverage | ≥ 80% |
-| Code review | 1 approval |
-| Lint | Must pass |
+| Check | Requirement | How to Verify Locally |
+|-------|-------------|----------------------|
+| Build | Must pass | `mvn clean compile` |
+| Unit tests | Must pass | `mvn test` |
+| Integration tests | Must pass | `mvn verify` |
+| Security scan | No critical/high CVEs | (CI only) |
+| Code coverage | ≥ 80% | `mvn test jacoco:report` |
+| Code review | 1 approval | (PR process) |
+| Lint/Checkstyle | Must pass | `mvn checkstyle:check` |
+| Commit format | Conventional commits | Husky pre-commit hook |
+
+### Per-Service CI Workflows
+
+| Service | Workflow File | Trigger | What Runs |
+|---------|---------------|---------|-----------|
+| PERCEPTION | `perception-ci.yml` | PR, push to main | Build, test, lint, coverage |
+| PLATO | `plato-ci.yml` | PR, push to main | Build, test, lint, coverage |
+| CAPSULE | (via code-quality.yml) | PR, push to main | Build, test |
+| ODYSSEY | (via code-quality.yml) | PR, push to main | Build, test |
+| butterfly-e2e | `butterfly-e2e.yml` | Nightly, manual | Golden path, scenario suite |
+| All | `code-quality.yml` | PR, push | Lint, static analysis |
+| All | `security-scan.yml` | PR, push | OWASP dependency check |
+| All | `contracts-guardrails.yml` | PR | Avro schema validation |
+
+### What Constitutes "Green PR"
+
+For a PR to be mergeable, all of the following must pass:
+
+1. **Commitlint**: All commit messages follow conventional commits format
+2. **Build**: Service compiles without errors
+3. **Unit Tests**: All unit tests pass
+4. **Coverage**: Coverage threshold met (≥80% for services, ≥90% for butterfly-common)
+5. **Lint/Style**: Checkstyle/Spotless checks pass
+6. **Security**: No critical/high CVEs in dependencies
+7. **Code Review**: At least one approval from a maintainer
+
+### Running CI Checks Locally
+
+Before pushing, run these checks to catch issues early:
+
+```bash
+# Full check (recommended before PR)
+mvn clean verify
+
+# Just compile
+mvn compile
+
+# Just tests
+mvn test
+
+# Style check
+mvn checkstyle:check spotless:check
+
+# Coverage report
+mvn test jacoco:report
+# View: target/site/jacoco/index.html
+
+# Commit message validation (if committing)
+# Husky runs commitlint automatically on commit-msg hook
+```
 
 ### Deployment Gates
 
@@ -513,6 +564,27 @@ kubectl rollout undo deployment/capsule -n butterfly --to-revision=2
 
 ---
 
+## Troubleshooting CI Failures
+
+### Common Issues
+
+| Failure | Cause | Solution |
+|---------|-------|----------|
+| Commitlint fails | Commit message format | Use `<type>(<scope>): <subject>` |
+| Checkstyle fails | Code style violations | Run `mvn spotless:apply` |
+| Coverage too low | Insufficient tests | Add tests for new code |
+| Security scan fails | Vulnerable dependency | Update dependency version |
+| Integration test fails | Missing infrastructure | Check Docker containers |
+
+### Debugging Workflow Failures
+
+1. Check the CI job logs in GitHub Actions
+2. Reproduce locally using the commands above
+3. For flaky tests, check for race conditions or external dependencies
+4. For PERCEPTION chaos tests, see `PERCEPTION/docs/runbooks/ci-pipeline-troubleshooting.md`
+
+---
+
 ## Related Documentation
 
 | Document | Description |
@@ -520,4 +592,5 @@ kubectl rollout undo deployment/capsule -n butterfly --to-revision=2
 | [Contributing](contributing.md) | Contribution guide |
 | [Testing Strategy](testing-strategy.md) | Testing approach |
 | [Deployment](../operations/deployment/README.md) | Deployment guides |
+| [PERCEPTION CI Troubleshooting](../../PERCEPTION/docs/runbooks/ci-pipeline-troubleshooting.md) | CI debugging |
 

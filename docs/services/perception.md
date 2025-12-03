@@ -12,6 +12,18 @@
 
 PERCEPTION is the sensory layer of BUTTERFLY, responsible for ingesting external information, normalizing it, scoring its trustworthiness, detecting events, and maintaining the Reality Integration Mesh (RIM).
 
+### Service Type: Full-Stack with Dedicated UI
+
+PERCEPTION is a **full-stack service** with its own dedicated user interface for the PERCEPTION multiservice platform.
+
+| Aspect | Details |
+|--------|---------|
+| **UI Strategy** | Dedicated PERCEPTION UI (not shared) |
+| **Primary Interface** | REST API + Dedicated Web UI |
+| **Management Portal** | Self-contained PERCEPTION UI |
+
+> **Note**: Unlike NEXUS, ODYSSEY, and PLATO (which are headless background services using the CAPSULE UI), PERCEPTION has its own dedicated UI tailored for multiservice operations including acquisition management, trust score dashboards, event monitoring, signal visualization, RIM graph exploration, and source configuration.
+
 ## Purpose
 
 > "PERCEPTION senses the world and transforms raw information into trusted, structured signals."

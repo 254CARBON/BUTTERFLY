@@ -53,6 +53,60 @@ The BUTTERFLY ecosystem consists of six primary services, each with a specific r
 
 ---
 
+## UI Architecture
+
+The BUTTERFLY ecosystem follows a clear separation between backend services and user interfaces:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        BUTTERFLY UI Architecture                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────┐    ┌─────────────────────────────────┐│
+│  │         CAPSULE UI              │    │        PERCEPTION UI            ││
+│  │   (Shared Management Portal)    │    │   (Dedicated Multiservice UI)   ││
+│  │                                 │    │                                 ││
+│  │   Used by:                      │    │   Used by:                      ││
+│  │   • CAPSULE (native)            │    │   • PERCEPTION only             ││
+│  │   • NEXUS (background service)  │    │                                 ││
+│  │   • ODYSSEY (background service)│    │   Features:                     ││
+│  │   • PLATO (background service)  │    │   • Acquisition management      ││
+│  │                                 │    │   • Trust score dashboards      ││
+│  │   Features:                     │    │   • Event monitoring            ││
+│  │   • History browsing            │    │   • Signal visualization        ││
+│  │   • Temporal queries            │    │   • RIM graph explorer          ││
+│  │   • Service configuration       │    │   • Source configuration        ││
+│  │   • Governance dashboards       │    │                                 ││
+│  └─────────────────────────────────┘    └─────────────────────────────────┘│
+│                                                                              │
+│  Background Services (Headless - No Native UI):                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                         │
+│  │   NEXUS     │  │  ODYSSEY    │  │   PLATO     │                         │
+│  │ Integration │  │  Cognition  │  │ Governance  │                         │
+│  │   Cortex    │  │   Engine    │  │   Layer     │                         │
+│  │             │  │             │  │             │                         │
+│  │  API-only   │  │  API-only   │  │  API-only   │                         │
+│  │  + reuses   │  │  + reuses   │  │  + reuses   │                         │
+│  │ CAPSULE UI  │  │ CAPSULE UI  │  │ CAPSULE UI  │                         │
+│  └─────────────┘  └─────────────┘  └─────────────┘                         │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Service Types
+
+| Service | Type | UI Strategy |
+|---------|------|-------------|
+| **PERCEPTION** | Full-stack | Dedicated UI for PERCEPTION multiservice operations |
+| **CAPSULE** | Full-stack | Native UI (shared with NEXUS, ODYSSEY, PLATO) |
+| **NEXUS** | Background | Headless service; management through CAPSULE UI |
+| **ODYSSEY** | Background | Headless service; management through CAPSULE UI |
+| **PLATO** | Background | Headless service; management through CAPSULE UI |
+
+> **Note**: NEXUS, ODYSSEY, and PLATO are background services designed to operate headlessly. They expose REST APIs and WebSocket endpoints for programmatic interaction, but all user-facing management and visualization is provided through the shared CAPSULE UI portal.
+
+---
+
 ## Service Responsibilities
 
 ### PERCEPTION - "Sense the World"

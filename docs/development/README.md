@@ -17,10 +17,11 @@ This section provides comprehensive guidance for developers working on the BUTTE
 
 | Document | Description |
 |----------|-------------|
-| [Contributing](contributing.md) | How to contribute |
+| [Contributing](contributing.md) | How to contribute (canonical guide) |
 | [Coding Standards](coding-standards.md) | Code style guide |
 | [Testing Strategy](testing-strategy.md) | Testing approach |
 | [CI/CD](ci-cd.md) | Build and deployment pipelines |
+| [Templates](../templates/) | Documentation templates (module README, runbook, ADR) |
 
 ---
 

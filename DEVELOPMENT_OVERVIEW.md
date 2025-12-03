@@ -298,12 +298,27 @@ See `PERCEPTION/docs/runbooks/ci-pipeline-troubleshooting.md` for common CI fail
 | NEXUS | [Summary](docs/services/nexus.md) • [README](butterfly-nexus/README.md) |
 | Common | [Summary](docs/services/butterfly-common.md) • [README](butterfly-common/README.md) |
 
+### Development & Contributing
+
+- **[docs/development/contributing.md](docs/development/contributing.md)** - Canonical contributing guide (branch naming, commits, PR process)
+- **[docs/development/testing-strategy.md](docs/development/testing-strategy.md)** - Per-service test matrices and requirements
+- **[docs/development/ci-cd.md](docs/development/ci-cd.md)** - CI/CD pipelines and green-PR criteria
+- **[docs/templates/](docs/templates/)** - Documentation templates (module README, runbook, ADR)
+
+### Service-Level Contributing Guides
+
+| Service | Contributing Guide |
+|---------|-------------------|
+| CAPSULE | [CAPSULE/CONTRIBUTING.md](CAPSULE/CONTRIBUTING.md) |
+| ODYSSEY | [ODYSSEY/CONTRIBUTING.md](ODYSSEY/CONTRIBUTING.md) |
+| PERCEPTION | [PERCEPTION/CONTRIBUTING.md](PERCEPTION/CONTRIBUTING.md) |
+| PLATO | [PLATO/CONTRIBUTING.md](PLATO/CONTRIBUTING.md) |
+| NEXUS | [butterfly-nexus/CONTRIBUTING.md](butterfly-nexus/CONTRIBUTING.md) |
+| butterfly-common | [butterfly-common/CONTRIBUTING.md](butterfly-common/CONTRIBUTING.md) |
+
 ### Additional Resources
 
 - [DX_NOTES.md](DX_NOTES.md) - Additional developer experience notes
 - [docs/adr/](docs/adr/) - Architecture Decision Records
 - [docs/onboarding/](docs/onboarding/) - New contributor onboarding guide
-- [PERCEPTION/CONTRIBUTING.md](PERCEPTION/CONTRIBUTING.md) - PERCEPTION contribution guide
-- [PLATO/CONTRIBUTING.md](PLATO/CONTRIBUTING.md) - PLATO contribution guide
-- [CAPSULE/CONTRIBUTING.md](CAPSULE/CONTRIBUTING.md) - CAPSULE contribution guide
 - [PLATO/ENGINEERING_ROADMAP.md](PLATO/ENGINEERING_ROADMAP.md) - PLATO strategic roadmap

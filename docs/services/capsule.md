@@ -12,6 +12,19 @@
 
 CAPSULE is the memory layer of BUTTERFLY, responsible for storing and retrieving 4D atomic units of history. Each CAPSULE represents a complete snapshot of reality at a specific point in time, resolution, and vantage point.
 
+### UI Architecture
+
+CAPSULE provides the **shared management UI portal** for multiple BUTTERFLY services:
+
+| Service | UI Relationship |
+|---------|-----------------|
+| **CAPSULE** | Native UI - primary management interface |
+| **NEXUS** | Reuses CAPSULE UI - background service |
+| **ODYSSEY** | Reuses CAPSULE UI - background service |
+| **PLATO** | Reuses CAPSULE UI - background service |
+
+> **Note**: NEXUS, ODYSSEY, and PLATO are headless background services that operate via APIs. All user-facing management for these services is consolidated through the CAPSULE UI portal, providing a unified experience for history browsing, temporal queries, service configuration, and governance dashboards.
+
 ## Purpose
 
 > "CAPSULE remembers history as 4D atomic units, enabling any query about past state with full provenance."

@@ -12,6 +12,18 @@
 
 PLATO (Platform for Learning, Analysis, and Transformation Operations) is the governance and intelligence layer of BUTTERFLY. It provides policy enforcement, AI engine coordination, and intelligent automation through six specialized engines.
 
+### Service Type: Background Service (Headless)
+
+PLATO operates as a **background service** with no dedicated UI. It is designed for programmatic interaction via REST APIs and WebSocket endpoints.
+
+| Aspect | Details |
+|--------|---------|
+| **UI Strategy** | Reuses CAPSULE UI for management and visualization |
+| **Primary Interface** | REST API + WebSocket endpoints |
+| **Management Portal** | Access via shared CAPSULE UI |
+
+> **Note**: All user-facing management, monitoring, governance dashboards, and plan execution monitoring for PLATO is handled through the **CAPSULE UI portal**. PLATO itself remains a headless background service focused on governance and AI coordination.
+
 ## Purpose
 
 > "PLATO governs the ecosystem—enforcing policies, coordinating AI, and generating machine-verifiable proofs."

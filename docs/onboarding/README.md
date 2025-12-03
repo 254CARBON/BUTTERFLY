@@ -24,8 +24,9 @@ We recommend following this sequence:
 ### Week 2: Hands-On
 
 4. **[Common Workflows](common-workflows.md)** - Build, test, debug, and deploy
-5. **Run the E2E suite** - `./butterfly-e2e/run-golden-path.sh`
-6. **Make your first change** - Pick a "good first issue" from the backlog
+5. **Read the [Contributing Guide](../development/contributing.md)** - Understand branch naming, commits, and PR process
+6. **Run the E2E suite** - `./butterfly-e2e/run-golden-path.sh`
+7. **Make your first change** - Pick a "good first issue" from the backlog
 
 ### Week 3: Deep Dives
 
@@ -42,9 +43,21 @@ We recommend following this sequence:
 | Resource | Purpose |
 |----------|---------|
 | [DEVELOPMENT_OVERVIEW.md](../../DEVELOPMENT_OVERVIEW.md) | Fast path to running stack |
-| [PLATO/CONTRIBUTING.md](../../PLATO/CONTRIBUTING.md) | PLATO contribution guidelines |
-| [PERCEPTION/CONTRIBUTING.md](../../PERCEPTION/CONTRIBUTING.md) | PERCEPTION contribution guidelines |
+| [docs/development/contributing.md](../development/contributing.md) | **Canonical contributing guide** (branch naming, commits, PR process) |
+| [docs/development/testing-strategy.md](../development/testing-strategy.md) | Per-service test matrices |
+| [docs/templates/](../templates/) | Documentation templates |
 | [Troubleshooting](troubleshooting.md) | Common issues and solutions |
+
+### Contributing to Services
+
+| Service | Contributing Guide | Development Setup |
+|---------|-------------------|-------------------|
+| **CAPSULE** | [CONTRIBUTING.md](../../CAPSULE/CONTRIBUTING.md) | [DEVELOPMENT.md](../../CAPSULE/DEVELOPMENT.md) |
+| **ODYSSEY** | [CONTRIBUTING.md](../../ODYSSEY/CONTRIBUTING.md) | [docs/DEV_ENVIRONMENT_SETUP.md](../../ODYSSEY/docs/DEV_ENVIRONMENT_SETUP.md) |
+| **PERCEPTION** | [CONTRIBUTING.md](../../PERCEPTION/CONTRIBUTING.md) | [GETTING_STARTED.md](../../PERCEPTION/GETTING_STARTED.md) |
+| **PLATO** | [CONTRIBUTING.md](../../PLATO/CONTRIBUTING.md) | [docs/getting-started/quickstart.md](../../PLATO/docs/getting-started/quickstart.md) |
+| **NEXUS** | [CONTRIBUTING.md](../../butterfly-nexus/CONTRIBUTING.md) | [README.md](../../butterfly-nexus/README.md) |
+| **butterfly-common** | [CONTRIBUTING.md](../../butterfly-common/CONTRIBUTING.md) | [README.md](../../butterfly-common/README.md) |
 
 ## Key Concepts
 

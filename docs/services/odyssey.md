@@ -12,6 +12,18 @@
 
 ODYSSEY is the strategic cognition layer of BUTTERFLY. It maintains a live, coherent model of the world, projects plausible futures, models how key actors will move, learns from historical outcomes, and synthesizes posture and options across horizons.
 
+### Service Type: Background Service (Headless)
+
+ODYSSEY operates as a **background service** with no dedicated UI. It is designed for programmatic interaction via REST APIs and GraphQL endpoints.
+
+| Aspect | Details |
+|--------|---------|
+| **UI Strategy** | Reuses CAPSULE UI for management and visualization |
+| **Primary Interface** | REST API + GraphQL endpoint |
+| **Management Portal** | Access via shared CAPSULE UI |
+
+> **Note**: All user-facing management, monitoring, and visualization for ODYSSEY is handled through the **CAPSULE UI portal**. ODYSSEY itself remains a headless background service focused on strategic cognition and world modeling.
+
 ## Purpose
 
 > "ODYSSEY thinks strategically about the world—understanding what exists, what might happen, and who is acting."

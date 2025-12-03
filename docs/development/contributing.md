@@ -1,6 +1,6 @@
 # Contributing to BUTTERFLY
 
-> Guidelines for contributing to the BUTTERFLY ecosystem
+> Canonical guidelines for contributing to the BUTTERFLY ecosystem
 
 **Last Updated**: 2025-12-03  
 **Target Audience**: Contributors, developers
@@ -9,7 +9,20 @@
 
 ## Welcome
 
-Thank you for your interest in contributing to BUTTERFLY! This guide will help you get started.
+Thank you for your interest in contributing to BUTTERFLY! This is the **canonical contributing guide** for the entire ecosystem. Individual services (CAPSULE, ODYSSEY, PERCEPTION, PLATO, NEXUS, butterfly-common) may have service-specific contributing files that extend these guidelines with domain-specific details.
+
+---
+
+## Quick Links
+
+| Service | Contributing Guide | Development Setup |
+|---------|-------------------|-------------------|
+| **CAPSULE** | [CAPSULE/CONTRIBUTING.md](../../CAPSULE/CONTRIBUTING.md) | [CAPSULE/DEVELOPMENT.md](../../CAPSULE/DEVELOPMENT.md) |
+| **ODYSSEY** | [ODYSSEY/CONTRIBUTING.md](../../ODYSSEY/CONTRIBUTING.md) | [ODYSSEY/docs/DEV_ENVIRONMENT_SETUP.md](../../ODYSSEY/docs/DEV_ENVIRONMENT_SETUP.md) |
+| **PERCEPTION** | [PERCEPTION/CONTRIBUTING.md](../../PERCEPTION/CONTRIBUTING.md) | [PERCEPTION/GETTING_STARTED.md](../../PERCEPTION/GETTING_STARTED.md) |
+| **PLATO** | [PLATO/CONTRIBUTING.md](../../PLATO/CONTRIBUTING.md) | [PLATO/docs/getting-started/quickstart.md](../../PLATO/docs/getting-started/quickstart.md) |
+| **NEXUS** | [butterfly-nexus/CONTRIBUTING.md](../../butterfly-nexus/CONTRIBUTING.md) | [butterfly-nexus/README.md](../../butterfly-nexus/README.md) |
+| **Common** | [butterfly-common/CONTRIBUTING.md](../../butterfly-common/CONTRIBUTING.md) | [butterfly-common/README.md](../../butterfly-common/README.md) |
 
 ---
 
@@ -33,37 +46,49 @@ Thank you for your interest in contributing to BUTTERFLY! This guide will help y
 
 ## Getting Started
 
-### 1. Fork and Clone
+### Prerequisites
+
+| Tool | Minimum Version | Purpose |
+|------|-----------------|---------|
+| Java JDK | 17 | Backend services |
+| Maven | 3.9+ | Build tool |
+| Node.js | 20+ | Frontend portal, tooling, git hooks |
+| Docker | 20+ | Dev infrastructure |
+| Docker Compose | v2+ | Multi-container orchestration |
+| Git | 2.x | Version control |
+
+### 1. Clone and Setup
 
 ```bash
-# Fork on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/butterfly.git
-cd butterfly
-git remote add upstream https://github.com/butterfly-org/butterfly.git
+# Clone the repository
+git clone https://github.com/254CARBON/BUTTERFLY.git
+cd BUTTERFLY/apps
+
+# Run setup script (installs hooks, builds common library)
+./scripts/setup.sh
+
+# Or manually:
+npm install
+mvn -f butterfly-common/pom.xml clean install -DskipTests
 ```
 
-### 2. Setup Environment
+### 2. Start Infrastructure
 
 ```bash
-# Install dependencies
-npm install
-npx husky install
+# Start Kafka and dependencies
+./scripts/dev-up.sh
 
-# Start infrastructure
-cd apps
-docker compose -f docker-compose.infra.yml up -d
-
-# Build
-./gradlew build
+# Or start specific service infrastructure
+docker compose -f PERCEPTION/docker-compose.yml up -d postgres redis kafka
 ```
 
 ### 3. Create Branch
 
 ```bash
 # Sync with upstream
-git fetch upstream
-git checkout develop
-git merge upstream/develop
+git fetch origin
+git checkout main
+git pull origin main
 
 # Create feature branch
 git checkout -b feature/your-feature-name
@@ -71,79 +96,130 @@ git checkout -b feature/your-feature-name
 
 ---
 
-## Development Workflow
+## Branch Naming Convention
 
-### Making Changes
+Use these prefixes for branch names:
 
-1. **Write tests first** (TDD encouraged)
-2. **Implement the feature**
-3. **Run tests locally**
-   ```bash
-   ./gradlew test
-   ./gradlew integrationTest
-   ```
-4. **Check code quality**
-   ```bash
-   ./gradlew check
-   ```
-5. **Format code**
-   ```bash
-   ./gradlew spotlessApply
-   ```
+| Prefix | Purpose | Example |
+|--------|---------|---------|
+| `feature/` | New features | `feature/add-signal-clustering` |
+| `bugfix/` | Bug fixes | `bugfix/fix-null-pointer-exception` |
+| `hotfix/` | Critical production fixes | `hotfix/security-patch` |
+| `refactor/` | Code refactoring | `refactor/extract-common-utils` |
+| `docs/` | Documentation updates | `docs/update-api-guide` |
+| `chore/` | Build/tooling changes | `chore/upgrade-spring-boot` |
+| `perf/` | Performance improvements | `perf/optimize-query-performance` |
 
-### Commit Guidelines
+---
 
-We use [Conventional Commits](https://www.conventionalcommits.org/):
+## Commit Message Format
+
+We use [Conventional Commits](https://www.conventionalcommits.org/) enforced via commitlint and Husky pre-commit hooks.
+
+### Format
 
 ```
-<type>(<scope>): <description>
+<type>(<scope>): <subject>
 
 [optional body]
 
 [optional footer(s)]
 ```
 
-**Types:**
+### Types
 
 | Type | Description |
 |------|-------------|
 | `feat` | New feature |
 | `fix` | Bug fix |
 | `docs` | Documentation only |
-| `style` | Code style (no logic change) |
+| `style` | Code style (formatting, no logic change) |
 | `refactor` | Code refactoring |
 | `perf` | Performance improvement |
 | `test` | Adding/fixing tests |
 | `build` | Build system changes |
 | `ci` | CI configuration |
 | `chore` | Other changes |
+| `revert` | Revert a previous commit |
 
-**Scopes:**
+### Scopes
+
+Use the service or module name:
 - `capsule`, `odyssey`, `perception`, `plato`, `nexus`
 - `common`, `e2e`, `docs`, `infra`
+- Module-specific: `acquisition`, `signals`, `synthplane`, etc.
 
-**Examples:**
+### Examples
 
 ```bash
-feat(capsule): implement time-travel optimization
+# Feature
+feat(perception): add signal clustering API
 
-BREAKING CHANGE: CapsuleQuery API signature changed
+# Bug fix
+fix(plato): correct temporal rule extraction
 
-fix(nexus): resolve rate limiting bypass issue
+# Documentation
+docs(capsule): update SDK examples
 
-Fixes #123
+# Breaking change
+feat(odyssey)!: change path engine API
 
-docs(api): update authentication examples
+BREAKING CHANGE: PathRequest now requires explicit horizon parameter
 ```
 
 ### Pre-Commit Hooks
 
-Husky runs these checks before each commit:
+Husky runs these checks automatically before each commit:
 
-- Code formatting (Spotless)
-- Linting (Checkstyle)
-- Tests (affected modules)
-- Commit message format
+- **commitlint**: Validates commit message format
+- **ESLint**: Lints TypeScript/JavaScript (portal files)
+
+To bypass hooks temporarily (not recommended):
+```bash
+git commit --no-verify -m "your message"
+```
+
+---
+
+## Testing Requirements
+
+### Test Matrix by Service
+
+| Service | Unit Tests | Integration Tests | E2E Tests | Chaos Tests |
+|---------|-----------|-------------------|-----------|-------------|
+| CAPSULE | `mvn test` | `mvn verify` | `capsule-ui: npm run test:e2e` | `chaos_test.py` |
+| ODYSSEY | `mvn test` | `mvn verify -P integration-tests` | E2E harness | - |
+| PERCEPTION | `mvn test` | `mvn verify -P integration-tests` | `npm run test:e2e` | `mvn test -Dgroups=chaos` |
+| PLATO | `mvn test` | `mvn verify` | - | - |
+| NEXUS | `mvn test` | `mvn verify` | - | - |
+| Common | `mvn test` | - | - | - |
+
+### Coverage Targets
+
+- **New code**: ≥80% line coverage
+- **Critical paths**: ≥90% branch coverage
+- Use JaCoCo for coverage reports: `mvn test jacoco:report`
+
+### Running Tests Locally
+
+```bash
+# All tests for a service
+mvn -f PERCEPTION/pom.xml test
+
+# Specific module
+mvn -f PERCEPTION/pom.xml test -pl perception-signals
+
+# Integration tests
+mvn -f PERCEPTION/pom.xml verify -P integration-tests
+
+# Chaos tests (PERCEPTION)
+mvn -f PERCEPTION/pom.xml test -pl perception-api -Dgroups=chaos
+
+# E2E golden path
+./butterfly-e2e/run-golden-path.sh
+```
+
+See [Testing Strategy](testing-strategy.md) for comprehensive testing guidelines.
 
 ---
 
@@ -151,11 +227,30 @@ Husky runs these checks before each commit:
 
 ### Before Opening PR
 
-- [ ] Tests pass locally
-- [ ] Code quality checks pass
-- [ ] Documentation updated (if needed)
-- [ ] Changelog entry added (if user-facing)
-- [ ] Commit messages follow convention
+Ensure the following checklist passes:
+
+#### General
+
+- [ ] Code follows style guidelines
+- [ ] All tests pass locally
+- [ ] New tests added for new functionality
+- [ ] Documentation updated (if applicable)
+- [ ] Commit messages follow conventions
+- [ ] No merge conflicts with main branch
+
+#### Backend Changes
+
+- [ ] Code coverage maintained or improved
+- [ ] API documentation updated (if API changes)
+- [ ] `mvn verify` passes
+- [ ] Tenant isolation verified (if touching tenant-aware code)
+
+#### Frontend/Portal Changes
+
+- [ ] `npm run lint` passes
+- [ ] `npm run test` passes
+- [ ] `npm run build` succeeds
+- [ ] Component tests added for new components
 
 ### Creating PR
 
@@ -165,11 +260,11 @@ Husky runs these checks before each commit:
    ```
 
 2. **Open PR on GitHub**
-   - Base: `develop`
+   - Base: `main`
    - Fill out PR template
    - Link related issues
 
-3. **PR Title Format**
+3. **PR Title Format**: Use conventional commit format
    ```
    feat(scope): Short description
    ```
@@ -190,16 +285,17 @@ Fixes #123
 - [ ] Documentation update
 
 ## Checklist
-- [ ] Tests added/updated
+- [ ] Tests added/updated and passing
 - [ ] Documentation updated
-- [ ] Changelog updated
+- [ ] Code follows project style guidelines
 - [ ] Self-reviewed code
+- [ ] No merge conflicts
 
 ## Testing Done
 [Describe testing performed]
 
 ## Screenshots (if applicable)
-[Add screenshots]
+[Add screenshots for UI changes]
 ```
 
 ### Review Process
@@ -216,22 +312,17 @@ Fixes #123
 
 ### For Authors
 
-- Keep PRs focused and small
+- Keep PRs focused and small (<400 lines ideal)
+- Self-review before requesting review
 - Respond to feedback promptly
 - Explain complex changes
-- Be open to suggestions
 
 ### For Reviewers
 
+- Review within 24-48 hours
 - Be respectful and constructive
-- Explain reasoning for suggestions
-- Approve when requirements met
-- Focus on:
-  - Correctness
-  - Performance
-  - Security
-  - Maintainability
-  - Test coverage
+- Approve when ready, not perfect
+- Focus on: correctness, performance, security, maintainability, test coverage
 
 ---
 
@@ -239,46 +330,21 @@ Fixes #123
 
 ### Bug Reports
 
-Use the bug report template:
-
-```markdown
-**Describe the bug**
-A clear description of what the bug is.
-
-**To Reproduce**
-Steps to reproduce:
-1. ...
-2. ...
-
-**Expected behavior**
-What you expected to happen.
-
-**Environment:**
-- OS: [e.g., Ubuntu 22.04]
-- Java version: [e.g., 21]
-- BUTTERFLY version: [e.g., 1.2.0]
-
-**Additional context**
-Any other context or screenshots.
-```
+Include:
+1. **Description**: Clear description of the issue
+2. **Steps to Reproduce**: Detailed steps
+3. **Expected Behavior**: What you expected
+4. **Actual Behavior**: What actually happened
+5. **Environment**: Java version, OS, service version
+6. **Logs**: Relevant error messages or stack traces
 
 ### Feature Requests
 
-Use the feature request template:
-
-```markdown
-**Is your feature request related to a problem?**
-A description of the problem.
-
-**Describe the solution you'd like**
-A clear description of what you want.
-
-**Describe alternatives you've considered**
-Alternative solutions or features.
-
-**Additional context**
-Any other context or screenshots.
-```
+Include:
+1. **Use Case**: Problem you're trying to solve
+2. **Proposed Solution**: How should it work
+3. **Alternatives Considered**: Other approaches
+4. **Additional Context**: Any other relevant info
 
 ---
 
@@ -291,45 +357,25 @@ Any other context or screenshots.
 - Add comments for complex logic
 - Keep methods small and focused
 
-### Testing
-
-- Unit tests for all business logic
-- Integration tests for service interactions
-- E2E tests for critical paths
-- See [testing strategy](testing-strategy.md)
-
 ### Documentation
 
 - Update README when needed
 - Document public APIs
 - Add examples for new features
 - Keep changelog current
+- Use templates from [docs/templates/](../templates/) for new docs
 
 ---
 
 ## Getting Help
 
-### Questions
-
-- Check existing [documentation](../index.md)
-- Search [GitHub Discussions](https://github.com/butterfly-org/butterfly/discussions)
-- Ask in `#dev-butterfly` Slack
-
-### Stuck on a PR?
-
-- Ask for help in PR comments
-- Reach out on Slack
-- Join weekly office hours
-
----
-
-## Recognition
-
-Contributors are recognized in:
-
-- CONTRIBUTORS.md file
-- Release notes
-- Monthly contributor spotlight
+| Resource | Description |
+|----------|-------------|
+| [Documentation Portal](../index.md) | Full ecosystem docs |
+| [DEVELOPMENT_OVERVIEW.md](../../DEVELOPMENT_OVERVIEW.md) | Quick start guide |
+| `#butterfly-dev` Slack | Real-time help |
+| GitHub Issues | Bug reports |
+| GitHub Discussions | Questions and ideas |
 
 ---
 
@@ -338,8 +384,6 @@ Contributors are recognized in:
 We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
 
 **Be respectful, inclusive, and constructive.**
-
-Report issues to: conduct@butterfly.example.com
 
 ---
 
@@ -350,4 +394,5 @@ Report issues to: conduct@butterfly.example.com
 | [Coding Standards](coding-standards.md) | Code style |
 | [Testing Strategy](testing-strategy.md) | Testing approach |
 | [CI/CD](ci-cd.md) | Build pipelines |
+| [DEVELOPMENT_OVERVIEW.md](../../DEVELOPMENT_OVERVIEW.md) | Unified developer entry point |
 
