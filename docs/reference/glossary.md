@@ -35,7 +35,7 @@ The complete ecosystem of services for 4D temporal analysis, strategic cognition
 ## C
 
 ### CAPSULE
-The 4D Atomic History Service. Provides immutable, time-indexed storage of entity state with time-travel capabilities. Named for its ability to encapsulate moments in time.
+The 4D Atomic History Service. A **full-stack service** that provides immutable, time-indexed storage of entity state with time-travel capabilities. CAPSULE also provides the **shared UI management portal** used by NEXUS, ODYSSEY, and PLATO (which are headless background services). Named for its ability to encapsulate moments in time.
 
 ### Circuit Breaker
 A pattern used in NEXUS to prevent cascading failures. When a service fails repeatedly, the circuit breaker "opens" to prevent further calls.
@@ -157,14 +157,14 @@ The ability to serve multiple customers (tenants) from a single instance while k
 Project Nessie - a Git-like version control system for data lakes. Used by PERCEPTION for data versioning.
 
 ### NEXUS
-The Unified Integration Layer / Cognitive Cortex. Acts as the API gateway and orchestrates requests across BUTTERFLY services.
+The Unified Integration Layer / Cognitive Cortex. A **headless background service** that acts as the API gateway and orchestrates requests across BUTTERFLY services. Management and visualization is provided through the shared CAPSULE UI portal.
 
 ---
 
 ## O
 
 ### ODYSSEY
-The Strategic Cognition Engine. Provides graph-based analysis of entity relationships, actors, and influence paths.
+The Strategic Cognition Engine. A **headless background service** that provides graph-based analysis of entity relationships, actors, and influence paths. Management and visualization is provided through the shared CAPSULE UI portal.
 
 ### Omniscient Vantage
 A CAPSULE query mode that returns all available data, including future events relative to the query timestamp.
@@ -180,10 +180,10 @@ OWASP Application Security Verification Standard - a framework for testing web a
 A unit of parallelism in Kafka. Topics are divided into partitions that can be processed independently.
 
 ### PERCEPTION
-The Sensory and Interpretation Layer. Ingests, processes, and interprets signals from multiple data sources.
+The Sensory and Interpretation Layer. A **full-stack service** with its own **dedicated UI** for multiservice operations. Ingests, processes, and interprets signals from multiple data sources including acquisition management, trust score dashboards, and RIM graph visualization.
 
 ### PLATO
-The Governance and Intelligence Service. Provides six specialized engines for analysis, planning, and compliance.
+The Governance and Intelligence Service. A **headless background service** that provides six specialized engines for analysis, planning, and compliance. Management and visualization is provided through the shared CAPSULE UI portal.
 
 ---
 
