@@ -83,6 +83,70 @@ BUTTERFLY is an enterprise cognitive intelligence platform consisting of six int
 
 ---
 
+## UI Architecture
+
+The BUTTERFLY ecosystem implements a deliberate separation between backend services and user interfaces:
+
+### Service Categories
+
+| Category | Services | UI Strategy |
+|----------|----------|-------------|
+| **Full-Stack** | PERCEPTION, CAPSULE | Dedicated native UI |
+| **Background** | NEXUS, ODYSSEY, PLATO | Headless; reuse CAPSULE UI |
+
+### UI Distribution
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        BUTTERFLY UI Architecture                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐  │
+│  │                         User Interface Layer                          │  │
+│  │                                                                       │  │
+│  │  ┌─────────────────────────────┐  ┌─────────────────────────────┐   │  │
+│  │  │       PERCEPTION UI         │  │        CAPSULE UI           │   │  │
+│  │  │  (Dedicated Multiservice)   │  │   (Shared Management Portal)│   │  │
+│  │  │                             │  │                             │   │  │
+│  │  │  • Acquisition management   │  │  • History browsing         │   │  │
+│  │  │  • Trust score dashboards   │  │  • Temporal queries         │   │  │
+│  │  │  • Event monitoring         │  │  • Service configuration    │   │  │
+│  │  │  • Signal visualization     │  │  • Governance dashboards    │   │  │
+│  │  │  • RIM graph explorer       │  │  • World state views        │   │  │
+│  │  │  • Source configuration     │  │  • Path projections         │   │  │
+│  │  │                             │  │  • Plan execution monitor   │   │  │
+│  │  └─────────────────────────────┘  └─────────────────────────────┘   │  │
+│  │             │                                    │                   │  │
+│  └─────────────┼────────────────────────────────────┼───────────────────┘  │
+│                │                                    │                       │
+│                ▼                                    ▼                       │
+│  ┌─────────────────────┐      ┌────────────────────────────────────────┐  │
+│  │     PERCEPTION      │      │         Backend Services               │  │
+│  │   (Full-Stack)      │      │                                        │  │
+│  │                     │      │  ┌──────────┐  ┌──────────┐           │  │
+│  │   • Own UI          │      │  │ CAPSULE  │  │  NEXUS   │           │  │
+│  │   • Own API         │      │  │ (native) │  │(headless)│           │  │
+│  └─────────────────────┘      │  └──────────┘  └──────────┘           │  │
+│                               │  ┌──────────┐  ┌──────────┐           │  │
+│                               │  │ ODYSSEY  │  │  PLATO   │           │  │
+│                               │  │(headless)│  │(headless)│           │  │
+│                               │  └──────────┘  └──────────┘           │  │
+│                               │                                        │  │
+│                               │  All headless services managed via     │  │
+│                               │  the shared CAPSULE UI portal          │  │
+│                               └────────────────────────────────────────┘  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Design Rationale
+
+- **PERCEPTION UI**: Dedicated multiservice interface for data acquisition workflows, trust scoring, event detection, and RIM management—operations unique to the sensory layer
+- **CAPSULE UI**: Shared management portal providing unified access to history, temporal queries, and management interfaces for CAPSULE, NEXUS, ODYSSEY, and PLATO
+- **Background Services (NEXUS, ODYSSEY, PLATO)**: Operate headlessly with API-only interfaces; all user-facing functionality consolidated in CAPSULE UI for a unified experience
+
+---
+
 ## Service Deep Dives
 
 ### PERCEPTION - Sensory Layer

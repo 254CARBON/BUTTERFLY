@@ -59,14 +59,16 @@ BUTTERFLY is an enterprise-grade **cognitive intelligence platform** that transf
 
 ### By Service
 
-| Service | Description | Documentation |
-|---------|-------------|---------------|
-| **PERCEPTION** | Sensory and interpretation layer | [Service Guide](services/perception.md) \| [Source](../PERCEPTION/README.md) |
-| **CAPSULE** | 4D atomic history storage | [Service Guide](services/capsule.md) \| [Source](../CAPSULE/README.md) |
-| **ODYSSEY** | Strategic cognition engine | [Service Guide](services/odyssey.md) \| [Source](../ODYSSEY/README.md) |
-| **PLATO** | Governance and intelligence | [Service Guide](services/plato.md) \| [Source](../PLATO/README.md) |
-| **NEXUS** | Integration cortex layer | [Service Guide](services/nexus.md) \| [Source](../butterfly-nexus/README.md) |
-| **butterfly-common** | Shared contracts and identity | [Library Guide](services/butterfly-common.md) \| [Source](../butterfly-common/README.md) |
+| Service | Type | Description | Documentation |
+|---------|------|-------------|---------------|
+| **PERCEPTION** | Full-Stack | Sensory layer with dedicated UI | [Service Guide](services/perception.md) \| [Source](../PERCEPTION/README.md) |
+| **CAPSULE** | Full-Stack | 4D history + shared management portal | [Service Guide](services/capsule.md) \| [Source](../CAPSULE/README.md) |
+| **ODYSSEY** | Background | Strategic cognition (headless, uses CAPSULE UI) | [Service Guide](services/odyssey.md) \| [Source](../ODYSSEY/README.md) |
+| **PLATO** | Background | Governance layer (headless, uses CAPSULE UI) | [Service Guide](services/plato.md) \| [Source](../PLATO/README.md) |
+| **NEXUS** | Background | Integration cortex (headless, uses CAPSULE UI) | [Service Guide](services/nexus.md) \| [Source](../butterfly-nexus/README.md) |
+| **butterfly-common** | Library | Shared contracts and identity | [Library Guide](services/butterfly-common.md) \| [Source](../butterfly-common/README.md) |
+
+> **UI Architecture**: PERCEPTION has its own dedicated UI for multiservice operations. CAPSULE provides the shared management portal used by NEXUS, ODYSSEY, and PLATO (which are headless background services).
 
 ---
 
@@ -174,13 +176,13 @@ Documented architectural decisions:
 
 BUTTERFLY implements a cognitive architecture with five key capabilities:
 
-| Capability | Service | Function |
-|------------|---------|----------|
-| **Sense** | PERCEPTION | Ingest, normalize, and interpret external information |
-| **Remember** | CAPSULE | Store and retrieve 4D atomic units of history |
-| **Think** | ODYSSEY | Model the world, project futures, understand actors |
-| **Govern** | PLATO | Enforce policies, generate proofs, coordinate AI engines |
-| **Integrate** | NEXUS | Unify all capabilities with temporal reasoning |
+| Capability | Service | Type | Function |
+|------------|---------|------|----------|
+| **Sense** | PERCEPTION | Full-Stack | Ingest, normalize, interpret (dedicated UI) |
+| **Remember** | CAPSULE | Full-Stack | Store and retrieve 4D history (shared UI portal) |
+| **Think** | ODYSSEY | Background | Model world, project futures (headless, CAPSULE UI) |
+| **Govern** | PLATO | Background | Enforce policies, coordinate AI (headless, CAPSULE UI) |
+| **Integrate** | NEXUS | Background | Unify capabilities with temporal reasoning (headless, CAPSULE UI) |
 
 ### Core Primitives
 

@@ -70,6 +70,22 @@ BUTTERFLY implements a cognitive architecture inspired by human cognition:
 
 ---
 
+## UI Architecture
+
+BUTTERFLY distinguishes between full-stack services with dedicated UIs and background services that share a common management portal:
+
+| Service | Type | UI Strategy |
+|---------|------|-------------|
+| **PERCEPTION** | Full-Stack | Dedicated PERCEPTION UI for multiservice operations |
+| **CAPSULE** | Full-Stack | Native UI (also serves as shared management portal) |
+| **NEXUS** | Background | Headless; management via CAPSULE UI |
+| **ODYSSEY** | Background | Headless; management via CAPSULE UI |
+| **PLATO** | Background | Headless; management via CAPSULE UI |
+
+> **Key Insight**: NEXUS, ODYSSEY, and PLATO are **background services** designed to operate headlessly. They expose REST/WebSocket/GraphQL APIs for programmatic access, but all user-facing management and visualization is consolidated in the **CAPSULE UI portal**. PERCEPTION, handling sensory operations, has its **own dedicated UI** tailored for acquisition, trust scoring, and signal monitoring workflows.
+
+---
+
 ## Service Architecture
 
 ### PERCEPTION - The Sensory Layer
