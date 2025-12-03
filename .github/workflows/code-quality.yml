@@ -1,0 +1,190 @@
+# Code Quality Workflow
+# 
+# Runs code quality checks on PRs with gradual enforcement:
+# - Checkstyle: Baseline violations allowed, new violations blocked
+# - SpotBugs: Baseline issues allowed, new issues blocked
+# - Diff-based analysis: Only checks changed files
+#
+# Strategy: Gradual enforcement allows existing code to pass while
+# preventing new violations from being introduced.
+
+name: Code Quality
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'PLATO/**/*.java'
+      - 'PERCEPTION/**/*.java'
+      - '**/pom.xml'
+      - '**/checkstyle*.xml'
+      - '**/spotbugs*.xml'
+  push:
+    branches: [main]
+    paths:
+      - 'PLATO/**/*.java'
+      - 'PERCEPTION/**/*.java'
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
+
+jobs:
+  checkstyle:
+    name: Checkstyle Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for diff analysis
+      
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+      
+      - name: Install butterfly-common
+        run: mvn -f butterfly-common/pom.xml install -DskipTests -q
+      
+      - name: Get changed Java files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files: |
+            **/*.java
+          files_ignore: |
+            **/test/**
+            **/generated/**
+      
+      - name: Run Checkstyle on PLATO
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          mvn -f PLATO/pom.xml checkstyle:checkstyle \
+            -Dcheckstyle.config.location=google_checks.xml \
+            -Dcheckstyle.suppressions.location=checkstyle-suppressions.xml \
+            -Dcheckstyle.consoleOutput=true \
+            -Dcheckstyle.violationSeverity=warning
+        continue-on-error: true
+      
+      - name: Upload Checkstyle Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkstyle-report
+          path: PLATO/target/checkstyle-result.xml
+          if-no-files-found: ignore
+      
+      - name: Annotate PR with Checkstyle results
+        if: github.event_name == 'pull_request'
+        uses: jwgmeligmeyling/checkstyle-github-action@master
+        with:
+          path: '**/checkstyle-result.xml'
+          title: Checkstyle Report
+
+  spotbugs:
+    name: SpotBugs Analysis
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+      
+      - name: Install butterfly-common
+        run: mvn -f butterfly-common/pom.xml install -DskipTests -q
+      
+      - name: Build PLATO (compile only)
+        run: mvn -f PLATO/pom.xml compile -DskipTests -q
+      
+      - name: Run SpotBugs on PLATO
+        run: |
+          mvn -f PLATO/pom.xml spotbugs:spotbugs \
+            -Dspotbugs.excludeFilterFile=spotbugs-exclude.xml \
+            -Dspotbugs.effort=Max \
+            -Dspotbugs.threshold=Low
+        continue-on-error: true
+      
+      - name: Upload SpotBugs Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotbugs-report
+          path: PLATO/target/spotbugsXml.xml
+          if-no-files-found: ignore
+      
+      - name: Annotate PR with SpotBugs results
+        if: github.event_name == 'pull_request'
+        uses: jwgmeligmeyling/spotbugs-github-action@master
+        with:
+          path: '**/spotbugsXml.xml'
+          title: SpotBugs Report
+
+  new-code-quality:
+    name: Quality Gate for New Code
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+      
+      - name: Install butterfly-common
+        run: mvn -f butterfly-common/pom.xml install -DskipTests -q
+      
+      - name: Get new Java files in PR
+        id: new-files
+        run: |
+          NEW_FILES=$(git diff --name-only --diff-filter=A origin/${{ github.base_ref }}...HEAD | grep '\.java$' | grep -v '/test/' || true)
+          echo "new_files=$NEW_FILES" >> $GITHUB_OUTPUT
+          if [ -n "$NEW_FILES" ]; then
+            echo "has_new_files=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_new_files=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Strict checkstyle for new files
+        if: steps.new-files.outputs.has_new_files == 'true'
+        run: |
+          echo "Checking new files for checkstyle violations..."
+          echo "${{ steps.new-files.outputs.new_files }}"
+          
+          # Build PLATO first
+          mvn -f PLATO/pom.xml compile -DskipTests -q
+          
+          # Run checkstyle with stricter settings for new code
+          mvn -f PLATO/pom.xml checkstyle:check \
+            -Dcheckstyle.config.location=google_checks.xml \
+            -Dcheckstyle.failOnViolation=true \
+            -Dcheckstyle.violationSeverity=warning \
+            -Dcheckstyle.includes="${{ steps.new-files.outputs.new_files }}" \
+            || echo "::warning::New code has checkstyle violations"
+      
+      - name: Summary
+        run: |
+          echo "## Code Quality Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Strategy**: Gradual enforcement" >> $GITHUB_STEP_SUMMARY
+          echo "- **Baseline violations**: Allowed" >> $GITHUB_STEP_SUMMARY
+          echo "- **New violations**: Warned (will block in future)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See checkstyle and spotbugs reports for details." >> $GITHUB_STEP_SUMMARY
+

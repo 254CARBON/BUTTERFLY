@@ -135,10 +135,19 @@ jobs:
         run: |
           COVERAGE=$(grep -o 'Total[^%]*%' target/site/jacoco/index.html | grep -o '[0-9]*%' | head -1 | tr -d '%')
           echo "Code coverage: ${COVERAGE}%"
-          if [ "$COVERAGE" -lt 70 ]; then
-            echo "Coverage ${COVERAGE}% is below threshold of 70%"
-            exit 1
+          if [ "$COVERAGE" -lt 80 ]; then
+            echo "::warning::Coverage ${COVERAGE}% is below target of 80%"
+            # Fail if below hard minimum of 70%
+            if [ "$COVERAGE" -lt 70 ]; then
+              echo "Coverage ${COVERAGE}% is below hard minimum of 70%"
+              exit 1
+            fi
           fi
+          echo "## Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value | Target |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Line Coverage | ${COVERAGE}% | 80% |" >> $GITHUB_STEP_SUMMARY
 
   docker-build:
     name: Docker Build
