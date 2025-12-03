@@ -31,9 +31,27 @@ BUTTERFLY/apps/
 
 ---
 
+## Service Types and UI Architecture
+
+The BUTTERFLY services are categorized by their deployment and UI strategy:
+
+| Service | Type | UI Strategy |
+|---------|------|-------------|
+| **PERCEPTION** | Full-Stack | Dedicated UI (`perception-portal/`) for multiservice operations |
+| **CAPSULE** | Full-Stack | Native UI (`capsule-ui/`) that also serves as shared management portal |
+| **NEXUS** | Background | Headless service; management via CAPSULE UI |
+| **ODYSSEY** | Background | Headless service; management via CAPSULE UI |
+| **PLATO** | Background | Headless service; management via CAPSULE UI |
+
+> **Key Architecture Decision**: NEXUS, ODYSSEY, and PLATO are **background services** designed to operate headlessly. They expose REST/WebSocket/GraphQL APIs for programmatic access, but all user-facing management and visualization is consolidated in the **CAPSULE UI portal**. PERCEPTION has its **own dedicated UI** for acquisition, trust scoring, and signal monitoring workflows.
+
+---
+
 ## Service Architecture
 
 ### PLATO - Governance and Intelligence
+
+PLATO is a **background service** (headless) that uses CAPSULE UI for management.
 
 PLATO is the governance backbone, managing Specs, Artifacts, Proofs, and Plans.
 
@@ -72,7 +90,7 @@ PLATO/
 
 ### PERCEPTION - Reality Integration Mesh
 
-PERCEPTION handles data acquisition, signal detection, and intelligence.
+PERCEPTION is a **full-stack service** with its own dedicated UI for multiservice operations. It handles data acquisition, signal detection, and intelligence.
 
 ```
 PERCEPTION/
@@ -107,7 +125,7 @@ PERCEPTION/
 
 ### CAPSULE - 4D Historical Storage
 
-CAPSULE provides temporal data storage with point-in-time queries.
+CAPSULE is a **full-stack service** that provides temporal data storage and the **shared UI portal** used by NEXUS, ODYSSEY, and PLATO.
 
 ```
 CAPSULE/
@@ -123,7 +141,7 @@ CAPSULE/
 
 ### ODYSSEY - Strategic Cognition
 
-ODYSSEY provides strategic planning and futures analysis.
+ODYSSEY is a **background service** (headless, uses CAPSULE UI) that provides strategic planning and futures analysis.
 
 ```
 ODYSSEY/
