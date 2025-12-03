@@ -1,0 +1,194 @@
+# Chaos Experiment: Cross-Service Network Partition
+# 
+# Tests: FM-NET-001, FM-NET-002
+# Pass Criteria: Circuit breaker trips < 30s, graceful degradation
+# Frequency: Weekly
+#
+# This experiment creates network partitions between services to validate:
+# - Circuit breakers open within expected time
+# - Fallback responses are served
+# - Services recover when network restores
+# - No cascading failures
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: capsule-perception-partition
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: network
+    chaos.butterfly.io/severity: high
+    chaos.butterfly.io/failure-mode: FM-NET-001
+  annotations:
+    chaos.butterfly.io/description: "Network partition between CAPSULE and PERCEPTION"
+    chaos.butterfly.io/pass-criteria: "Circuit breaker trips < 30s, fallback responses"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-net-001-cross-service-network-partition"
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: capsule
+  direction: both
+  target:
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: perception
+    mode: all
+  duration: "60s"
+---
+# NEXUS to all services partition (tests orchestrator resilience)
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: nexus-services-partition
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: network
+    chaos.butterfly.io/severity: high
+  annotations:
+    chaos.butterfly.io/description: "Network partition between NEXUS and backend services"
+    chaos.butterfly.io/pass-criteria: "NEXUS returns partial results with degradation flag"
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: nexus
+  direction: both
+  target:
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app.kubernetes.io/part-of: butterfly
+      expressionSelectors:
+        - key: app
+          operator: In
+          values:
+            - capsule
+            - perception
+            - odyssey
+            - plato
+    mode: all
+  duration: "60s"
+---
+# Network latency injection (simulate slow network)
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: cross-service-latency
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: network
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Add latency between all BUTTERFLY services"
+    chaos.butterfly.io/pass-criteria: "Latencies stay within timeout bounds"
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/part-of: butterfly
+  delay:
+    latency: "200ms"
+    jitter: "50ms"
+    correlation: "25"
+  direction: both
+  duration: "120s"
+---
+# Packet loss simulation
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: packet-loss-simulation
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: network
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Simulate packet loss between services"
+    chaos.butterfly.io/pass-criteria: "Retry mechanisms handle lost packets"
+spec:
+  action: loss
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/part-of: butterfly
+  loss:
+    loss: "10"
+    correlation: "25"
+  direction: both
+  duration: "60s"
+---
+# DNS failure simulation
+apiVersion: chaos-mesh.org/v1alpha1
+kind: DNSChaos
+metadata:
+  name: dns-resolution-failure
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: network
+    chaos.butterfly.io/severity: critical
+    chaos.butterfly.io/failure-mode: FM-NET-002
+  annotations:
+    chaos.butterfly.io/description: "DNS resolution failure for service discovery"
+    chaos.butterfly.io/pass-criteria: "Services use cached DNS, recovery < 60s"
+spec:
+  action: error
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/part-of: butterfly
+  duration: "30s"
+---
+# Schedule for weekly network partition test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: network-partition-weekly
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: network
+spec:
+  schedule: "0 2 * * 5"  # Friday 2 AM UTC
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  type: NetworkChaos
+  networkChaos:
+    action: partition
+    mode: all
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: capsule
+    direction: both
+    target:
+      selector:
+        namespaces:
+          - butterfly
+        labelSelectors:
+          app: perception
+      mode: all
+    duration: "60s"
+

@@ -1,0 +1,91 @@
+# Chaos Experiment: Cassandra Node Failure
+# 
+# Tests: FM-CASS-001
+# Pass Criteria: Read/write continuity maintained, auto-repair initiates
+# Frequency: Weekly
+#
+# This experiment kills a Cassandra node to validate:
+# - Cluster maintains quorum (RF=3, CL=LOCAL_QUORUM)
+# - Hinted handoff accumulates for down node
+# - Automatic repair on node recovery
+# - CAPSULE service continues operating
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: cassandra-node-failure
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: database
+    chaos.butterfly.io/severity: low
+    chaos.butterfly.io/failure-mode: FM-CASS-001
+  annotations:
+    chaos.butterfly.io/description: "Kill single Cassandra node to test cluster resilience"
+    chaos.butterfly.io/pass-criteria: "Read/write continuity, recovery < 5m"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-cass-001-cassandra-single-node-loss"
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: cassandra
+    fieldSelectors:
+      metadata.name: cassandra-1  # Target non-seed node
+  duration: "120s"
+  gracePeriod: 0
+---
+# Cassandra Quorum Loss Test (P1 - Critical)
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: cassandra-quorum-loss
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: database
+    chaos.butterfly.io/severity: high
+    chaos.butterfly.io/failure-mode: FM-CASS-002
+  annotations:
+    chaos.butterfly.io/description: "Kill 2 Cassandra nodes to test quorum loss handling"
+    chaos.butterfly.io/pass-criteria: "Service degrades gracefully, recovery < 5m"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-cass-002-cassandra-quorum-loss"
+spec:
+  action: pod-kill
+  mode: fixed
+  value: "2"
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: cassandra
+  duration: "60s"
+  gracePeriod: 0
+---
+# Schedule for weekly Cassandra node failure test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: cassandra-node-failure-weekly
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: database
+spec:
+  schedule: "0 2 * * 3"  # Wednesday 2 AM UTC
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: one
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: cassandra
+    duration: "120s"
+    gracePeriod: 0
+

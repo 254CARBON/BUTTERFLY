@@ -1,0 +1,64 @@
+# Chaos Experiment: Kafka Single Broker Loss
+# 
+# Tests: FM-KAFKA-001
+# Pass Criteria: Consumer rebalance < 30s, no message loss
+# Frequency: Weekly
+#
+# This experiment kills a single Kafka broker pod to validate:
+# - Partition leadership transfer
+# - Consumer group rebalancing
+# - Producer retry behavior
+# - No message loss with acks=all
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: kafka-broker-loss
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: kafka
+    chaos.butterfly.io/severity: medium
+    chaos.butterfly.io/failure-mode: FM-KAFKA-001
+  annotations:
+    chaos.butterfly.io/description: "Kill single Kafka broker to test partition rebalancing"
+    chaos.butterfly.io/pass-criteria: "Recovery < 30s, no message loss"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-kafka-001-single-broker-loss"
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: kafka
+      app.kubernetes.io/component: broker
+  duration: "60s"
+  gracePeriod: 0
+---
+# Schedule for automated weekly execution
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: kafka-broker-loss-weekly
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: kafka
+spec:
+  schedule: "0 2 * * 2"  # Tuesday 2 AM UTC
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: one
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: kafka
+        app.kubernetes.io/component: broker
+    duration: "60s"
+    gracePeriod: 0
+

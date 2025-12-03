@@ -1,0 +1,101 @@
+# RBAC configuration for Chaos Mesh to operate in butterfly namespace
+# Apply with: kubectl apply -f chaos-mesh-rbac.yaml
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: chaos-mesh-sa
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/name: chaos-mesh
+    app.kubernetes.io/part-of: butterfly
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: chaos-mesh-role
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/name: chaos-mesh
+    app.kubernetes.io/part-of: butterfly
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "delete", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["chaos-mesh.org"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: chaos-mesh-rolebinding
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/name: chaos-mesh
+    app.kubernetes.io/part-of: butterfly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: chaos-mesh-role
+subjects:
+  - kind: ServiceAccount
+    name: chaos-mesh-sa
+    namespace: butterfly
+---
+# ClusterRole for cross-namespace operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: chaos-mesh-butterfly-clusterrole
+  labels:
+    app.kubernetes.io/name: chaos-mesh
+    app.kubernetes.io/part-of: butterfly
+rules:
+  - apiGroups: ["chaos-mesh.org"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: chaos-mesh-butterfly-clusterrolebinding
+  labels:
+    app.kubernetes.io/name: chaos-mesh
+    app.kubernetes.io/part-of: butterfly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: chaos-mesh-butterfly-clusterrole
+subjects:
+  - kind: ServiceAccount
+    name: chaos-mesh-sa
+    namespace: butterfly
+

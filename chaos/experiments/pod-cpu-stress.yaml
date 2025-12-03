@@ -1,0 +1,181 @@
+# Chaos Experiment: Pod CPU/Memory Stress
+# 
+# Tests: FM-POD-001, FM-POD-002
+# Pass Criteria: HPA scales out < 60s, pod restarts < 45s
+# Frequency: Monthly
+#
+# This experiment stresses pods to validate:
+# - HPA responds to CPU/memory pressure
+# - Pod restart behavior on OOMKill
+# - Graceful degradation under load
+# - Resource limit effectiveness
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: capsule-cpu-stress
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: pod
+    chaos.butterfly.io/severity: medium
+    chaos.butterfly.io/failure-mode: FM-POD-002
+  annotations:
+    chaos.butterfly.io/description: "CPU stress on CAPSULE pods to test HPA scaling"
+    chaos.butterfly.io/pass-criteria: "HPA scales out < 60s"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-pod-002-cpumemory-exhaustion"
+spec:
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: capsule
+  stressors:
+    cpu:
+      workers: 4
+      load: 80
+  duration: "180s"
+---
+# Memory stress test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: capsule-memory-stress
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: pod
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Memory stress on CAPSULE pods"
+    chaos.butterfly.io/pass-criteria: "OOMKill handled gracefully, pod restarts"
+spec:
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: capsule
+  stressors:
+    memory:
+      workers: 2
+      size: "512MB"
+  duration: "120s"
+---
+# Pod kill test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: service-pod-kill
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: pod
+    chaos.butterfly.io/severity: low
+    chaos.butterfly.io/failure-mode: FM-POD-001
+  annotations:
+    chaos.butterfly.io/description: "Random pod kill to test restart behavior"
+    chaos.butterfly.io/pass-criteria: "Pod restarts < 45s, service continues"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-pod-001-service-pod-crash"
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/part-of: butterfly
+    expressionSelectors:
+      - key: app
+        operator: In
+        values:
+          - capsule
+          - perception
+          - odyssey
+          - plato
+          - nexus
+  duration: "60s"
+  gracePeriod: 0
+---
+# JVM chaos for Java services
+apiVersion: chaos-mesh.org/v1alpha1
+kind: JVMChaos
+metadata:
+  name: capsule-jvm-gc-stress
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: pod
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Trigger GC pressure in CAPSULE JVM"
+    chaos.butterfly.io/pass-criteria: "Service remains responsive, GC completes"
+spec:
+  action: stress
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: capsule
+  target: jvm
+  stress:
+    cpuCount: 2
+    memType: heap
+  duration: "60s"
+---
+# JVM method latency injection
+apiVersion: chaos-mesh.org/v1alpha1
+kind: JVMChaos
+metadata:
+  name: capsule-method-latency
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: pod
+    chaos.butterfly.io/severity: low
+  annotations:
+    chaos.butterfly.io/description: "Add latency to database query methods"
+spec:
+  action: latency
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: capsule
+  target: jvm
+  latency:
+    class: com.z254.butterfly.capsule.repository.CapsuleRepository
+    method: findById
+    latency: 500
+  duration: "60s"
+---
+# Schedule for monthly pod stress test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: pod-stress-monthly
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: pod
+spec:
+  schedule: "0 2 1 * *"  # First of month, 2 AM UTC
+  historyLimit: 3
+  concurrencyPolicy: Forbid
+  type: StressChaos
+  stressChaos:
+    mode: one
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: capsule
+    stressors:
+      cpu:
+        workers: 4
+        load: 80
+    duration: "180s"
+

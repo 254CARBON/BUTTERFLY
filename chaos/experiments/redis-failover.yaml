@@ -1,0 +1,119 @@
+# Chaos Experiment: Redis Sentinel Failover
+# 
+# Tests: FM-REDIS-001, FM-REDIS-002
+# Pass Criteria: Sentinel failover < 10s, brief latency spike only
+# Frequency: Bi-weekly
+#
+# This experiment kills the Redis primary to validate:
+# - Sentinel detects primary failure (SDOWN -> ODOWN)
+# - Sentinel promotes replica to primary
+# - Clients reconnect to new primary
+# - Cache operations resume with minimal impact
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: redis-primary-kill
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+    chaos.butterfly.io/severity: low
+    chaos.butterfly.io/failure-mode: FM-REDIS-001
+  annotations:
+    chaos.butterfly.io/description: "Kill Redis primary to test Sentinel failover"
+    chaos.butterfly.io/pass-criteria: "Sentinel failover < 10s"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-redis-001-redis-sentinel-failover"
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: redis
+      role: master
+  duration: "60s"
+  gracePeriod: 0
+---
+# Redis Memory Pressure Test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: redis-memory-pressure
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+    chaos.butterfly.io/severity: medium
+    chaos.butterfly.io/failure-mode: FM-REDIS-002
+  annotations:
+    chaos.butterfly.io/description: "Stress Redis memory to test eviction behavior"
+    chaos.butterfly.io/pass-criteria: "Graceful degradation, evictions work correctly"
+spec:
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: redis
+  stressors:
+    memory:
+      workers: 2
+      size: "256MB"
+  duration: "120s"
+---
+# Redis Network Latency (simulates slow cache)
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: redis-network-latency
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+    chaos.butterfly.io/severity: low
+  annotations:
+    chaos.butterfly.io/description: "Add latency to Redis to test timeout handling"
+    chaos.butterfly.io/pass-criteria: "Services fall back to database queries"
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: redis
+  delay:
+    latency: "500ms"
+    jitter: "100ms"
+    correlation: "50"
+  direction: both
+  duration: "60s"
+---
+# Schedule for bi-weekly Redis failover test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: redis-failover-biweekly
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+spec:
+  schedule: "0 2 1,15 * *"  # 1st and 15th of month, 2 AM UTC
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: one
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: redis
+        role: master
+    duration: "60s"
+    gracePeriod: 0
+

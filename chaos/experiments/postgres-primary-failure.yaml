@@ -1,0 +1,123 @@
+# Chaos Experiment: PostgreSQL Primary Failure
+# 
+# Tests: FM-PG-001
+# Pass Criteria: Failover completes < 60s, minimal data loss
+# Frequency: Weekly
+#
+# This experiment kills the PostgreSQL primary to validate:
+# - Streaming replica detects primary failure
+# - Patroni/pg_auto_failover promotes replica
+# - Connection pooler routes to new primary
+# - PERCEPTION service reconnects automatically
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: postgres-primary-failure
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: database
+    chaos.butterfly.io/severity: high
+    chaos.butterfly.io/failure-mode: FM-PG-001
+  annotations:
+    chaos.butterfly.io/description: "Kill PostgreSQL primary to test automatic failover"
+    chaos.butterfly.io/pass-criteria: "Failover < 60s, service reconnects automatically"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-pg-001-postgresql-primary-failure"
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: postgres
+      role: primary
+  duration: "120s"
+  gracePeriod: 0
+---
+# Alternative: Pod failure via container kill (less disruptive)
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: postgres-container-failure
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: database
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Kill PostgreSQL container to test restart behavior"
+spec:
+  action: container-kill
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: postgres
+      role: primary
+  containerNames:
+    - postgres
+  duration: "60s"
+  gracePeriod: 0
+---
+# Network partition between primary and replica
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: postgres-replication-partition
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: database
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Network partition between PostgreSQL primary and replica"
+    chaos.butterfly.io/pass-criteria: "Replication lag detected, alerts fire"
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: postgres
+      role: primary
+  direction: both
+  target:
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: postgres
+        role: replica
+    mode: all
+  duration: "60s"
+---
+# Schedule for weekly PostgreSQL failover test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: postgres-primary-failure-weekly
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: database
+spec:
+  schedule: "0 2 * * 4"  # Thursday 2 AM UTC
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: one
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: postgres
+        role: primary
+    duration: "120s"
+    gracePeriod: 0
+

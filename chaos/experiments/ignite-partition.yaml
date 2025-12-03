@@ -1,0 +1,158 @@
+# Chaos Experiment: Apache Ignite Grid Partition
+# 
+# Tests: FM-IGNITE-001
+# Pass Criteria: Grid heals < 30s, data consistency maintained
+# Frequency: Bi-weekly
+#
+# This experiment creates network partitions in the Ignite grid to validate:
+# - Cluster topology change detection
+# - Partition rebalancing behavior
+# - Split-brain prevention
+# - Cache consistency after healing
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: ignite-node-partition
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+    chaos.butterfly.io/severity: high
+    chaos.butterfly.io/failure-mode: FM-IGNITE-001
+  annotations:
+    chaos.butterfly.io/description: "Network partition between Ignite nodes"
+    chaos.butterfly.io/pass-criteria: "Grid heals < 30s, no data loss"
+    chaos.butterfly.io/runbook: "docs/operations/failure-modes.md#fm-ignite-001-ignite-grid-partition"
+spec:
+  action: partition
+  mode: fixed
+  value: "1"
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: ignite
+  direction: both
+  target:
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: ignite
+    mode: fixed
+    value: "1"
+  duration: "30s"
+---
+# Ignite node failure
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: ignite-node-kill
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Kill single Ignite node to test rebalancing"
+    chaos.butterfly.io/pass-criteria: "Cluster rebalances, caches remain available"
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: ignite
+  duration: "120s"
+  gracePeriod: 0
+---
+# Ignite network latency
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: ignite-network-latency
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+    chaos.butterfly.io/severity: low
+  annotations:
+    chaos.butterfly.io/description: "Add latency to Ignite cluster communication"
+    chaos.butterfly.io/pass-criteria: "Cache operations complete within timeout"
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: ignite
+  delay:
+    latency: "100ms"
+    jitter: "25ms"
+    correlation: "50"
+  direction: both
+  duration: "60s"
+---
+# IO chaos for Ignite persistence
+apiVersion: chaos-mesh.org/v1alpha1
+kind: IOChaos
+metadata:
+  name: ignite-io-latency
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+    chaos.butterfly.io/severity: medium
+  annotations:
+    chaos.butterfly.io/description: "Add I/O latency to Ignite persistence"
+    chaos.butterfly.io/pass-criteria: "WAL writes complete, checkpoints succeed"
+spec:
+  action: latency
+  mode: one
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app: ignite
+  volumePath: /var/ignite/wal
+  delay: "100ms"
+  percent: 50
+  duration: "60s"
+---
+# Schedule for bi-weekly Ignite partition test
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: ignite-partition-biweekly
+  namespace: butterfly
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cache
+spec:
+  schedule: "0 2 8,22 * *"  # 8th and 22nd of month, 2 AM UTC
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  type: NetworkChaos
+  networkChaos:
+    action: partition
+    mode: fixed
+    value: "1"
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: ignite
+    direction: both
+    target:
+      selector:
+        namespaces:
+          - butterfly
+        labelSelectors:
+          app: ignite
+      mode: fixed
+      value: "1"
+    duration: "30s"
+
