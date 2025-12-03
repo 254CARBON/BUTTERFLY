@@ -1,6 +1,8 @@
 # BUTTERFLY Developer Overview
 
-This overview unifies the main dev entry points across CAPSULE, ODYSSEY, and PERCEPTION and highlights the end-to-end HFT/reflex harness.
+This overview unifies the main dev entry points across CAPSULE, ODYSSEY, PERCEPTION, and PLATO and highlights the end-to-end integration harness.
+
+**Last Updated**: 2025-12-03
 
 ## Quick Start
 
@@ -61,6 +63,12 @@ docker compose -f PERCEPTION/docker-compose.dev.yml up
 
 # ODYSSEY
 docker compose -f ODYSSEY/docker-compose.yml up
+
+# PLATO (with in-memory persistence)
+./PLATO/scripts/dev-up.sh
+
+# PLATO (with full infrastructure: Cassandra, Kafka, Prometheus)
+./PLATO/scripts/dev-up.sh full
 ```
 
 ## Pre-commit Hooks
@@ -191,6 +199,17 @@ npm run test:e2e:ui
 | CAPSULE | `CAPSULE/DEVELOPMENT.md` |
 | ODYSSEY | `ODYSSEY/docs/DEV_ENVIRONMENT_SETUP.md` |
 | PERCEPTION | `PERCEPTION/GETTING_STARTED.md` |
+| PLATO | `PLATO/docs/getting-started/quickstart.md` |
+
+### PLATO-Specific Resources
+
+| Document | Description |
+|----------|-------------|
+| [PLATO README](PLATO/README.md) | Project overview and quick start |
+| [Governance Guide](PLATO/docs/architecture/governance.md) | Control Plane and meta-specs |
+| [WebSocket Guide](PLATO/docs/architecture/websocket.md) | Real-time plan execution events |
+| [Security Architecture](PLATO/docs/architecture/security.md) | OAuth2, RBAC, API keys |
+| [OpenAPI Spec](PLATO/openapi/plato-v1.yaml) | Formal API specification |
 
 ## Troubleshooting
 
@@ -242,6 +261,8 @@ See `PERCEPTION/docs/runbooks/ci-pipeline-troubleshooting.md` for common CI fail
 
 - [DX_NOTES.md](DX_NOTES.md) - Additional developer experience notes
 - [docs/adr/](docs/adr/) - Architecture Decision Records
+- [docs/onboarding/](docs/onboarding/) - New contributor onboarding guide
 - [PERCEPTION/CONTRIBUTING.md](PERCEPTION/CONTRIBUTING.md) - PERCEPTION contribution guide
 - [PLATO/CONTRIBUTING.md](PLATO/CONTRIBUTING.md) - PLATO contribution guide
 - [CAPSULE/CONTRIBUTING.md](CAPSULE/CONTRIBUTING.md) - CAPSULE contribution guide
+- [PLATO/ENGINEERING_ROADMAP.md](PLATO/ENGINEERING_ROADMAP.md) - PLATO strategic roadmap
