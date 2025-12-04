@@ -2,7 +2,7 @@
 
 > Procedures for scaling BUTTERFLY services
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: SREs, Platform engineers
 
 ---
@@ -54,7 +54,7 @@ kubectl rollout status deployment/[service] -n butterfly
 #### CAPSULE
 
 ```bash
-# Safe to scale 1-10 replicas
+# Safe to scale 2-12 replicas (production HPA: min=4, max=12)
 kubectl scale deployment/capsule --replicas=5 -n butterfly
 
 # Verify Cassandra connections
@@ -63,10 +63,25 @@ kubectl logs -n butterfly -l app=capsule | grep -i "cassandra.*connected"
 
 #### ODYSSEY
 
+ODYSSEY consists of multiple components with different scaling characteristics:
+
+**ODYSSEY Core** (main graph service):
 ```bash
-# Safe to scale 1-5 replicas
+# Safe to scale 2-15 replicas
 # Graph queries may have session affinity requirements
-kubectl scale deployment/odyssey --replicas=3 -n butterfly
+kubectl scale deployment/odyssey-core --replicas=5 -n butterfly
+```
+
+**HorizonBox** (probabilistic foresight engine):
+```bash
+# Safe to scale 2-8 replicas
+kubectl scale deployment/odyssey-horizonbox --replicas=3 -n butterfly
+```
+
+**QuantumRoom** (multi-agent scenario negotiator):
+```bash
+# Safe to scale 2-8 replicas
+kubectl scale deployment/odyssey-quantumroom --replicas=3 -n butterfly
 ```
 
 #### PERCEPTION
@@ -98,6 +113,24 @@ kubectl scale deployment/plato --replicas=4 -n butterfly
 # Ensure load balancer is configured
 kubectl scale deployment/nexus --replicas=8 -n butterfly
 ```
+
+#### SYNAPSE
+
+```bash
+# Safe to scale 2-12 replicas
+# Handles action execution and safety orchestration
+kubectl scale deployment/synapse --replicas=4 -n butterfly
+
+# Check Redis connection for safety state
+kubectl logs -n butterfly -l app=synapse | grep -i "redis.*connected"
+
+# Verify Kafka consumer lag for action events
+kubectl exec -it kafka-0 -n butterfly -- kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 \
+  --describe --group synapse-service
+```
+
+**Note**: SYNAPSE scaling should consider safety circuit breaker patterns. Monitor `synapse_safety_violations_total` metric during scale operations.
 
 ### Update HPA Limits
 
@@ -275,13 +308,29 @@ kubectl scale statefulset/kafka --replicas=3 -n butterfly
 
 ## Capacity Planning Reference
 
-| Service | Min | Recommended | Max | Notes |
-|---------|-----|-------------|-----|-------|
-| CAPSULE | 1 | 2-3 | 10 | Scale with write load |
-| ODYSSEY | 1 | 2-3 | 5 | Scale with graph size |
-| PERCEPTION | 1 | 3-6 | 20 | Limited by Kafka partitions |
-| PLATO | 1 | 2-4 | 10 | Scale with plan concurrency |
-| NEXUS | 1 | 3-5 | 20 | Gateway, scale freely |
+| Service | Min | Recommended | Max | HPA Triggers | Notes |
+|---------|-----|-------------|-----|--------------|-------|
+| CAPSULE | 2 | 3-4 | 12 | CPU 70%, Memory 80% | Scale with write load |
+| ODYSSEY Core | 2 | 3-5 | 15 | CPU 70%, Memory 80% | Scale with graph size |
+| ODYSSEY HorizonBox | 2 | 2-3 | 8 | CPU 70%, Memory 80% | Probabilistic engine |
+| ODYSSEY QuantumRoom | 2 | 2-3 | 8 | CPU 70%, Memory 80% | Scenario negotiation |
+| PERCEPTION | 3 | 3-6 | 15 | CPU 70%, Memory 80% | Limited by Kafka partitions |
+| PLATO | 2 | 2-4 | 10 | CPU 70%, Memory 80% | Scale with plan concurrency |
+| NEXUS | 3 | 3-5 | 20 | CPU 70%, Memory 80% | Gateway, scale freely |
+| SYNAPSE | 2 | 3-4 | 12 | CPU 70%, Memory 80% | Action execution engine |
+
+### HPA Custom Metrics Reference
+
+In addition to CPU/Memory, consider scaling based on these service-specific metrics:
+
+| Service | Custom Metric | Scale-Up Threshold |
+|---------|---------------|-------------------|
+| CAPSULE | `capsule_query_duration_seconds` P99 | > 500ms for 5 min |
+| ODYSSEY | `odyssey_graph_query_duration_seconds` P99 | > 500ms for 5 min |
+| PERCEPTION | `kafka_consumer_lag_records` | > 500 messages for 5 min |
+| PLATO | `plato_engine_queue_depth` | > 100 pending for 5 min |
+| NEXUS | `nexus_request_duration_seconds` P99 | > 200ms for 5 min |
+| SYNAPSE | `synapse_execution_queue_depth` | > 50 pending for 5 min |
 
 ---
 

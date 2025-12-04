@@ -2,7 +2,7 @@
 
 > Deployment, monitoring, and operational procedures for the BUTTERFLY ecosystem
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: DevOps engineers, SREs, Platform teams
 
 ---
@@ -62,6 +62,7 @@ This section covers all operational aspects of running BUTTERFLY in production, 
 | PERCEPTION | 8082 | `/actuator/health` |
 | PLATO | 8086 | `/actuator/health` |
 | NEXUS | 8083 | `/actuator/health` |
+| SYNAPSE | 8084 | `/actuator/health` |
 
 ### Infrastructure Ports
 
@@ -84,6 +85,7 @@ This section covers all operational aspects of running BUTTERFLY in production, 
 | PERCEPTION | `http://perception:8082/actuator/prometheus` |
 | PLATO | `http://plato:8086/actuator/prometheus` |
 | NEXUS | `http://nexus:8083/actuator/prometheus` |
+| SYNAPSE | `http://synapse:8084/actuator/prometheus` |
 
 ---
 
@@ -107,6 +109,7 @@ This section covers all operational aspects of running BUTTERFLY in production, 
 | PERCEPTION | 3 | Stream processing HA |
 | PLATO | 2 | Behind load balancer |
 | NEXUS | 3 | Gateway HA |
+| SYNAPSE | 3 | Action execution HA |
 | Kafka | 3 | Clustered |
 | Cassandra | 3 | RF=3 |
 | PostgreSQL | 2 | Primary + replica |

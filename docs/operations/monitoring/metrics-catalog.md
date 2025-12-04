@@ -2,7 +2,7 @@
 
 > Complete reference of all metrics exposed by BUTTERFLY services
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: SREs, DevOps engineers
 
 ---
@@ -197,6 +197,41 @@ All BUTTERFLY services expose Prometheus metrics at `/actuator/prometheus`. This
 |--------|------|--------|-------------|
 | `nexus_auth_attempts_total` | Counter | `method`, `result` | Auth attempts |
 | `nexus_jwt_validations_total` | Counter | `result` | JWT validations |
+
+### SYNAPSE
+
+#### Action Execution
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `synapse_action_execution_total` | Counter | `action_type`, `status` | Actions executed |
+| `synapse_action_execution_duration_seconds` | Histogram | `action_type` | Execution latency |
+| `synapse_execution_queue_depth` | Gauge | | Pending actions in queue |
+| `synapse_action_risk_score` | Histogram | `action_type` | Risk score distribution |
+
+#### Safety Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `synapse_safety_violations_total` | Counter | `violation_type` | Safety violations |
+| `synapse_safety_kill_switch_active` | Gauge | | Kill switch status (0/1) |
+| `synapse_safety_paused` | Gauge | | Safety pause status (0/1) |
+| `synapse_high_risk_actions_total` | Counter | `action_type` | High-risk action requests |
+
+#### Connector Metrics
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `synapse_connector_requests_total` | Counter | `connector`, `status` | Connector requests |
+| `synapse_connector_latency_seconds` | Histogram | `connector` | Connector latency |
+| `synapse_connector_errors_total` | Counter | `connector`, `error_type` | Connector errors |
+
+#### Approval Workflow
+
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `synapse_approval_requests_total` | Counter | `status` | Approval requests |
+| `synapse_approval_wait_duration_seconds` | Histogram | | Time waiting for approval |
 
 ---
 
