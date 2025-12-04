@@ -1,0 +1,255 @@
+# =============================================================================
+# BUTTERFLY Ecosystem SLO Alerts
+# Phase 4: Scale, Multitenancy & Reliability
+# =============================================================================
+
+groups:
+  - name: butterfly-ecosystem-slo
+    interval: 30s
+    rules:
+      # =========================================================================
+      # Error Budget Alerts
+      # =========================================================================
+      
+      - alert: ButterflyErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{status=~"5.."}[1h])) by (service)
+            /
+            sum(rate(http_server_requests_seconds_count[1h])) by (service)
+          ) > 14.4 * on(service) group_left() butterfly_slo_error_budget_target
+        for: 2m
+        labels:
+          severity: critical
+          category: slo
+        annotations:
+          summary: "{{ $labels.service }} is burning error budget rapidly"
+          description: "Service {{ $labels.service }} error rate would exhaust error budget in < 2 hours. Current burn rate: {{ $value | humanize }}x target."
+          runbook_url: "https://docs.butterfly.io/runbooks/slo-breach"
+
+      - alert: ButterflyErrorBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(http_server_requests_seconds_count{status=~"5.."}[6h])) by (service)
+            /
+            sum(rate(http_server_requests_seconds_count[6h])) by (service)
+          ) > 6 * on(service) group_left() butterfly_slo_error_budget_target
+        for: 15m
+        labels:
+          severity: warning
+          category: slo
+        annotations:
+          summary: "{{ $labels.service }} is slowly burning error budget"
+          description: "Service {{ $labels.service }} error rate would exhaust error budget in < 6 hours."
+
+      # =========================================================================
+      # Per-Service Availability Alerts
+      # =========================================================================
+
+      - alert: PerceptionAvailabilitySLOBreach
+        expr: |
+          (
+            1 - (
+              sum(rate(http_server_requests_seconds_count{service="perception-api",status=~"5.."}[5m]))
+              /
+              sum(rate(http_server_requests_seconds_count{service="perception-api"}[5m]))
+            )
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: warning
+          service: perception
+          slo: availability
+        annotations:
+          summary: "PERCEPTION availability below SLO target (99.9%)"
+          description: "PERCEPTION availability is {{ $value | humanizePercentage }}, below target of 99.9%"
+
+      - alert: CapsuleAvailabilitySLOBreach
+        expr: |
+          (
+            1 - (
+              sum(rate(http_server_requests_seconds_count{service="capsule-service",status=~"5.."}[5m]))
+              /
+              sum(rate(http_server_requests_seconds_count{service="capsule-service"}[5m]))
+            )
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: warning
+          service: capsule
+          slo: availability
+        annotations:
+          summary: "CAPSULE availability below SLO target (99.9%)"
+          description: "CAPSULE availability is {{ $value | humanizePercentage }}"
+
+      - alert: NexusAvailabilitySLOBreach
+        expr: |
+          (
+            1 - (
+              sum(rate(http_server_requests_seconds_count{service="butterfly-nexus",status=~"5.."}[5m]))
+              /
+              sum(rate(http_server_requests_seconds_count{service="butterfly-nexus"}[5m]))
+            )
+          ) < 0.9999
+        for: 2m
+        labels:
+          severity: critical
+          service: nexus
+          slo: availability
+        annotations:
+          summary: "NEXUS availability below SLO target (99.99%)"
+          description: "NEXUS gateway availability is {{ $value | humanizePercentage }}, below critical target of 99.99%"
+
+      # =========================================================================
+      # Latency SLO Alerts
+      # =========================================================================
+
+      - alert: PerceptionLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_server_requests_seconds_bucket{service="perception-api"}[5m])) by (le)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          service: perception
+          slo: latency
+        annotations:
+          summary: "PERCEPTION P95 latency exceeds SLO target (200ms)"
+          description: "PERCEPTION P95 latency is {{ $value | humanizeDuration }}, exceeding target of 200ms"
+
+      - alert: NexusLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_server_requests_seconds_bucket{service="butterfly-nexus"}[5m])) by (le)
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: nexus
+          slo: latency
+        annotations:
+          summary: "NEXUS P95 latency exceeds SLO target (50ms)"
+          description: "NEXUS gateway P95 latency is {{ $value | humanizeDuration }}, exceeding target of 50ms"
+
+      - alert: CapsuleReadLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_server_requests_seconds_bucket{service="capsule-service",method="GET"}[5m])) by (le)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: capsule
+          slo: latency
+        annotations:
+          summary: "CAPSULE read P95 latency exceeds SLO target (100ms)"
+          description: "CAPSULE read P95 latency is {{ $value | humanizeDuration }}"
+
+      # =========================================================================
+      # Cross-Service Dependency Alerts
+      # =========================================================================
+
+      - alert: CrossServiceCircuitBreakerOpen
+        expr: |
+          resilience4j_circuitbreaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: warning
+          category: resilience
+        annotations:
+          summary: "Circuit breaker {{ $labels.name }} is OPEN on {{ $labels.service }}"
+          description: "Circuit breaker {{ $labels.name }} has tripped open, indicating downstream service issues."
+
+      - alert: CrossServiceHighErrorRate
+        expr: |
+          sum(rate(resilience4j_circuitbreaker_calls_seconds_count{kind="failed"}[5m])) by (service, name)
+          /
+          sum(rate(resilience4j_circuitbreaker_calls_seconds_count[5m])) by (service, name)
+          > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: resilience
+        annotations:
+          summary: "High error rate on {{ $labels.name }} calls from {{ $labels.service }}"
+          description: "Error rate for {{ $labels.name }} circuit breaker is {{ $value | humanizePercentage }}"
+
+      # =========================================================================
+      # Tenant SLO Alerts
+      # =========================================================================
+
+      - alert: TenantSLOBreach
+        expr: |
+          (
+            1 - (
+              sum(rate(http_server_requests_seconds_count{status=~"5.."}[15m])) by (tenantId)
+              /
+              sum(rate(http_server_requests_seconds_count[15m])) by (tenantId)
+            )
+          ) < 0.99
+        for: 10m
+        labels:
+          severity: warning
+          category: tenant-slo
+        annotations:
+          summary: "Tenant {{ $labels.tenantId }} availability below SLO"
+          description: "Tenant {{ $labels.tenantId }} is experiencing {{ $value | humanizePercentage }} availability, below tenant SLO guarantee."
+
+      - alert: TenantLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_server_requests_seconds_bucket[5m])) by (le, tenantId)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          category: tenant-slo
+        annotations:
+          summary: "Tenant {{ $labels.tenantId }} P95 latency exceeds SLO"
+          description: "Tenant {{ $labels.tenantId }} P95 latency is {{ $value | humanizeDuration }}"
+
+  # Recording rules for SLO calculations
+  - name: butterfly-slo-recordings
+    interval: 1m
+    rules:
+      - record: butterfly_slo_error_budget_target
+        expr: |
+          vector(0.001) and on() (label_replace(vector(1), "service", "perception-api", "", ""))
+          or
+          vector(0.001) and on() (label_replace(vector(1), "service", "capsule-service", "", ""))
+          or
+          vector(0.001) and on() (label_replace(vector(1), "service", "odyssey-core", "", ""))
+          or
+          vector(0.005) and on() (label_replace(vector(1), "service", "plato-service", "", ""))
+          or
+          vector(0.0001) and on() (label_replace(vector(1), "service", "butterfly-nexus", "", ""))
+          or
+          vector(0.001) and on() (label_replace(vector(1), "service", "synapse-service", "", ""))
+        labels:
+          metric: "error_budget_target"
+
+      - record: butterfly_slo_success_rate:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(http_server_requests_seconds_count{status=~"5.."}[1h])) by (service)
+            /
+            sum(rate(http_server_requests_seconds_count[1h])) by (service)
+          )
+
+      - record: butterfly_slo_success_rate:ratio_rate6h
+        expr: |
+          1 - (
+            sum(rate(http_server_requests_seconds_count{status=~"5.."}[6h])) by (service)
+            /
+            sum(rate(http_server_requests_seconds_count[6h])) by (service)
+          )
+
+      - record: butterfly_slo_success_rate:ratio_rate30d
+        expr: |
+          1 - (
+            sum(rate(http_server_requests_seconds_count{status=~"5.."}[30d])) by (service)
+            /
+            sum(rate(http_server_requests_seconds_count[30d])) by (service)
+          )
+

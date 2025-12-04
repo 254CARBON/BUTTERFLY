@@ -1,0 +1,27 @@
+# =============================================================================
+# BUTTERFLY Platform - Chaos Mesh Component
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+metadata:
+  name: chaos-mesh-annotations
+
+# Add chaos mesh annotations to all deployments
+patches:
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /metadata/annotations/chaos-mesh.org~1enabled
+        value: "true"
+      - op: add
+        path: /spec/template/metadata/annotations/chaos-mesh.org~1enabled
+        value: "true"
+
+# Add labels for chaos experiments
+labels:
+  - includeSelectors: true
+    pairs:
+      chaos.butterfly.io/enabled: "true"
+

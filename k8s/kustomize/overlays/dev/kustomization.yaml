@@ -1,0 +1,60 @@
+# =============================================================================
+# BUTTERFLY Platform - Development Overlay
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: butterfly-platform-dev
+
+namespace: butterfly-dev
+
+# Base configuration
+resources:
+  - ../../base
+
+# Development-specific patches
+patches:
+  # Reduce replica counts for all deployments
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  # Reduce resource requests
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 100m
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 256Mi
+
+  # Disable HPA in dev
+  - target:
+      kind: HorizontalPodAutoscaler
+    patch: |-
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: placeholder
+
+# Development ConfigMap overrides
+configMapGenerator:
+  - name: butterfly-platform-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=DEBUG
+      - BUTTERFLY_REQUIRE_TENANT=false
+      - BUTTERFLY_VALIDATE_TENANT=false
+      - SPRING_PROFILES_ACTIVE=dev,kubernetes
+
+# Labels specific to dev
+commonLabels:
+  environment: development
+

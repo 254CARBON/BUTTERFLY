@@ -1,0 +1,43 @@
+# =============================================================================
+# BUTTERFLY Platform - Kustomize Base
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: butterfly-platform-base
+  annotations:
+    config.kubernetes.io/local-config: "true"
+
+# Namespace for all resources
+namespace: butterfly
+
+# Common labels for all resources
+commonLabels:
+  app.kubernetes.io/part-of: butterfly-platform
+  app.kubernetes.io/managed-by: kustomize
+
+# Resources to include (Helm-generated manifests should be placed here)
+# After running: helm template butterfly-platform ../helm/butterfly-platform > base/manifests.yaml
+resources: []
+# - manifests.yaml
+
+# ConfigMap generators for shared configuration
+configMapGenerator:
+  - name: butterfly-platform-config
+    literals:
+      - BUTTERFLY_TENANT_ENABLED=true
+      - BUTTERFLY_DEFAULT_TENANT=default
+      - LOG_LEVEL=INFO
+
+# Secret generators (reference external secrets or use sops)
+# secretGenerator:
+#   - name: butterfly-secrets
+#     type: Opaque
+#     files:
+#       - secrets/db-password
+
+# Common annotations
+commonAnnotations:
+  prometheus.io/scrape: "true"
+

@@ -1,0 +1,140 @@
+# =============================================================================
+# Chaos Experiment: ODYSSEY Service Down
+# =============================================================================
+# Purpose: Test ecosystem resilience when ODYSSEY (Cognition Layer) is unavailable
+# Expected Behaviors:
+# - NEXUS should return cached/fallback data for graph queries
+# - PLATO should queue governance decisions that depend on ODYSSEY
+# - SYNAPSE should skip ODYSSEY-dependent actions gracefully
+# - Error budget consumption should be tracked
+# =============================================================================
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: odyssey-complete-failure
+  namespace: butterfly
+  labels:
+    experiment-category: service-failure
+    target-service: odyssey
+    severity: critical
+spec:
+  action: pod-kill
+  mode: all  # Kill all ODYSSEY pods
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: odyssey
+  duration: "5m"  # 5 minute experiment
+  gracePeriod: 0
+---
+# Verification workflow - to be run after experiment
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: odyssey-down-verification
+  namespace: butterfly
+spec:
+  entry: odyssey-down-test
+  templates:
+    - name: odyssey-down-test
+      templateType: Serial
+      deadline: 10m
+      children:
+        - pre-check
+        - apply-chaos
+        - verify-degradation
+        - post-check
+    
+    - name: pre-check
+      templateType: Task
+      task:
+        container:
+          name: pre-check
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Pre-Check: Verifying baseline health ==="
+              # Check NEXUS health
+              curl -sf http://butterfly-nexus:8083/actuator/health || exit 1
+              # Check PLATO health  
+              curl -sf http://plato:8082/actuator/health || exit 1
+              # Check SYNAPSE health
+              curl -sf http://synapse:8084/actuator/health || exit 1
+              echo "Baseline checks passed"
+    
+    - name: apply-chaos
+      templateType: PodChaos
+      podChaos:
+        action: pod-kill
+        mode: all
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: odyssey
+        duration: "3m"
+    
+    - name: verify-degradation
+      templateType: Task
+      task:
+        container:
+          name: verify-degradation
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Verifying graceful degradation ==="
+              sleep 30  # Wait for chaos to take effect
+              
+              # NEXUS should still be healthy (degraded mode)
+              STATUS=$(curl -sf http://butterfly-nexus:8083/actuator/health | jq -r '.status')
+              if [ "$STATUS" = "DOWN" ]; then
+                echo "FAIL: NEXUS is DOWN - should be UP or DEGRADED"
+                exit 1
+              fi
+              echo "NEXUS status: $STATUS"
+              
+              # PLATO should queue requests
+              curl -sf http://plato:8082/actuator/health || {
+                echo "WARN: PLATO health check failed"
+              }
+              
+              # Test fallback behavior on NEXUS
+              RESPONSE=$(curl -sf http://butterfly-nexus:8083/api/v1/graph/health || echo '{"status":"fallback"}')
+              echo "NEXUS graph health response: $RESPONSE"
+              
+              echo "Degradation verification complete"
+    
+    - name: post-check
+      templateType: Task
+      task:
+        container:
+          name: post-check
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Post-Check: Waiting for recovery ==="
+              sleep 60  # Wait for pods to recover
+              
+              # Verify ODYSSEY is back
+              for i in 1 2 3 4 5; do
+                if curl -sf http://odyssey:8080/actuator/health; then
+                  echo "ODYSSEY recovered successfully"
+                  break
+                fi
+                sleep 10
+              done
+              
+              # Verify full system health
+              curl -sf http://butterfly-nexus:8083/actuator/health && \
+              curl -sf http://plato:8082/actuator/health && \
+              curl -sf http://synapse:8084/actuator/health && \
+              echo "All services recovered successfully"
+

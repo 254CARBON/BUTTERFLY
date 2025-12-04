@@ -1,0 +1,48 @@
+apiVersion: v2
+name: butterfly-platform
+description: BUTTERFLY Platform - Complete ecosystem deployment chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+keywords:
+  - butterfly
+  - platform
+  - ecosystem
+  - multi-service
+
+maintainers:
+  - name: BUTTERFLY Team
+    email: butterfly@z254.com
+
+# Dependencies - subcharts from individual services
+dependencies:
+  - name: capsule
+    version: "0.1.0"
+    repository: "file://../../../CAPSULE/k8s/helm/capsule"
+    condition: capsule.enabled
+  - name: perception
+    version: "0.1.0"
+    repository: "file://../../../PERCEPTION/k8s/helm/perception"
+    condition: perception.enabled
+  - name: odyssey
+    version: "0.1.0"
+    repository: "file://../../../ODYSSEY/k8s/helm/odyssey"
+    condition: odyssey.enabled
+  - name: plato
+    version: "0.1.0"
+    repository: "file://../../../PLATO/k8s/helm/plato"
+    condition: plato.enabled
+  - name: synapse
+    version: "0.1.0"
+    repository: "file://../../../SYNAPSE/k8s/helm/synapse"
+    condition: synapse.enabled
+  - name: nexus
+    version: "0.1.0"
+    repository: "file://../../../butterfly-nexus/k8s/helm/nexus"
+    condition: nexus.enabled
+
+annotations:
+  category: platform
+  butterfly.io/ecosystem: "full"
+

@@ -1,0 +1,99 @@
+# =============================================================================
+# BUTTERFLY Platform - Umbrella Helm Chart Values
+# Deploys the complete BUTTERFLY ecosystem
+# =============================================================================
+
+# =============================================================================
+# Global Configuration
+# =============================================================================
+global:
+  imageRegistry: ghcr.io/254studioz
+  imagePullSecrets: []
+  storageClass: ""
+  
+  # Shared tenant configuration
+  tenant:
+    enabled: true
+    defaultTenantId: default
+    requireTenantContext: false
+    validateTenantOnRequest: false
+
+  # Shared infrastructure endpoints
+  kafka:
+    bootstrapServers: kafka:9093
+    schemaRegistryUrl: http://schema-registry:8081
+  
+  redis:
+    host: redis
+    port: 6379
+  
+  cassandra:
+    contactPoints: cassandra
+    port: 9042
+    localDatacenter: datacenter1
+
+# =============================================================================
+# Service Feature Flags
+# =============================================================================
+capsule:
+  enabled: true
+
+perception:
+  enabled: true
+
+odyssey:
+  enabled: true
+
+plato:
+  enabled: true
+
+synapse:
+  enabled: true
+
+nexus:
+  enabled: true
+
+# =============================================================================
+# Infrastructure Dependencies (external charts recommended)
+# =============================================================================
+# These should be deployed separately or via sub-charts
+# Uncomment if using bundled infrastructure
+
+# kafka:
+#   enabled: false
+#   replicaCount: 3
+
+# cassandra:
+#   enabled: false
+#   replicaCount: 3
+
+# redis:
+#   enabled: false
+#   architecture: replication
+#   replica:
+#     replicaCount: 2
+
+# postgresql:
+#   enabled: false
+#   architecture: replication
+
+# =============================================================================
+# Observability
+# =============================================================================
+serviceMonitor:
+  enabled: false
+  labels:
+    release: prometheus
+
+# =============================================================================
+# Network Policies
+# =============================================================================
+networkPolicies:
+  enabled: false
+
+# =============================================================================
+# Pod Security Policies
+# =============================================================================
+podSecurityPolicy:
+  enabled: false
+

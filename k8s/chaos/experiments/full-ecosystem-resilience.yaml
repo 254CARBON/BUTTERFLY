@@ -1,0 +1,353 @@
+# =============================================================================
+# Chaos Experiment: Full Ecosystem Resilience Test
+# =============================================================================
+# Purpose: Test the entire BUTTERFLY ecosystem under cascading failure scenarios
+# This is a comprehensive test that should only be run in staging environments
+# with proper monitoring and rollback procedures in place.
+# =============================================================================
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: butterfly-ecosystem-resilience-test
+  namespace: butterfly
+  labels:
+    experiment-type: comprehensive
+    environment: staging-only
+spec:
+  entry: full-resilience-test
+  templates:
+    - name: full-resilience-test
+      templateType: Serial
+      deadline: 45m
+      children:
+        - setup-monitoring
+        - scenario-1-single-service
+        - cooldown-1
+        - scenario-2-cascading
+        - cooldown-2
+        - scenario-3-database
+        - cooldown-3
+        - final-recovery
+    
+    # =========================================================================
+    # Setup: Ensure monitoring is ready
+    # =========================================================================
+    - name: setup-monitoring
+      templateType: Task
+      task:
+        container:
+          name: setup
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=========================================="
+              echo "BUTTERFLY Ecosystem Resilience Test"
+              echo "=========================================="
+              echo "Time: $(date)"
+              echo "Namespace: butterfly"
+              echo ""
+              echo "Pre-flight checks..."
+              
+              # Verify all services are healthy
+              SERVICES="perception capsule odyssey plato butterfly-nexus synapse"
+              ALL_HEALTHY=true
+              
+              for SVC in $SERVICES; do
+                if curl -sf http://${SVC}:8080/actuator/health > /dev/null 2>&1 || \
+                   curl -sf http://${SVC}:8081/actuator/health > /dev/null 2>&1 || \
+                   curl -sf http://${SVC}:8082/actuator/health > /dev/null 2>&1 || \
+                   curl -sf http://${SVC}:8083/actuator/health > /dev/null 2>&1 || \
+                   curl -sf http://${SVC}:8084/actuator/health > /dev/null 2>&1 || \
+                   curl -sf http://${SVC}:8085/actuator/health > /dev/null 2>&1; then
+                  echo "✓ $SVC is healthy"
+                else
+                  echo "✗ $SVC is NOT healthy"
+                  ALL_HEALTHY=false
+                fi
+              done
+              
+              if [ "$ALL_HEALTHY" = "false" ]; then
+                echo "ERROR: Not all services are healthy. Aborting test."
+                exit 1
+              fi
+              
+              echo ""
+              echo "All services healthy. Starting resilience test..."
+    
+    # =========================================================================
+    # Scenario 1: Single Service Failure (ODYSSEY down)
+    # =========================================================================
+    - name: scenario-1-single-service
+      templateType: Serial
+      children:
+        - scenario-1-announce
+        - scenario-1-chaos
+        - scenario-1-verify
+    
+    - name: scenario-1-announce
+      templateType: Task
+      task:
+        container:
+          name: announce
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=========================================="
+              echo "SCENARIO 1: Single Service Failure"
+              echo "Target: ODYSSEY (Cognition Layer)"
+              echo "Duration: 3 minutes"
+              echo "Expected: Other services degrade gracefully"
+              echo "=========================================="
+    
+    - name: scenario-1-chaos
+      templateType: PodChaos
+      podChaos:
+        action: pod-kill
+        mode: all
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: odyssey
+        duration: "3m"
+    
+    - name: scenario-1-verify
+      templateType: Task
+      task:
+        container:
+          name: verify
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Verifying graceful degradation..."
+              sleep 30
+              
+              # NEXUS should still respond
+              NEXUS_STATUS=$(curl -sf -m 5 http://butterfly-nexus:8083/actuator/health | jq -r '.status' || echo "UNREACHABLE")
+              echo "NEXUS status during ODYSSEY failure: $NEXUS_STATUS"
+              
+              # PLATO should still respond
+              PLATO_STATUS=$(curl -sf -m 5 http://plato:8082/actuator/health | jq -r '.status' || echo "UNREACHABLE")
+              echo "PLATO status during ODYSSEY failure: $PLATO_STATUS"
+              
+              if [ "$NEXUS_STATUS" = "DOWN" ] || [ "$PLATO_STATUS" = "DOWN" ]; then
+                echo "WARNING: Cascading failure detected"
+              else
+                echo "✓ Services maintaining availability"
+              fi
+    
+    - name: cooldown-1
+      templateType: Suspend
+      suspend:
+        duration: "2m"
+    
+    # =========================================================================
+    # Scenario 2: Cascading Degradation (Multiple services affected)
+    # =========================================================================
+    - name: scenario-2-cascading
+      templateType: Serial
+      children:
+        - scenario-2-announce
+        - scenario-2-chaos-parallel
+        - scenario-2-verify
+    
+    - name: scenario-2-announce
+      templateType: Task
+      task:
+        container:
+          name: announce
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=========================================="
+              echo "SCENARIO 2: Cascading Degradation"
+              echo "Targets: CAPSULE latency + PERCEPTION delay"
+              echo "Duration: 5 minutes"
+              echo "Expected: System-wide graceful degradation"
+              echo "=========================================="
+    
+    - name: scenario-2-chaos-parallel
+      templateType: Parallel
+      children:
+        - scenario-2-capsule-delay
+        - scenario-2-perception-delay
+    
+    - name: scenario-2-capsule-delay
+      templateType: NetworkChaos
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: capsule
+        delay:
+          latency: "300ms"
+          jitter: "50ms"
+        direction: both
+        duration: "5m"
+    
+    - name: scenario-2-perception-delay
+      templateType: NetworkChaos
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: perception
+        delay:
+          latency: "400ms"
+          jitter: "100ms"
+        direction: both
+        duration: "5m"
+    
+    - name: scenario-2-verify
+      templateType: Task
+      task:
+        container:
+          name: verify
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Verifying cascading degradation handling..."
+              sleep 60
+              
+              # Check all service health
+              for SVC in perception capsule butterfly-nexus plato synapse; do
+                STATUS=$(curl -sf -m 10 http://${SVC}:*/actuator/health 2>/dev/null | jq -r '.status' || echo "TIMEOUT")
+                echo "$SVC: $STATUS"
+              done
+              
+              # Check circuit breaker states
+              CB_DATA=$(curl -sf http://butterfly-nexus:8083/actuator/health 2>/dev/null | jq '.components.circuitBreakers // {}')
+              echo "Circuit breaker states: $CB_DATA"
+    
+    - name: cooldown-2
+      templateType: Suspend
+      suspend:
+        duration: "3m"
+    
+    # =========================================================================
+    # Scenario 3: Database Connectivity Issues
+    # =========================================================================
+    - name: scenario-3-database
+      templateType: Serial
+      children:
+        - scenario-3-announce
+        - scenario-3-verify
+    
+    - name: scenario-3-announce
+      templateType: Task
+      task:
+        container:
+          name: announce
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=========================================="
+              echo "SCENARIO 3: Database Connectivity Stress"
+              echo "Note: This scenario tests timeout handling"
+              echo "Duration: 3 minutes"
+              echo "Expected: Services use cache/fallback data"
+              echo "=========================================="
+              
+              # Simulate database stress by sending concurrent requests
+              echo "Simulating high database load..."
+              for i in $(seq 1 50); do
+                curl -sf http://capsule:8081/api/v1/entities/stress-test-$i > /dev/null 2>&1 &
+              done
+              wait
+              echo "Load simulation complete"
+    
+    - name: scenario-3-verify
+      templateType: Task
+      task:
+        container:
+          name: verify
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Verifying database stress handling..."
+              
+              # Check CAPSULE health
+              CAPSULE_STATUS=$(curl -sf -m 10 http://capsule:8081/actuator/health | jq -r '.status' || echo "TIMEOUT")
+              echo "CAPSULE status: $CAPSULE_STATUS"
+              
+              # Check cache stats if available
+              CACHE_STATS=$(curl -sf http://capsule:8081/actuator/metrics/cache.gets 2>/dev/null || echo "N/A")
+              echo "Cache statistics: $CACHE_STATS"
+    
+    - name: cooldown-3
+      templateType: Suspend
+      suspend:
+        duration: "2m"
+    
+    # =========================================================================
+    # Final Recovery Verification
+    # =========================================================================
+    - name: final-recovery
+      templateType: Task
+      task:
+        container:
+          name: final-check
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=========================================="
+              echo "FINAL RECOVERY VERIFICATION"
+              echo "=========================================="
+              
+              sleep 60  # Wait for full recovery
+              
+              echo "Checking all service health..."
+              ALL_HEALTHY=true
+              
+              # Check each service with appropriate port
+              SERVICES="perception:8085 capsule:8081 odyssey:8080 plato:8082 butterfly-nexus:8083 synapse:8084"
+              
+              for SVC_PORT in $SERVICES; do
+                SVC=$(echo $SVC_PORT | cut -d: -f1)
+                PORT=$(echo $SVC_PORT | cut -d: -f2)
+                
+                STATUS=$(curl -sf -m 5 http://${SVC}:${PORT}/actuator/health | jq -r '.status' || echo "UNREACHABLE")
+                
+                if [ "$STATUS" = "UP" ]; then
+                  echo "✓ $SVC: $STATUS"
+                else
+                  echo "✗ $SVC: $STATUS"
+                  ALL_HEALTHY=false
+                fi
+              done
+              
+              echo ""
+              if [ "$ALL_HEALTHY" = "true" ]; then
+                echo "=========================================="
+                echo "TEST COMPLETE: All services recovered successfully"
+                echo "=========================================="
+              else
+                echo "=========================================="
+                echo "TEST COMPLETE: Some services did not fully recover"
+                echo "Manual investigation recommended"
+                echo "=========================================="
+              fi
+

@@ -1,0 +1,231 @@
+# =============================================================================
+# Chaos Experiment: CAPSULE Service Degraded
+# =============================================================================
+# Purpose: Test ecosystem resilience when CAPSULE (Memory Layer) is partially available
+# Expected Behaviors:
+# - Services should use cached data where possible
+# - Read operations should failover to remaining replicas
+# - Write operations may queue or degrade gracefully
+# - Circuit breakers should activate appropriately
+# =============================================================================
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: capsule-partial-failure
+  namespace: butterfly
+  labels:
+    experiment-category: service-degradation
+    target-service: capsule
+    severity: high
+spec:
+  action: pod-kill
+  mode: fixed-percent
+  value: "50"  # Kill 50% of CAPSULE pods
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: capsule
+  duration: "10m"
+  gracePeriod: 5
+---
+# CPU stress on remaining CAPSULE pods to simulate overload
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: capsule-cpu-stress
+  namespace: butterfly
+  labels:
+    experiment-category: service-degradation
+    target-service: capsule
+    severity: medium
+spec:
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: capsule
+  stressors:
+    cpu:
+      workers: 2
+      load: 80  # 80% CPU load
+  duration: "10m"
+---
+# Network delay to Cassandra (CAPSULE's primary database)
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: capsule-cassandra-latency
+  namespace: butterfly
+  labels:
+    experiment-category: database-degradation
+    target-service: capsule
+    severity: medium
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: capsule
+  delay:
+    latency: "200ms"
+    correlation: "25"
+    jitter: "50ms"
+  target:
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: cassandra
+    mode: all
+  direction: both
+  duration: "10m"
+---
+# Comprehensive CAPSULE degradation workflow
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: capsule-degradation-test
+  namespace: butterfly
+spec:
+  entry: capsule-degradation
+  templates:
+    - name: capsule-degradation
+      templateType: Serial
+      deadline: 30m
+      children:
+        - baseline-metrics
+        - apply-partial-failure
+        - verify-failover
+        - apply-latency
+        - verify-circuit-breaker
+        - recovery-check
+    
+    - name: baseline-metrics
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Baseline: Recording initial metrics ==="
+              # Record initial response times
+              for i in 1 2 3 4 5; do
+                START=$(date +%s%N)
+                curl -sf http://capsule:8081/api/v1/entities/test || true
+                END=$(date +%s%N)
+                echo "Request $i latency: $(( (END - START) / 1000000 ))ms"
+              done
+              
+              # Check replica count
+              echo "CAPSULE pods: $(kubectl get pods -l app.kubernetes.io/name=capsule -o name | wc -l)"
+    
+    - name: apply-partial-failure
+      templateType: PodChaos
+      podChaos:
+        action: pod-kill
+        mode: fixed-percent
+        value: "50"
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: capsule
+        duration: "5m"
+    
+    - name: verify-failover
+      templateType: Task
+      task:
+        container:
+          name: verify-failover
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Verifying failover behavior ==="
+              sleep 20  # Wait for chaos to apply
+              
+              # Check remaining pods are handling traffic
+              SUCCESS=0
+              FAIL=0
+              for i in $(seq 1 20); do
+                if curl -sf http://capsule:8081/actuator/health > /dev/null; then
+                  SUCCESS=$((SUCCESS + 1))
+                else
+                  FAIL=$((FAIL + 1))
+                fi
+              done
+              
+              echo "Success: $SUCCESS, Failed: $FAIL"
+              
+              # Should have high success rate with remaining replicas
+              if [ $SUCCESS -lt 15 ]; then
+                echo "WARN: Lower than expected success rate during failover"
+              fi
+    
+    - name: apply-latency
+      templateType: NetworkChaos
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: capsule
+        delay:
+          latency: "200ms"
+          jitter: "50ms"
+        direction: both
+        duration: "3m"
+    
+    - name: verify-circuit-breaker
+      templateType: Task
+      task:
+        container:
+          name: verify-cb
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Verifying circuit breaker behavior ==="
+              
+              # Check NEXUS circuit breaker status
+              CB_STATUS=$(curl -sf http://butterfly-nexus:8083/actuator/health | \
+                jq -r '.components.circuitBreakers.details.capsule.state // "unknown"')
+              echo "CAPSULE circuit breaker state: $CB_STATUS"
+              
+              # Circuit breaker should be HALF_OPEN or OPEN due to latency
+              if [ "$CB_STATUS" = "CLOSED" ]; then
+                echo "INFO: Circuit breaker still closed - latency may be within threshold"
+              fi
+    
+    - name: recovery-check
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Verifying recovery ==="
+              sleep 90  # Wait for chaos to end and recovery
+              
+              # All pods should be back
+              PODS=$(kubectl get pods -l app.kubernetes.io/name=capsule --field-selector=status.phase=Running -o name | wc -l)
+              echo "Running CAPSULE pods: $PODS"
+              
+              # Health should be restored
+              curl -sf http://capsule:8081/actuator/health || echo "WARN: Health not fully restored"
+

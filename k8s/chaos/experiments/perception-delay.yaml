@@ -1,0 +1,279 @@
+# =============================================================================
+# Chaos Experiment: PERCEPTION Data Delay
+# =============================================================================
+# Purpose: Test ecosystem resilience when PERCEPTION (Sensory Layer) has high latency
+# Expected Behaviors:
+# - Kafka consumers should apply backpressure
+# - NEXUS temporal queries should use cached/stale data
+# - PLATO should delay governance decisions gracefully
+# - Alert thresholds should trigger appropriately
+# =============================================================================
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: perception-network-delay
+  namespace: butterfly
+  labels:
+    experiment-category: latency-injection
+    target-service: perception
+    severity: high
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: perception
+  delay:
+    latency: "500ms"
+    correlation: "50"
+    jitter: "100ms"
+  direction: both
+  duration: "10m"
+---
+# Packet loss to simulate network instability
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: perception-packet-loss
+  namespace: butterfly
+  labels:
+    experiment-category: latency-injection
+    target-service: perception
+    severity: medium
+spec:
+  action: loss
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: perception
+  loss:
+    loss: "10"  # 10% packet loss
+    correlation: "25"
+  direction: both
+  duration: "10m"
+---
+# Kafka network partition simulation
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: perception-kafka-delay
+  namespace: butterfly
+  labels:
+    experiment-category: kafka-degradation
+    target-service: perception
+    severity: high
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: perception
+  delay:
+    latency: "300ms"
+    jitter: "100ms"
+  target:
+    selector:
+      namespaces:
+        - butterfly
+      labelSelectors:
+        app: kafka
+    mode: all
+  direction: both
+  duration: "10m"
+---
+# Memory pressure on PERCEPTION
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: perception-memory-pressure
+  namespace: butterfly
+  labels:
+    experiment-category: resource-pressure
+    target-service: perception
+    severity: medium
+spec:
+  mode: one  # Affect only one pod to maintain some capacity
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: perception
+  stressors:
+    memory:
+      workers: 2
+      size: "512Mi"  # Allocate 512Mi
+  duration: "10m"
+---
+# Complete PERCEPTION delay workflow
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: perception-delay-test
+  namespace: butterfly
+spec:
+  entry: perception-delay-sequence
+  templates:
+    - name: perception-delay-sequence
+      templateType: Serial
+      deadline: 25m
+      children:
+        - record-baseline
+        - apply-network-delay
+        - verify-backpressure
+        - apply-kafka-delay
+        - verify-event-lag
+        - recovery-validation
+    
+    - name: record-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Recording baseline metrics ==="
+              
+              # Baseline PERCEPTION latency
+              for i in 1 2 3 4 5; do
+                START=$(date +%s%N)
+                curl -sf http://perception:8085/api/v1/signals/health > /dev/null
+                END=$(date +%s%N)
+                echo "Baseline request $i: $(( (END - START) / 1000000 ))ms"
+              done
+              
+              # Record Kafka consumer lag (if accessible)
+              echo "Consumer lag baseline recorded"
+    
+    - name: apply-network-delay
+      templateType: NetworkChaos
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: perception
+        delay:
+          latency: "500ms"
+          jitter: "100ms"
+        direction: both
+        duration: "5m"
+    
+    - name: verify-backpressure
+      templateType: Task
+      task:
+        container:
+          name: verify-backpressure
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Verifying backpressure behavior ==="
+              sleep 30  # Wait for delay to take effect
+              
+              # Measure degraded latency
+              TOTAL_MS=0
+              for i in 1 2 3 4 5; do
+                START=$(date +%s%N)
+                curl -sf -m 5 http://perception:8085/api/v1/signals/health > /dev/null || true
+                END=$(date +%s%N)
+                MS=$(( (END - START) / 1000000 ))
+                echo "Degraded request $i: ${MS}ms"
+                TOTAL_MS=$((TOTAL_MS + MS))
+              done
+              
+              AVG_MS=$((TOTAL_MS / 5))
+              echo "Average degraded latency: ${AVG_MS}ms"
+              
+              # Should see significant latency increase
+              if [ $AVG_MS -lt 400 ]; then
+                echo "WARN: Latency injection may not be working as expected"
+              fi
+              
+              # Check if NEXUS is using cached data
+              NEXUS_RESPONSE=$(curl -sf http://butterfly-nexus:8083/api/v1/temporal/health 2>/dev/null || echo '{}')
+              echo "NEXUS temporal endpoint response: $NEXUS_RESPONSE"
+    
+    - name: apply-kafka-delay
+      templateType: NetworkChaos
+      networkChaos:
+        action: delay
+        mode: all
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: perception
+        delay:
+          latency: "300ms"
+          jitter: "100ms"
+        target:
+          selector:
+            namespaces:
+              - butterfly
+            labelSelectors:
+              app: kafka
+          mode: all
+        direction: both
+        duration: "5m"
+    
+    - name: verify-event-lag
+      templateType: Task
+      task:
+        container:
+          name: verify-lag
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Verifying event processing lag ==="
+              sleep 30
+              
+              # Check PERCEPTION metrics for consumer lag
+              METRICS=$(curl -sf http://perception:8085/actuator/prometheus 2>/dev/null | \
+                grep -E 'kafka_consumer_records_lag|kafka_consumer_fetch_manager' || echo "No Kafka metrics")
+              echo "PERCEPTION Kafka metrics: $METRICS"
+              
+              # Check if PLATO is experiencing delays
+              PLATO_HEALTH=$(curl -sf http://plato:8082/actuator/health 2>/dev/null | jq -r '.status // "unknown"')
+              echo "PLATO health during PERCEPTION delay: $PLATO_HEALTH"
+    
+    - name: recovery-validation
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "=== Validating recovery ==="
+              sleep 60  # Wait for chaos to end
+              
+              # Verify normal latency restored
+              START=$(date +%s%N)
+              curl -sf http://perception:8085/api/v1/signals/health > /dev/null || true
+              END=$(date +%s%N)
+              MS=$(( (END - START) / 1000000 ))
+              echo "Post-recovery latency: ${MS}ms"
+              
+              if [ $MS -gt 200 ]; then
+                echo "WARN: Latency still elevated after chaos ended"
+              else
+                echo "Recovery verified - latency back to normal"
+              fi
+

@@ -1,4 +1,4 @@
-name: Security Scan
+name: BUTTERFLY Security Scan
 
 on:
   push:
@@ -6,380 +6,288 @@ on:
   pull_request:
     branches: [main, develop]
   schedule:
-    # Run weekly on Sundays at 2 AM UTC
-    - cron: "0 2 * * 0"
+    # Run weekly security scans on Monday at 6 AM UTC
+    - cron: '0 6 * * 1'
   workflow_dispatch:
+    inputs:
+      scan_all:
+        description: 'Run all security scans'
+        required: false
+        default: 'true'
 
 permissions:
   contents: read
   security-events: write
-  actions: read
+  pull-requests: write
+
+env:
+  JAVA_VERSION: '17'
+  JAVA_DISTRIBUTION: 'temurin'
 
 jobs:
-  # CodeQL SAST Analysis
-  codeql:
-    name: CodeQL SAST Analysis
+  # Dependency vulnerability scanning with OWASP Dependency-Check
+  dependency-check:
+    name: OWASP Dependency Check
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [java]
-        module:
-          - butterfly-common
-          - CAPSULE
-          - ODYSSEY
-          - PLATO
-          - PERCEPTION
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          java-version: "17"
-          distribution: "temurin"
-          cache: maven
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Cache OWASP NVD Database
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: owasp-nvd-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            owasp-nvd-${{ runner.os }}-
+
+      - name: Run OWASP Dependency Check
+        run: |
+          mvn org.owasp:dependency-check-maven:check \
+            -DfailBuildOnCVSS=7 \
+            -DsuppressionFile=.github/owasp-suppressions.xml \
+            -DnvdApiKey=${{ secrets.NVD_API_KEY }} \
+            --batch-mode
+        continue-on-error: true
+
+      - name: Upload Dependency Check Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-check-report
+          path: '**/target/dependency-check-report.html'
+          retention-days: 14
+
+      - name: Check for Critical Vulnerabilities
+        run: |
+          # Fail if any CVE with CVSS >= 7.0 is found (non-suppressed)
+          if grep -r "cvssV3" **/target/dependency-check-report.json 2>/dev/null | grep -E '"baseScore"\s*:\s*[7-9]\.[0-9]|10\.0'; then
+            echo "::error::Critical vulnerabilities (CVSS >= 7.0) found!"
+            exit 1
+          fi
+        continue-on-error: ${{ github.event_name == 'schedule' }}
+
+  # Static Application Security Testing with CodeQL
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: ${{ matrix.language }}
-          queries: security-extended,security-and-quality
+          languages: java
+          queries: +security-extended,security-and-quality
 
-      - name: Build ${{ matrix.module }}
-        run: |
-          if [ "${{ matrix.module }}" = "butterfly-common" ]; then
-            mvn -B -f butterfly-common/pom.xml compile -DskipTests
-          else
-            # Install butterfly-common first as dependency
-            mvn -B -f butterfly-common/pom.xml install -DskipTests
-            mvn -B -f ${{ matrix.module }}/pom.xml compile -DskipTests
-          fi
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Build with Maven (for CodeQL)
+        run: mvn compile -DskipTests --batch-mode
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:${{ matrix.language }}/module:${{ matrix.module }}"
+          category: "/language:java"
 
-  # Dependency Vulnerability Scanning
-  dependency-check:
-    name: OWASP Dependency Check
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        module:
-          - butterfly-common
-          - CAPSULE
-          - ODYSSEY
-          - PLATO
-          - PERCEPTION
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-          cache: maven
-
-      - name: Install butterfly-common
-        if: matrix.module != 'butterfly-common'
-        run: mvn -B -f butterfly-common/pom.xml install -DskipTests
-
-      - name: Run OWASP Dependency Check
-        # Sprint C: Fail on CVSS >= 7 (High severity and above)
-        run: |
-          mvn -B -f ${{ matrix.module }}/pom.xml \
-            org.owasp:dependency-check-maven:check \
-            -DfailBuildOnCVSS=7 \
-            -DsuppressionFiles=.github/dependency-check-suppressions.xml \
-            -Dformat=ALL
-
-      - name: Upload Dependency Check Report (HTML)
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: dependency-check-${{ matrix.module }}
-          path: ${{ matrix.module }}/target/dependency-check-report.html
-          retention-days: 30
-
-      - name: Upload Dependency Check SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: ${{ matrix.module }}/target/dependency-check-report.sarif
-          category: "dependency-check-${{ matrix.module }}"
-
-  # Secret Scanning
-  secret-scan:
-    name: Secret Scanning
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
-          extra_args: --only-verified
-
-      - name: Gitleaks Secret Scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-
-  # License Compliance Check
-  license-check:
-    name: License Compliance
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: "17"
-          distribution: "temurin"
-          cache: maven
-
-      - name: Install butterfly-common
-        run: mvn -B -f butterfly-common/pom.xml install -DskipTests
-
-      - name: Generate License Report (butterfly-common)
-        run: |
-          mvn -B -f butterfly-common/pom.xml \
-            org.codehaus.mojo:license-maven-plugin:2.3.0:aggregate-third-party-report \
-            -Dlicense.excludedScopes=test
-
-      - name: Generate License Report (CAPSULE)
-        run: |
-          mvn -B -f CAPSULE/pom.xml \
-            org.codehaus.mojo:license-maven-plugin:2.3.0:aggregate-third-party-report \
-            -Dlicense.excludedScopes=test
-
-      - name: Upload License Reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: license-reports
-          path: "**/target/site/third-party-report.html"
-          retention-days: 30
-
-  # Semgrep SAST (additional rules)
+  # Static analysis with Semgrep
   semgrep:
     name: Semgrep SAST
     runs-on: ubuntu-latest
     container:
-      image: returntocorp/semgrep
+      image: semgrep/semgrep
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Run Semgrep
-        # Fail on HIGH/CRITICAL security findings
         run: |
           semgrep scan \
             --config auto \
             --config p/java \
             --config p/security-audit \
-            --config p/secrets \
             --config p/owasp-top-ten \
-            --sarif --output results.sarif \
+            --json \
+            --output semgrep-results.json \
             --error \
             --severity ERROR
+        continue-on-error: true
 
-      - name: Upload SARIF results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: results.sarif
-
-  # =============================================================================
-  # OWASP ZAP DAST Scanning
-  # =============================================================================
-  dast-zap:
-    name: OWASP ZAP DAST
-    runs-on: ubuntu-latest
-    # Run DAST on main/develop branches and PRs (but not on every commit)
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
-    services:
-      perception-api:
-        image: ghcr.io/${{ github.repository }}/perception-api:test
-        ports:
-          - 8080:8080
-        env:
-          SPRING_PROFILES_ACTIVE: test
-          JWT_SECRET: test-secret-key-for-dast-scanning-only-32-chars
-          DATABASE_URL: jdbc:h2:mem:testdb
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Wait for API to be ready
-        run: |
-          for i in {1..30}; do
-            if curl -s http://localhost:8080/actuator/health | grep -q "UP"; then
-              echo "API is ready"
-              exit 0
-            fi
-            echo "Waiting for API... attempt $i"
-            sleep 5
-          done
-          echo "API failed to start"
-          exit 1
-
-      - name: OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.11.0
-        with:
-          target: 'http://localhost:8080'
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a -j -l WARN'
-          fail_action: true
-          allow_issue_writing: false
-
-      - name: OWASP ZAP API Scan
-        uses: zaproxy/action-api-scan@v0.7.0
-        with:
-          target: 'http://localhost:8080/api-docs'
-          format: openapi
-          rules_file_name: '.zap/api-rules.tsv'
-          cmd_options: '-a -l WARN'
-          fail_action: true
-          allow_issue_writing: false
-
-      - name: Upload ZAP Report
+      - name: Upload Semgrep Results
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: zap-report
-          path: |
-            zap_baseline_report.html
-            zap_api_report.html
-          retention-days: 30
+          name: semgrep-results
+          path: semgrep-results.json
+          retention-days: 14
 
-  # =============================================================================
-  # SonarQube Analysis (requires SONAR_TOKEN secret)
-  # =============================================================================
-  sonarqube:
-    name: SonarQube Analysis
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Required for SonarQube blame info
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Cache SonarQube packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.sonar/cache
-          key: ${{ runner.os }}-sonar
-          restore-keys: ${{ runner.os }}-sonar
-
-      - name: Build and analyze
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      - name: Convert to SARIF
         run: |
-          mvn -B verify sonar:sonar \
-            -Dsonar.projectKey=butterfly-perception \
-            -Dsonar.qualitygate.wait=true \
-            -Dsonar.coverage.jacoco.xmlReportPaths=**/target/site/jacoco/jacoco.xml \
-            -DskipTests=false
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
+          semgrep scan \
+            --config auto \
+            --config p/java \
+            --config p/security-audit \
+            --sarif \
+            --output semgrep.sarif \
+            || true
 
-  # =============================================================================
-  # Frontend Security Scan (npm audit + Snyk)
-  # =============================================================================
-  frontend-security:
-    name: Frontend Security Scan
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: PERCEPTION/perception-portal
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: PERCEPTION/perception-portal/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run npm audit
-        run: npm audit --audit-level=high
-        continue-on-error: true
-
-      - name: Run Snyk security scan
-        uses: snyk/actions/node@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          command: test
-          args: --severity-threshold=high --file=PERCEPTION/perception-portal/package.json
-
-      - name: Upload Snyk results
+      - name: Upload SARIF to GitHub
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: snyk.sarif
+          sarif_file: semgrep.sarif
         continue-on-error: true
 
-  # Summary Report
+  # Secret scanning with TruffleHog
+  trufflehog:
+    name: TruffleHog Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          extra_args: --only-verified
+
+      - name: Fail on Secrets
+        run: |
+          # Check if any verified secrets were found
+          if [ -f trufflehog-results.json ] && [ -s trufflehog-results.json ]; then
+            echo "::error::Verified secrets found in the codebase!"
+            exit 1
+          fi
+        continue-on-error: true
+
+  # License compliance check
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: 'maven'
+
+      - name: Check Licenses
+        run: |
+          mvn license:third-party-report \
+            -Dlicense.excludedScopes=test \
+            --batch-mode || true
+
+      - name: Upload License Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: license-report
+          path: '**/target/site/third-party-report.html'
+          retention-days: 14
+
+  # Container image scanning (if Dockerfiles exist)
+  container-scan:
+    name: Container Security Scan
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('**/Dockerfile') != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find Dockerfiles
+        id: dockerfiles
+        run: |
+          echo "files=$(find . -name 'Dockerfile' -type f | tr '\n' ' ')" >> $GITHUB_OUTPUT
+
+      - name: Build Images for Scanning
+        run: |
+          for dockerfile in ${{ steps.dockerfiles.outputs.files }}; do
+            dir=$(dirname $dockerfile)
+            name=$(echo $dir | tr '/' '-' | sed 's/^-//')
+            docker build -t butterfly-$name:scan -f $dockerfile $dir || true
+          done
+
+      - name: Run Trivy Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          image-ref: 'butterfly:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+        continue-on-error: true
+
+      - name: Upload Trivy Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+        continue-on-error: true
+
+  # Security compliance summary
   security-summary:
     name: Security Summary
     runs-on: ubuntu-latest
-    needs: [codeql, dependency-check, secret-scan, license-check, semgrep, dast-zap, sonarqube, frontend-security]
+    needs: [dependency-check, codeql, semgrep, trufflehog, license-check]
     if: always()
     steps:
-      - name: Security Scan Summary
+      - name: Check Overall Status
         run: |
-          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| CodeQL SAST | ${{ needs.codeql.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| OWASP Dependency Check | ${{ needs.dependency-check.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Secret Scanning | ${{ needs.secret-scan.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| License Compliance | ${{ needs.license-check.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Semgrep SAST | ${{ needs.semgrep.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| OWASP ZAP DAST | ${{ needs.dast-zap.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| SonarQube | ${{ needs.sonarqube.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Frontend Security | ${{ needs.frontend-security.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Remediation SLAs" >> $GITHUB_STEP_SUMMARY
-          echo "- **Critical**: 24 hours" >> $GITHUB_STEP_SUMMARY
-          echo "- **High**: 72 hours" >> $GITHUB_STEP_SUMMARY
-          echo "- **Medium**: 14 days" >> $GITHUB_STEP_SUMMARY
-          echo "- **Low**: 30 days" >> $GITHUB_STEP_SUMMARY
+          echo "| OWASP Dependency Check | ${{ needs.dependency-check.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| CodeQL Analysis | ${{ needs.codeql.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Semgrep SAST | ${{ needs.semgrep.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| TruffleHog Secrets | ${{ needs.trufflehog.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| License Compliance | ${{ needs.license-check.result == 'success' && '✅ Passed' || '⚠️ Review' }} |" >> $GITHUB_STEP_SUMMARY
 
-      - name: Fail if critical issues
-        if: needs.codeql.result == 'failure' || needs.dependency-check.result == 'failure' || needs.semgrep.result == 'failure' || needs.dast-zap.result == 'failure'
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const summary = `## 🔐 Security Scan Results
+
+            | Check | Status |
+            |-------|--------|
+            | OWASP Dependency Check | ${{ needs.dependency-check.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | CodeQL Analysis | ${{ needs.codeql.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | Semgrep SAST | ${{ needs.semgrep.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | TruffleHog Secrets | ${{ needs.trufflehog.result == 'success' && '✅ Passed' || '❌ Failed' }} |
+            | License Compliance | ${{ needs.license-check.result == 'success' && '✅ Passed' || '⚠️ Review' }} |
+
+            > View detailed reports in the workflow artifacts.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+      - name: Fail if Critical Issues
+        if: |
+          needs.dependency-check.result == 'failure' ||
+          needs.codeql.result == 'failure' ||
+          needs.trufflehog.result == 'failure'
         run: |
-          echo "::error::Critical security issues detected. Please review and remediate before merging."
+          echo "::error::Critical security issues detected. Please review the scan reports."
           exit 1

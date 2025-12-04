@@ -1,0 +1,58 @@
+# =============================================================================
+# BUTTERFLY Platform - Development Values
+# =============================================================================
+
+global:
+  tenant:
+    enabled: true
+    requireTenantContext: false
+    validateTenantOnRequest: false
+  
+  kafka:
+    bootstrapServers: localhost:9092
+  
+  redis:
+    host: localhost
+    port: 6379
+  
+  cassandra:
+    contactPoints: localhost
+    port: 9042
+
+# Enable minimal services for development
+capsule:
+  enabled: true
+  capsuleService:
+    replicaCount: 1
+    hpa:
+      enabled: false
+    pdb:
+      enabled: false
+
+perception:
+  enabled: true
+  perceptionApi:
+    replicaCount: 1
+    hpa:
+      enabled: false
+    pdb:
+      enabled: false
+
+odyssey:
+  enabled: false  # Can be enabled as needed
+
+plato:
+  enabled: false  # Can be enabled as needed
+
+synapse:
+  enabled: false  # Can be enabled as needed
+
+nexus:
+  enabled: true
+  nexusService:
+    replicaCount: 1
+    hpa:
+      enabled: false
+    pdb:
+      enabled: false
+
