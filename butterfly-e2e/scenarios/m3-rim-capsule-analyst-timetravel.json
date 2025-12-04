@@ -1,0 +1,457 @@
+{
+  "name": "m3-rim-capsule-analyst-timetravel",
+  "description": "M3 End-to-End: Event → RIM node updates → CAPSULE snapshot → Analyst view with time-travel",
+  "version": "1.0.0",
+  "category": "m3-integration",
+  "tags": ["m3", "time-travel", "analyst-view", "rim", "capsule", "integration", "e2e"],
+
+  "setup": {
+    "services": ["perception", "perception-rim", "capsule", "butterfly-nexus"],
+    "kafka_topics": [
+      "perception.rim",
+      "rim.fast-path",
+      "capsule.snapshots",
+      "perception.rim.dlq"
+    ],
+    "schema_registry": {
+      "schemas": [
+        "RimFastEvent",
+        "RimNodeState",
+        "CapsuleSnapshot"
+      ]
+    },
+    "test_data": {
+      "baseTimestamp": "{{now_minus_1h}}",
+      "nodeId": "rim:entity:finance:EURUSD"
+    }
+  },
+
+  "steps": [
+    {
+      "name": "setup_initial_rim_state_t0",
+      "description": "Step 1: Publish initial RIM node state at T0 (baseline)",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{baseTimestamp}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}-t0"
+        },
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "nodeType": "ENTITY",
+        "effectiveAt": "{{baseTimestamp}}",
+        "snapshotTime": "{{baseTimestamp}}",
+        "resolutionSeconds": 60,
+        "vantageMode": "omniscient",
+        "state": {
+          "bidPrice": 1.0800,
+          "askPrice": 1.0802,
+          "volume24h": 4500000000,
+          "volatility30d": 0.075,
+          "stateLabel": "T0_BASELINE"
+        },
+        "metadata": {
+          "sourceId": "financial-feeds-1",
+          "schemaVersion": "1.0.0"
+        }
+      },
+      "key": "rim:entity:finance:EURUSD",
+      "headers": {
+        "correlationId": "{{correlationId}}-t0",
+        "traceparent": "{{traceparent}}"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_t0_capsule_projection",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "setup_rim_state_t1",
+      "description": "Step 2: Publish updated RIM node state at T1 (30 min after T0)",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{baseTimestamp_plus_30m}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}-t1"
+        },
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "nodeType": "ENTITY",
+        "effectiveAt": "{{baseTimestamp_plus_30m}}",
+        "snapshotTime": "{{baseTimestamp_plus_30m}}",
+        "resolutionSeconds": 60,
+        "vantageMode": "omniscient",
+        "state": {
+          "bidPrice": 1.0850,
+          "askPrice": 1.0852,
+          "volume24h": 5000000000,
+          "volatility30d": 0.080,
+          "stateLabel": "T1_MID_MOVEMENT"
+        },
+        "metadata": {
+          "sourceId": "financial-feeds-1",
+          "schemaVersion": "1.0.0"
+        }
+      },
+      "key": "rim:entity:finance:EURUSD",
+      "headers": {
+        "correlationId": "{{correlationId}}-t1"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_t1_capsule_projection",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "setup_rim_state_t2_current",
+      "description": "Step 3: Publish current RIM node state at T2 (now)",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}-t2"
+        },
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "nodeType": "ENTITY",
+        "effectiveAt": "{{now}}",
+        "snapshotTime": "{{now}}",
+        "resolutionSeconds": 60,
+        "vantageMode": "omniscient",
+        "state": {
+          "bidPrice": 1.0900,
+          "askPrice": 1.0902,
+          "volume24h": 5500000000,
+          "volatility30d": 0.085,
+          "stateLabel": "T2_CURRENT"
+        },
+        "metadata": {
+          "sourceId": "financial-feeds-1",
+          "schemaVersion": "1.0.0"
+        }
+      },
+      "key": "rim:entity:finance:EURUSD",
+      "headers": {
+        "correlationId": "{{correlationId}}-t2"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_t2_capsule_projection",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "publish_rim_fast_path_event",
+      "description": "Step 4: Publish high-frequency RimFastEvent for real-time signal",
+      "action": "kafka_publish",
+      "topic": "rim.fast-path",
+      "payload": {
+        "rim_node_id": "rim:entity:finance:EURUSD",
+        "vector_timestamp": "{{now}}",
+        "sequence_number": 1,
+        "critical_metrics": {
+          "bid_ask_spread": 0.0002,
+          "price_velocity": 0.0015,
+          "volume_spike_ratio": 1.22
+        },
+        "anomaly_flags": [],
+        "source_fingerprint": "e2e-test",
+        "ttl_seconds": 300
+      },
+      "key": "rim:entity:finance:EURUSD",
+      "headers": {
+        "correlationId": "{{correlationId}}-fastpath"
+      },
+      "timeout_ms": 3000
+    },
+    {
+      "name": "wait_for_fast_path_processing",
+      "action": "wait",
+      "duration_ms": 1000
+    },
+    {
+      "name": "query_current_mesh_view",
+      "description": "Step 5: Query analyst mesh view at current time (T2)",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{perception_url}}/api/v1/rim/mesh/rim:entity:finance:EURUSD/timeline?asOf={{now}}&depth=2&vantageMode=omniscient&includeGovernance=true",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-current-query",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.data.rimNodeId",
+          "operator": "eq",
+          "value": "rim:entity:finance:EURUSD",
+          "message": "Response should contain queried node ID"
+        },
+        {
+          "path": "$.data.mesh",
+          "operator": "exists",
+          "message": "Response should contain mesh view"
+        },
+        {
+          "path": "$.data.actualSnapshotTime",
+          "operator": "exists",
+          "message": "Response should contain actual snapshot timestamp"
+        },
+        {
+          "path": "$.data.capsuleReferences",
+          "operator": "is_array",
+          "message": "Response should include CAPSULE references"
+        }
+      ],
+      "capture": {
+        "currentMeshState": "$.data.mesh.nodeStateScores['rim:entity:finance:EURUSD']"
+      }
+    },
+    {
+      "name": "query_timetravel_mesh_t0",
+      "description": "Step 6: Time-travel query - mesh view at T0 (baseline)",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{perception_url}}/api/v1/rim/mesh/rim:entity:finance:EURUSD/timeline?asOf={{baseTimestamp}}&depth=2&vantageMode=omniscient",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-timetravel-t0",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.data.rimNodeId",
+          "operator": "eq",
+          "value": "rim:entity:finance:EURUSD"
+        },
+        {
+          "path": "$.data.requestedAsOf",
+          "operator": "eq",
+          "value": "{{baseTimestamp}}"
+        },
+        {
+          "path": "$.data.temporal.coverageRatio",
+          "operator": "gte",
+          "value": 0.5,
+          "message": "Time-travel query should have reasonable data coverage"
+        }
+      ],
+      "capture": {
+        "t0MeshState": "$.data.mesh"
+      }
+    },
+    {
+      "name": "query_timetravel_mesh_t1",
+      "description": "Step 7: Time-travel query - mesh view at T1 (mid-state)",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{perception_url}}/api/v1/rim/mesh/rim:entity:finance:EURUSD/timeline?asOf={{baseTimestamp_plus_30m}}&depth=2&vantageMode=omniscient",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-timetravel-t1",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.data.rimNodeId",
+          "operator": "eq",
+          "value": "rim:entity:finance:EURUSD"
+        },
+        {
+          "path": "$.data.hasData",
+          "operator": "eq",
+          "value": true,
+          "message": "T1 time-travel query should return data"
+        }
+      ],
+      "capture": {
+        "t1MeshState": "$.data.mesh"
+      }
+    },
+    {
+      "name": "query_timetravel_post_request",
+      "description": "Step 8: Time-travel query via POST with full request body",
+      "action": "http_request",
+      "method": "POST",
+      "url": "{{perception_url}}/api/v1/rim/mesh/timeline",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-timetravel-post",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "asOf": "{{baseTimestamp_plus_30m}}",
+        "depth": 3,
+        "vantageMode": "omniscient",
+        "includeGovernance": true
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.data.rimNodeId",
+          "operator": "eq",
+          "value": "rim:entity:finance:EURUSD"
+        },
+        {
+          "path": "$.success",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "verify_capsule_lineage_chain",
+      "description": "Step 9: Verify CAPSULE revision chain for the node",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{perception_url}}/api/v1/rim/nodes/rim:entity:finance:EURUSD/capsules?window=PT2H",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-capsule-lineage",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.data",
+          "operator": "is_array",
+          "message": "Should return array of CAPSULE summaries"
+        },
+        {
+          "path": "$.data.length",
+          "operator": "gte",
+          "value": 2,
+          "message": "Should have at least 2 CAPSULE revisions (T0, T1, T2)"
+        }
+      ]
+    },
+    {
+      "name": "verify_mesh_state_differs_over_time",
+      "description": "Step 10: Verify mesh states are different at different timestamps",
+      "action": "assert_captured",
+      "assertions": [
+        {
+          "assertion": "captured.t0MeshState != captured.t1MeshState",
+          "message": "T0 and T1 mesh states should differ (price movement)"
+        }
+      ]
+    },
+    {
+      "name": "query_invalid_nodeid_format",
+      "description": "Step 11: Verify error handling for invalid RimNodeId format",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{perception_url}}/api/v1/rim/mesh/invalid-format/timeline?asOf={{now}}",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-invalid",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 5000,
+      "expected_status": 400,
+      "assertions": [
+        {
+          "path": "$.success",
+          "operator": "eq",
+          "value": false
+        },
+        {
+          "path": "$.error.code",
+          "operator": "eq",
+          "value": "INVALID_REQUEST"
+        }
+      ]
+    },
+    {
+      "name": "query_far_past_timestamp",
+      "description": "Step 12: Query with timestamp far in the past (no data expected)",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{perception_url}}/api/v1/rim/mesh/rim:entity:finance:EURUSD/timeline?asOf=2020-01-01T00:00:00Z",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-far-past",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.data.degradationReasons",
+          "operator": "is_array",
+          "message": "Should include degradation reasons when no data available"
+        }
+      ]
+    },
+    {
+      "name": "verify_vantage_mode_filtering",
+      "description": "Step 13: Query with different vantage mode to verify filtering",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{perception_url}}/api/v1/rim/mesh/rim:entity:finance:EURUSD/timeline?asOf={{now}}&vantageMode=public",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-vantage-public",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.success",
+          "operator": "eq",
+          "value": true
+        }
+      ]
+    }
+  ],
+
+  "teardown": {
+    "cleanup_topics": false,
+    "cleanup_data": false
+  },
+
+  "success_criteria": {
+    "all_steps_pass": true,
+    "max_duration_ms": 180000,
+    "dlq_messages_expected": 0,
+    "time_travel_accuracy": "within_5_minutes"
+  },
+
+  "contract_assertions": {
+    "rimNodeId_format": "^rim:[a-z]+:[a-z][a-z0-9-]*:[a-zA-Z0-9_-]+$",
+    "time_travel_response_schema": {
+      "required_fields": ["rimNodeId", "requestedAsOf", "capsuleReferences", "temporal"],
+      "optional_fields": ["mesh", "actualSnapshotTime", "degradationReasons"]
+    },
+    "temporal_metadata_schema": {
+      "required_fields": ["capsuleCount", "coverageRatio"],
+      "optional_fields": ["from", "to", "temporalGap", "interpolated"]
+    }
+  },
+
+  "slo": {
+    "time_travel_query_latency_p95_ms": 1000,
+    "capsule_history_retrieval_p95_ms": 500,
+    "mesh_reconstruction_p95_ms": 800,
+    "temporal_gap_tolerance_minutes": 5
+  },
+
+  "documentation": {
+    "m3_milestone": "End-to-end workflows: event → RIM node updates → CAPSULE snapshot → analyst view with time-travel",
+    "workflow_description": "This scenario validates the complete M3 integration: RIM node state changes are captured in CAPSULE snapshots, and the analyst time-travel API can reconstruct historical mesh views at any point in time.",
+    "key_validations": [
+      "Multiple RIM state updates are projected to CAPSULE",
+      "Time-travel API returns correct historical mesh at T0, T1, T2",
+      "CAPSULE lineage/revision chain is maintained",
+      "Vantage mode filtering works correctly",
+      "Error handling for invalid inputs"
+    ]
+  }
+}

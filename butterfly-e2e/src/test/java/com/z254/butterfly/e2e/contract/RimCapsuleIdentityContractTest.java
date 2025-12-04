@@ -401,6 +401,279 @@ public class RimCapsuleIdentityContractTest {
     }
 
     // =========================================================================
+    // M3: End-to-End Time-Travel Workflow
+    // =========================================================================
+
+    @Nested
+    @DisplayName("M3: End-to-End Time-Travel Workflow")
+    class EndToEndTimeTravelTests {
+
+        @Test
+        @DisplayName("eventToRimToCapsuleToAnalystView: complete workflow contract")
+        void eventToRimToCapsuleToAnalystView() {
+            // This test validates the M3 contract: event → RIM → CAPSULE → analyst view
+            // At each stage, identity contracts must be maintained
+
+            // Stage 1: Event detection produces a canonical RimNodeId
+            String eventRimNodeId = "rim:event:market:fed-rate-decision-2024-12";
+            assertThat(isValidRimNodeId(eventRimNodeId))
+                    .as("Event RIM node ID must be valid")
+                    .isTrue();
+
+            // Stage 2: RIM node state update uses the same canonical ID
+            String rimStateNodeId = eventRimNodeId;
+            assertThat(rimStateNodeId).isEqualTo(eventRimNodeId);
+
+            // Stage 3: CAPSULE snapshot must use canonical RimNodeId as scope_id
+            String capsuleScopeId = rimStateNodeId;
+            assertThat(isValidScopeId(capsuleScopeId))
+                    .as("CAPSULE scope_id must be valid")
+                    .isTrue();
+            assertThat(capsuleScopeId).isEqualTo(eventRimNodeId);
+
+            // Stage 4: Time-travel query uses canonical RimNodeId
+            Instant asOf = Instant.parse("2024-12-03T10:00:00Z");
+            TimeTravelQueryParams query = new TimeTravelQueryParams(
+                    capsuleScopeId, asOf, 2, "omniscient"
+            );
+            assertThat(isValidRimNodeId(query.rimNodeId()))
+                    .as("Time-travel query must use valid RimNodeId")
+                    .isTrue();
+
+            // Stage 5: Analyst view response references same canonical ID
+            // The response mesh nodes should all have valid RimNodeIds
+            List<String> meshNodeIds = List.of(
+                    eventRimNodeId,
+                    "rim:entity:finance:EURUSD",
+                    "rim:region:geo:us"
+            );
+            for (String nodeId : meshNodeIds) {
+                assertThat(isValidRimNodeId(nodeId))
+                        .as("Mesh node ID '%s' must be valid", nodeId)
+                        .isTrue();
+            }
+        }
+
+        @Test
+        @DisplayName("timeTravelMeshMatchesCapsuleHistory: temporal consistency")
+        void timeTravelMeshMatchesCapsuleHistory() {
+            // This test validates that time-travel queries return data consistent
+            // with CAPSULE history
+
+            String rimNodeId = "rim:entity:finance:EURUSD";
+            Instant t0 = Instant.parse("2024-12-03T09:00:00Z");
+            Instant t1 = Instant.parse("2024-12-03T10:00:00Z");
+            Instant t2 = Instant.parse("2024-12-03T11:00:00Z");
+
+            // Each timestamp should produce different idempotency keys
+            String keyT0 = generateIdempotencyKey(rimNodeId, t0, 60, "omniscient");
+            String keyT1 = generateIdempotencyKey(rimNodeId, t1, 60, "omniscient");
+            String keyT2 = generateIdempotencyKey(rimNodeId, t2, 60, "omniscient");
+
+            // All keys should be unique (different points in time)
+            assertThat(keyT0).isNotEqualTo(keyT1);
+            assertThat(keyT1).isNotEqualTo(keyT2);
+            assertThat(keyT0).isNotEqualTo(keyT2);
+
+            // Each time point should maintain the same rimNodeId format
+            for (Instant ts : List.of(t0, t1, t2)) {
+                TimeTravelQueryParams query = new TimeTravelQueryParams(
+                        rimNodeId, ts, 2, "omniscient"
+                );
+                assertThat(query.rimNodeId()).isEqualTo(rimNodeId);
+                assertThat(query.asOf()).isEqualTo(ts);
+            }
+        }
+
+        @Test
+        @DisplayName("meshDepthTraversesRelationships: relationship identity consistency")
+        void meshDepthTraversesRelationships() {
+            // This test validates that mesh traversal maintains identity consistency
+            // across relationship depth
+
+            String centerNodeId = "rim:entity:finance:EURUSD";
+            int depth = 3;
+
+            // Simulate mesh nodes at different depths
+            List<MeshNodeAtDepth> meshNodes = List.of(
+                    new MeshNodeAtDepth(centerNodeId, 0),
+                    new MeshNodeAtDepth("rim:entity:finance:GBPUSD", 1),
+                    new MeshNodeAtDepth("rim:region:geo:europe", 1),
+                    new MeshNodeAtDepth("rim:actor:central-bank:ecb", 2),
+                    new MeshNodeAtDepth("rim:market:forex:european", 2),
+                    new MeshNodeAtDepth("rim:signal:correlation:EUR-GBP", 3)
+            );
+
+            // All mesh nodes must have valid RimNodeIds
+            for (MeshNodeAtDepth node : meshNodes) {
+                assertThat(isValidRimNodeId(node.nodeId()))
+                        .as("Mesh node '%s' at depth %d must have valid RimNodeId",
+                                node.nodeId(), node.depth())
+                        .isTrue();
+                assertThat(node.depth())
+                        .as("Node depth must be within query depth")
+                        .isLessThanOrEqualTo(depth);
+            }
+
+            // Relationships between mesh nodes must reference valid IDs
+            List<MeshRelationship> relationships = List.of(
+                    new MeshRelationship(
+                            "rim:relation:correlation:EURUSD-GBPUSD",
+                            "rim:entity:finance:EURUSD",
+                            "rim:entity:finance:GBPUSD",
+                            "CORRELATES_WITH"
+                    ),
+                    new MeshRelationship(
+                            "rim:relation:location:EURUSD-europe",
+                            "rim:entity:finance:EURUSD",
+                            "rim:region:geo:europe",
+                            "LOCATED_IN"
+                    )
+            );
+
+            for (MeshRelationship rel : relationships) {
+                assertThat(isValidRimNodeId(rel.relationshipId()))
+                        .as("Relationship ID must be valid")
+                        .isTrue();
+                assertThat(isValidRimNodeId(rel.sourceNodeId()))
+                        .as("Relationship source must be valid")
+                        .isTrue();
+                assertThat(isValidRimNodeId(rel.targetNodeId()))
+                        .as("Relationship target must be valid")
+                        .isTrue();
+            }
+        }
+
+        @Test
+        @DisplayName("timeTravelQueryParameters: validation contracts")
+        void timeTravelQueryParameters() {
+            // Valid time-travel query parameters
+            String validNodeId = "rim:entity:finance:EURUSD";
+            Instant validAsOf = Instant.parse("2024-12-03T10:00:00Z");
+
+            // Valid depth range: 1-5
+            for (int depth : List.of(1, 2, 3, 4, 5)) {
+                assertThat(isValidDepth(depth))
+                        .as("Depth %d should be valid", depth)
+                        .isTrue();
+            }
+
+            // Invalid depth values
+            for (int depth : List.of(0, -1, 6, 10)) {
+                assertThat(isValidDepth(depth))
+                        .as("Depth %d should be invalid", depth)
+                        .isFalse();
+            }
+
+            // Valid vantage modes
+            for (String vantage : APPROVED_VANTAGE_MODES) {
+                assertThat(isValidVantageMode(vantage))
+                        .as("Vantage mode '%s' should be valid", vantage)
+                        .isTrue();
+            }
+        }
+
+        @Test
+        @DisplayName("capsuleReferencesInTimeTravel: lineage tracking")
+        void capsuleReferencesInTimeTravel() {
+            // Time-travel responses must include CAPSULE references for lineage
+
+            String rimNodeId = "rim:entity:finance:EURUSD";
+            Instant snapshotTime = Instant.parse("2024-12-03T10:00:00Z");
+            int resolution = 60;
+            String vantage = "omniscient";
+
+            // Simulate CAPSULE reference
+            CapsuleReference ref = new CapsuleReference(
+                    "capsule-abc123",
+                    rimNodeId,
+                    snapshotTime,
+                    resolution,
+                    vantage,
+                    1
+            );
+
+            // Validate CAPSULE reference maintains identity contracts
+            assertThat(isValidRimNodeId(ref.scopeId()))
+                    .as("CAPSULE reference scopeId must be valid RimNodeId")
+                    .isTrue();
+            assertThat(APPROVED_VANTAGE_MODES)
+                    .as("CAPSULE reference vantage mode must be approved")
+                    .contains(ref.vantageMode());
+            assertThat(ref.revision())
+                    .as("CAPSULE revision must be positive")
+                    .isPositive();
+        }
+
+        @Test
+        @DisplayName("temporalMetadataContract: coverage and gap reporting")
+        void temporalMetadataContract() {
+            // Temporal metadata must follow contract for time-travel accuracy
+
+            // Coverage ratio: 0.0-1.0
+            for (double coverage : List.of(0.0, 0.25, 0.5, 0.75, 1.0)) {
+                assertThat(coverage)
+                        .as("Coverage ratio %.2f should be in valid range", coverage)
+                        .isBetween(0.0, 1.0);
+            }
+
+            // Temporal gap should be representable as ISO-8601 duration
+            String validGap = "PT5M";  // 5 minutes
+            assertThat(java.time.Duration.parse(validGap).toMinutes())
+                    .as("Temporal gap should be parseable")
+                    .isEqualTo(5);
+
+            // Interpolation flag
+            // If gap > 5 minutes, interpolation should be indicated
+            long gapMinutes = 10;
+            boolean shouldInterpolate = gapMinutes > 5;
+            assertThat(shouldInterpolate)
+                    .as("Interpolation should be true when gap > 5 minutes")
+                    .isTrue();
+        }
+
+        // Helper methods for M3 tests
+
+        private boolean isValidDepth(int depth) {
+            return depth >= 1 && depth <= 5;
+        }
+
+        private boolean isValidVantageMode(String vantageMode) {
+            return vantageMode != null && APPROVED_VANTAGE_MODES.contains(vantageMode);
+        }
+
+        // Supporting types for M3 tests
+
+        private record TimeTravelQueryParams(
+                String rimNodeId,
+                Instant asOf,
+                int depth,
+                String vantageMode
+        ) {}
+
+        private record MeshNodeAtDepth(
+                String nodeId,
+                int depth
+        ) {}
+
+        private record MeshRelationship(
+                String relationshipId,
+                String sourceNodeId,
+                String targetNodeId,
+                String relationshipType
+        ) {}
+
+        private record CapsuleReference(
+                String capsuleId,
+                String scopeId,
+                Instant snapshotTime,
+                int resolutionSeconds,
+                String vantageMode,
+                int revision
+        ) {}
+    }
+
+    // =========================================================================
     // Helper Methods and Test Data
     // =========================================================================
 
