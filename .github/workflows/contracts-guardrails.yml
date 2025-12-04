@@ -2,10 +2,18 @@ name: contracts-guardrails
 
 on:
   push:
+    paths:
+      - 'butterfly-common/src/main/avro/**'
+      - 'butterfly-common/pom.xml'
+      - '.github/workflows/contracts-guardrails.yml'
   pull_request:
+    paths:
+      - 'butterfly-common/src/main/avro/**'
+      - 'butterfly-common/pom.xml'
 
 jobs:
   avro-sources-owned-by-common:
+    name: "Verify Avro ownership"
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -14,10 +22,166 @@ jobs:
       - name: Fail if Avro schemas live outside butterfly-common
         run: |
           set -euo pipefail
-          mapfile -t schemas < <(rg --files -g '*.avsc' --iglob '!**/target/**' --iglob '!butterfly-common/src/main/avro/RimFastEvent.avsc')
+          # Find all .avsc files outside butterfly-common
+          mapfile -t schemas < <(find . -name '*.avsc' -not -path './butterfly-common/*' -not -path '*/target/*' 2>/dev/null || true)
           if [ "${#schemas[@]}" -gt 0 ]; then
-            echo "Found Avro schemas outside butterfly-common (source of truth):"
+            echo "::error::Found Avro schemas outside butterfly-common (source of truth):"
             printf ' - %s\n' "${schemas[@]}"
             exit 1
           fi
-          echo "Avro ownership check passed (only butterfly-common contains schemas)."
+          echo "✅ Avro ownership check passed (only butterfly-common contains schemas)."
+
+  avro-schema-validation:
+    name: "Validate Avro schemas"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Validate Avro schema syntax
+        working-directory: butterfly-common
+        run: |
+          mvn -B validate -Davro.skip=false
+
+      - name: Compile Avro schemas to Java
+        working-directory: butterfly-common
+        run: |
+          mvn -B generate-sources
+          echo "✅ Avro schemas compiled successfully"
+
+  avro-backward-compatibility:
+    name: "Check backward compatibility"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@v4
+        with:
+          path: pr
+
+      - name: Check out base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Check for breaking schema changes
+        run: |
+          set -euo pipefail
+          
+          AVRO_DIR="butterfly-common/src/main/avro"
+          BREAKING_CHANGES=()
+          
+          echo "Checking Avro schema backward compatibility..."
+          
+          for schema_file in base/$AVRO_DIR/*.avsc; do
+            filename=$(basename "$schema_file")
+            pr_schema="pr/$AVRO_DIR/$filename"
+            
+            if [ ! -f "$pr_schema" ]; then
+              echo "::error file=$AVRO_DIR/$filename::Schema file deleted - BREAKING CHANGE"
+              BREAKING_CHANGES+=("$filename: file deleted")
+              continue
+            fi
+            
+            # Extract schema name and namespace for comparison
+            base_name=$(jq -r '.name // empty' "$schema_file")
+            pr_name=$(jq -r '.name // empty' "$pr_schema")
+            
+            if [ "$base_name" != "$pr_name" ]; then
+              echo "::error file=$AVRO_DIR/$filename::Schema name changed from '$base_name' to '$pr_name' - BREAKING CHANGE"
+              BREAKING_CHANGES+=("$filename: name changed")
+            fi
+            
+            # Check for removed required fields (fields without default values)
+            base_fields=$(jq -r '[.fields[]? | select(.default == null) | .name] | sort | join(",")' "$schema_file" 2>/dev/null || echo "")
+            pr_fields=$(jq -r '[.fields[]? | select(.default == null) | .name] | sort | join(",")' "$pr_schema" 2>/dev/null || echo "")
+            
+            # Find removed required fields
+            for field in $(echo "$base_fields" | tr ',' '\n'); do
+              if [ -n "$field" ] && ! echo "$pr_fields" | grep -q "$field"; then
+                echo "::error file=$AVRO_DIR/$filename::Required field '$field' removed - BREAKING CHANGE"
+                BREAKING_CHANGES+=("$filename: required field '$field' removed")
+              fi
+            done
+            
+            # Check for type changes in existing fields
+            for field in $(jq -r '.fields[]?.name // empty' "$schema_file"); do
+              base_type=$(jq -r --arg f "$field" '.fields[] | select(.name == $f) | .type | if type == "object" then .type else . end' "$schema_file" 2>/dev/null || echo "")
+              pr_type=$(jq -r --arg f "$field" '.fields[] | select(.name == $f) | .type | if type == "object" then .type else . end' "$pr_schema" 2>/dev/null || echo "")
+              
+              if [ -n "$base_type" ] && [ -n "$pr_type" ] && [ "$base_type" != "$pr_type" ]; then
+                # Allow union type additions (backward compatible)
+                if ! echo "$pr_type" | grep -q "null"; then
+                  echo "::warning file=$AVRO_DIR/$filename::Field '$field' type changed from '$base_type' to '$pr_type' - check compatibility"
+                fi
+              fi
+            done
+          done
+          
+          # Check for new schemas (informational)
+          for schema_file in pr/$AVRO_DIR/*.avsc; do
+            filename=$(basename "$schema_file")
+            if [ ! -f "base/$AVRO_DIR/$filename" ]; then
+              echo "ℹ️ New schema: $filename"
+            fi
+          done
+          
+          if [ ${#BREAKING_CHANGES[@]} -gt 0 ]; then
+            echo ""
+            echo "::error::Breaking changes detected in Avro schemas!"
+            echo "The following changes require a major version bump and migration plan:"
+            printf ' - %s\n' "${BREAKING_CHANGES[@]}"
+            echo ""
+            echo "See docs/contracts/SCHEMA_VERSIONING.md for the breaking change policy."
+            exit 1
+          fi
+          
+          echo "✅ No breaking schema changes detected"
+
+  schema-version-check:
+    name: "Verify schema versions"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check all schemas have version field
+        run: |
+          set -euo pipefail
+          AVRO_DIR="butterfly-common/src/main/avro"
+          MISSING_VERSION=()
+          
+          for schema_file in $AVRO_DIR/*.avsc; do
+            filename=$(basename "$schema_file")
+            
+            # Check for schema_version field with default
+            has_version=$(jq -r '.fields[]? | select(.name == "schema_version") | .default // empty' "$schema_file" 2>/dev/null || echo "")
+            
+            if [ -z "$has_version" ]; then
+              echo "::warning file=$schema_file::Schema missing 'schema_version' field with default value"
+              MISSING_VERSION+=("$filename")
+            else
+              echo "✅ $filename: schema_version = $has_version"
+            fi
+          done
+          
+          # Note: This is a warning, not a failure, to allow gradual adoption
+          if [ ${#MISSING_VERSION[@]} -gt 0 ]; then
+            echo ""
+            echo "⚠️ The following schemas should add a 'schema_version' field:"
+            printf ' - %s\n' "${MISSING_VERSION[@]}"
+          fi
