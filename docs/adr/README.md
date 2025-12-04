@@ -22,6 +22,8 @@ An Architecture Decision Record (ADR) captures an important architectural decisi
 | [0004](0004-dead-letter-queue-strategy.md) | Dead Letter Queue (DLQ) Strategy | Accepted | 2024-11-25 |
 | [0005](0005-perception-ci-pipeline-architecture.md) | PERCEPTION CI Pipeline Architecture | Accepted | 2025-12-03 |
 | [0006](0006-husky-precommit-hooks.md) | Husky Pre-commit Hooks for Developer Workflow | Accepted | 2025-12-03 |
+| [0007](0007-governance-pluralism.md) | Governance Pluralism | Accepted | 2025-12-03 |
+| [0008](0008-rim-schema-evolution.md) | RIM Schema Evolution Strategy | Proposed | 2025-12-04 |
 
 ## Creating a New ADR
 

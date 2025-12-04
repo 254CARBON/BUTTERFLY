@@ -1,0 +1,385 @@
+{
+  "name": "rim-capsule-identity-contract",
+  "description": "RIM-CAPSULE identity contract validation: RimNodeId alignment, idempotency enforcement, and scope validation",
+  "version": "1.0.0",
+  "category": "identity-contract",
+  "tags": ["contract", "identity", "rim", "capsule", "idempotency"],
+
+  "setup": {
+    "services": ["perception-rim", "capsule", "butterfly-nexus"],
+    "kafka_topics": [
+      "perception.rim",
+      "rim.fast-path",
+      "capsule.snapshots",
+      "perception.rim.dlq"
+    ],
+    "schema_registry": {
+      "schemas": [
+        "RimFastEvent",
+        "RimNodeState",
+        "CapsuleSnapshot"
+      ]
+    }
+  },
+
+  "steps": [
+    {
+      "name": "publish_rim_state_valid_entity",
+      "description": "Publish a RIM node state with valid canonical RimNodeId format",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}"
+        },
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "nodeType": "ENTITY",
+        "effectiveAt": "{{now}}",
+        "snapshotTime": "{{now}}",
+        "resolutionSeconds": 60,
+        "vantageMode": "omniscient",
+        "state": {
+          "bidPrice": 1.0850,
+          "askPrice": 1.0852,
+          "volume24h": 5000000000,
+          "volatility30d": 0.08
+        },
+        "metadata": {
+          "sourceId": "financial-feeds-1",
+          "schemaVersion": "1.0.0"
+        }
+      },
+      "key": "rim:entity:finance:EURUSD",
+      "headers": {
+        "correlationId": "{{correlationId}}",
+        "traceparent": "{{traceparent}}",
+        "X-RIM-Node-Type": "entity"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_capsule_projection",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "verify_capsule_scope_alignment",
+      "description": "Verify CAPSULE scope_id equals the canonical RimNodeId",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{capsule_url}}/api/v1/capsules?scopeId=rim:entity:finance:EURUSD&limit=1",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.content[0].scopeId",
+          "operator": "eq",
+          "value": "rim:entity:finance:EURUSD",
+          "message": "CAPSULE scope_id must match canonical RimNodeId per BUTTERFLY_IDENTITY.md"
+        },
+        {
+          "path": "$.content[0].vantageMode",
+          "operator": "eq",
+          "value": "omniscient"
+        },
+        {
+          "path": "$.content[0].resolutionSeconds",
+          "operator": "eq",
+          "value": 60
+        }
+      ]
+    },
+    {
+      "name": "verify_idempotency_key_determinism",
+      "description": "Re-publish the same state and verify idempotent response (no duplicate capsule)",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{firstEventTimestamp}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}-duplicate"
+        },
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "nodeType": "ENTITY",
+        "effectiveAt": "{{firstEventTimestamp}}",
+        "snapshotTime": "{{firstEventTimestamp}}",
+        "resolutionSeconds": 60,
+        "vantageMode": "omniscient",
+        "state": {
+          "bidPrice": 1.0850,
+          "askPrice": 1.0852,
+          "volume24h": 5000000000,
+          "volatility30d": 0.08
+        },
+        "metadata": {
+          "sourceId": "financial-feeds-1",
+          "schemaVersion": "1.0.0"
+        }
+      },
+      "key": "rim:entity:finance:EURUSD",
+      "headers": {
+        "correlationId": "{{correlationId}}-duplicate",
+        "traceparent": "{{traceparent}}"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_idempotency_check",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "verify_no_duplicate_capsule",
+      "description": "Verify idempotency - duplicate publish should not create new capsule",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{capsule_url}}/api/v1/capsules?scopeId=rim:entity:finance:EURUSD&snapshotTime={{firstEventTimestamp}}&resolutionSeconds=60",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.totalElements",
+          "operator": "eq",
+          "value": 1,
+          "message": "Duplicate publish should be idempotent - only 1 capsule expected"
+        }
+      ]
+    },
+    {
+      "name": "publish_rim_state_invalid_nodetype",
+      "description": "Attempt to publish with invalid node type - should be rejected",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}-invalid"
+        },
+        "rimNodeId": "rim:INVALID_TYPE:finance:EURUSD",
+        "nodeType": "UNKNOWN",
+        "effectiveAt": "{{now}}",
+        "snapshotTime": "{{now}}",
+        "resolutionSeconds": 60,
+        "vantageMode": "omniscient",
+        "state": {},
+        "metadata": {
+          "sourceId": "test-invalid"
+        }
+      },
+      "key": "rim:INVALID_TYPE:finance:EURUSD",
+      "headers": {
+        "correlationId": "{{correlationId}}-invalid"
+      },
+      "timeout_ms": 5000,
+      "expect_dlq": true
+    },
+    {
+      "name": "wait_for_dlq_routing",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "verify_invalid_message_in_dlq",
+      "description": "Verify invalid RimNodeId format was routed to DLQ",
+      "action": "kafka_consume",
+      "topic": "perception.rim.dlq",
+      "filter": {
+        "header.correlationId": "{{correlationId}}-invalid"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.rimNodeId",
+          "operator": "eq",
+          "value": "rim:INVALID_TYPE:finance:EURUSD"
+        },
+        {
+          "path": "$.dlqReason",
+          "operator": "contains",
+          "value": "INVALID_NODE_TYPE"
+        }
+      ]
+    },
+    {
+      "name": "publish_composite_scope",
+      "description": "Publish with valid composite rim-scope format",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}-composite"
+        },
+        "rimNodeId": "rim:scope:macro:global-recession-scenario",
+        "nodeType": "SCOPE",
+        "compositeScope": "rim-scope:macro:global-recession-2024",
+        "effectiveAt": "{{now}}",
+        "snapshotTime": "{{now}}",
+        "resolutionSeconds": 3600,
+        "vantageMode": "system",
+        "state": {
+          "scenarioType": "RECESSION",
+          "probability": 0.35,
+          "affectedRegions": ["EMEA", "APAC", "AMER"]
+        },
+        "metadata": {
+          "sourceId": "scenario-engine",
+          "schemaVersion": "1.0.0"
+        }
+      },
+      "key": "rim:scope:macro:global-recession-scenario",
+      "headers": {
+        "correlationId": "{{correlationId}}-composite"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_composite_scope_projection",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "verify_composite_scope_capsule",
+      "description": "Verify composite scope was correctly projected to CAPSULE",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{capsule_url}}/api/v1/capsules?scopeId=rim:scope:macro:global-recession-scenario&limit=1",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-composite",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.content[0].scopeId",
+          "operator": "eq",
+          "value": "rim:scope:macro:global-recession-scenario"
+        },
+        {
+          "path": "$.content[0].metadata.compositeScope",
+          "operator": "eq",
+          "value": "rim-scope:macro:global-recession-2024"
+        },
+        {
+          "path": "$.content[0].vantageMode",
+          "operator": "eq",
+          "value": "system"
+        }
+      ]
+    },
+    {
+      "name": "publish_relationship_payload",
+      "description": "Publish relationship with canonical RimNodeId references",
+      "action": "kafka_publish",
+      "topic": "perception.rim",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-rim",
+          "correlationId": "{{correlationId}}-relationship"
+        },
+        "rimNodeId": "rim:relation:finance:EURUSD-GBPUSD-correlation",
+        "nodeType": "RELATION",
+        "effectiveAt": "{{now}}",
+        "snapshotTime": "{{now}}",
+        "resolutionSeconds": 60,
+        "vantageMode": "omniscient",
+        "state": {
+          "relationshipType": "CORRELATES_WITH",
+          "sourceNodeId": "rim:entity:finance:EURUSD",
+          "targetNodeId": "rim:entity:finance:GBPUSD",
+          "correlationCoefficient": 0.87,
+          "lookbackPeriod": "P30D"
+        },
+        "metadata": {
+          "sourceId": "correlation-analyzer",
+          "schemaVersion": "1.0.0"
+        }
+      },
+      "key": "rim:relation:finance:EURUSD-GBPUSD-correlation",
+      "headers": {
+        "correlationId": "{{correlationId}}-relationship"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_relationship_projection",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "verify_relationship_node_references",
+      "description": "Verify relationship payload references valid canonical RimNodeIds",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{capsule_url}}/api/v1/capsules?scopeId=rim:relation:finance:EURUSD-GBPUSD-correlation&limit=1",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}-relationship",
+        "Accept": "application/json"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.content[0].state.sourceNodeId",
+          "operator": "matches",
+          "value": "^rim:[a-z]+:[a-z-]+:[A-Za-z0-9_-]+$",
+          "message": "Source node ID must be canonical RimNodeId format"
+        },
+        {
+          "path": "$.content[0].state.targetNodeId",
+          "operator": "matches",
+          "value": "^rim:[a-z]+:[a-z-]+:[A-Za-z0-9_-]+$",
+          "message": "Target node ID must be canonical RimNodeId format"
+        },
+        {
+          "path": "$.content[0].state.relationshipType",
+          "operator": "in",
+          "value": ["INFLUENCES", "DEPENDS_ON", "CONTAINS", "CORRELATES_WITH", "TRACKS", "GOVERNS", "SUPPLIES", "ASSOCIATED_WITH", "CO_MEMBER", "PARENT_OF", "CHILD_OF", "PEER_OF", "SUPPRESSES", "AMPLIFIES"]
+        }
+      ]
+    }
+  ],
+
+  "teardown": {
+    "cleanup_topics": false,
+    "cleanup_data": false
+  },
+
+  "success_criteria": {
+    "all_steps_pass": true,
+    "max_duration_ms": 120000,
+    "dlq_messages_expected": 1,
+    "contract_violations": 0
+  },
+
+  "contract_assertions": {
+    "rimNodeId_format": "^rim:[a-z]+:[a-z][a-z0-9-]*:[a-zA-Z0-9_-]+$",
+    "rimScope_format": "^rim-scope:[a-z][a-z0-9-]*:[a-zA-Z0-9_-]+$",
+    "approved_node_types": ["entity", "region", "market", "actor", "system", "event", "scope", "relation", "metric", "signal"],
+    "approved_vantage_modes": ["omniscient", "observer", "system", "public"],
+    "idempotency_key_algorithm": "SHA-256(rimNodeId + snapshotTime + resolutionSeconds + vantageMode)"
+  },
+
+  "slo": {
+    "rim_to_capsule_projection_latency_p95_ms": 500,
+    "idempotency_check_latency_p95_ms": 50,
+    "validation_latency_p95_ms": 10,
+    "end_to_end_contract_validation_ms": 3000
+  }
+}
