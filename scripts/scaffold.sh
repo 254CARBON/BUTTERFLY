@@ -93,6 +93,7 @@ COMMANDS:
     kafka-handler   Add Kafka consumer/producer
     migration       Add a Flyway migration file
     test            Add test scaffolding
+    docs            Generate documentation from templates
     help            Show this help message
 
 OPTIONS:
@@ -100,6 +101,9 @@ OPTIONS:
     -s, --service   Target service (e.g., PERCEPTION, ODYSSEY)
     -p, --port      Port number (for service creation)
     -t, --table     Database table name (for entity)
+    -o, --output    Output path for generated documentation
+    --title         Title for documentation (ADR, runbook, api-guide)
+    --author        Author name(s) for ADR
     --dry-run       Show what would be created without making changes
 
 EXAMPLES:
@@ -117,6 +121,12 @@ EXAMPLES:
 
     Create test scaffolding:
         ./scripts/scaffold.sh test --service ODYSSEY --type integration
+
+    Generate documentation:
+        ./scripts/scaffold.sh docs readme --name MyModule --service PERCEPTION
+        ./scripts/scaffold.sh docs runbook --title "Service Recovery" --service PERCEPTION
+        ./scripts/scaffold.sh docs adr --title "Use Event Sourcing" --author "Jane Doe"
+        ./scripts/scaffold.sh docs api-guide --name "Acquisition" --service PERCEPTION
 
 For more information, see: docs/development/scaffolding.md
 EOF
@@ -945,6 +955,350 @@ cmd_test() {
 }
 
 # -----------------------------------------------------------------------------
+# Command: docs
+# -----------------------------------------------------------------------------
+
+show_docs_help() {
+    cat << 'EOF'
+USAGE:
+    scaffold.sh docs <type> [options]
+
+TYPES:
+    readme      Generate a module README from template
+    runbook     Generate an operational runbook from template
+    adr         Generate an Architecture Decision Record (auto-numbered)
+    api-guide   Generate an API guide from template
+
+OPTIONS:
+    -n, --name      Module or API family name (for readme, api-guide)
+    -s, --service   Target service (e.g., PERCEPTION, ODYSSEY)
+    -o, --output    Custom output path (optional)
+    --title         Title for the document (for runbook, adr)
+    --author        Author name(s) (for adr)
+    --dry-run       Show what would be created without making changes
+
+EXAMPLES:
+    Module README:
+        ./scripts/scaffold.sh docs readme --name MyModule --service PERCEPTION
+
+    Operational Runbook:
+        ./scripts/scaffold.sh docs runbook --title "Database Recovery" --service CAPSULE
+
+    Architecture Decision Record:
+        ./scripts/scaffold.sh docs adr --title "Adopt Event Sourcing" --author "Jane Doe"
+
+    API Guide:
+        ./scripts/scaffold.sh docs api-guide --name "Acquisition" --service PERCEPTION
+EOF
+}
+
+get_next_adr_number() {
+    local adr_dir="${PROJECT_ROOT}/docs/adr"
+    local max_num=0
+    
+    if [[ -d "$adr_dir" ]]; then
+        for file in "$adr_dir"/[0-9][0-9][0-9][0-9]-*.md; do
+            if [[ -f "$file" ]]; then
+                local basename=$(basename "$file")
+                local num=$(echo "$basename" | grep -oE '^[0-9]+' | sed 's/^0*//')
+                if [[ -z "$num" ]]; then
+                    num=0
+                fi
+                if [[ "$num" -gt "$max_num" ]]; then
+                    max_num="$num"
+                fi
+            fi
+        done
+    fi
+    
+    printf "%04d" $((max_num + 1))
+}
+
+process_template() {
+    local template_file="$1"
+    local output_file="$2"
+    shift 2
+    
+    # Copy template to output
+    cp "$template_file" "$output_file"
+    
+    # Process placeholder replacements passed as KEY=VALUE pairs
+    while [[ $# -gt 0 ]]; do
+        local key="${1%%=*}"
+        local value="${1#*=}"
+        # Use sed to replace placeholders
+        sed -i "s|{${key}}|${value}|g" "$output_file"
+        shift
+    done
+}
+
+cmd_docs() {
+    if [[ $# -eq 0 ]]; then
+        show_docs_help
+        exit 0
+    fi
+    
+    local doc_type="$1"
+    shift
+    
+    case "$doc_type" in
+        readme)    cmd_docs_readme "$@" ;;
+        runbook)   cmd_docs_runbook "$@" ;;
+        adr)       cmd_docs_adr "$@" ;;
+        api-guide) cmd_docs_api_guide "$@" ;;
+        help|--help|-h) show_docs_help ;;
+        *)
+            log_error "Unknown docs type: $doc_type"
+            show_docs_help
+            exit 1
+            ;;
+    esac
+}
+
+cmd_docs_readme() {
+    local name=""
+    local service=""
+    local output=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            -s|--service) service="$2"; shift 2 ;;
+            -o|--output) output="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$name" ]]; then
+        log_error "Module name is required (--name)"
+        exit 1
+    fi
+    
+    local template_file="${PROJECT_ROOT}/docs/templates/module-readme.md"
+    
+    if [[ ! -f "$template_file" ]]; then
+        log_error "Template not found: $template_file"
+        exit 1
+    fi
+    
+    # Determine output path
+    if [[ -z "$output" ]]; then
+        if [[ -n "$service" ]]; then
+            validate_service "$service"
+            output="${PROJECT_ROOT}/${service}/${name}/README.md"
+        else
+            output="${PROJECT_ROOT}/${name}/README.md"
+        fi
+    fi
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create: $output"
+        log_info "  Template: $template_file"
+        log_info "  Replacements: MODULE_NAME=$name"
+        return
+    fi
+    
+    # Ensure output directory exists
+    mkdir -p "$(dirname "$output")"
+    
+    # Process template
+    process_template "$template_file" "$output" \
+        "MODULE_NAME=$name"
+    
+    log_success "Created module README: $output"
+}
+
+cmd_docs_runbook() {
+    local title=""
+    local service=""
+    local output=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --title) title="$2"; shift 2 ;;
+            -s|--service) service="$2"; shift 2 ;;
+            -o|--output) output="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$title" ]]; then
+        log_error "Runbook title is required (--title)"
+        exit 1
+    fi
+    
+    local template_file="${PROJECT_ROOT}/docs/templates/runbook.md"
+    
+    if [[ ! -f "$template_file" ]]; then
+        log_error "Template not found: $template_file"
+        exit 1
+    fi
+    
+    # Generate filename from title
+    local filename=$(echo "$title" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-')
+    local current_date=$(date +%Y-%m-%d)
+    
+    # Determine output path
+    if [[ -z "$output" ]]; then
+        if [[ -n "$service" ]]; then
+            validate_service "$service"
+            output="${PROJECT_ROOT}/${service}/docs/runbooks/${filename}.md"
+        else
+            output="${PROJECT_ROOT}/docs/operations/runbooks/${filename}.md"
+        fi
+    fi
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create: $output"
+        log_info "  Template: $template_file"
+        log_info "  Replacements: RUNBOOK_TITLE=$title, DATE=$current_date"
+        return
+    fi
+    
+    # Ensure output directory exists
+    mkdir -p "$(dirname "$output")"
+    
+    # Process template
+    process_template "$template_file" "$output" \
+        "RUNBOOK_TITLE=$title" \
+        "DATE=$current_date"
+    
+    log_success "Created runbook: $output"
+}
+
+cmd_docs_adr() {
+    local title=""
+    local author=""
+    local output=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --title) title="$2"; shift 2 ;;
+            --author) author="$2"; shift 2 ;;
+            -o|--output) output="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$title" ]]; then
+        log_error "ADR title is required (--title)"
+        exit 1
+    fi
+    
+    local template_file="${PROJECT_ROOT}/docs/templates/adr.md"
+    
+    if [[ ! -f "$template_file" ]]; then
+        log_error "Template not found: $template_file"
+        exit 1
+    fi
+    
+    # Auto-generate ADR number
+    local adr_number=$(get_next_adr_number)
+    local current_date=$(date +%Y-%m-%d)
+    
+    # Generate filename from title
+    local filename=$(echo "$title" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-')
+    
+    # Determine output path
+    if [[ -z "$output" ]]; then
+        output="${PROJECT_ROOT}/docs/adr/${adr_number}-${filename}.md"
+    fi
+    
+    # Default author if not provided
+    if [[ -z "$author" ]]; then
+        author="$(git config user.name 2>/dev/null || echo 'Unknown')"
+    fi
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create: $output"
+        log_info "  Template: $template_file"
+        log_info "  Replacements: NUMBER=$adr_number, TITLE=$title, DATE=$current_date, AUTHOR_NAMES=$author"
+        return
+    fi
+    
+    # Ensure output directory exists
+    mkdir -p "$(dirname "$output")"
+    
+    # Process template
+    process_template "$template_file" "$output" \
+        "NUMBER=$adr_number" \
+        "TITLE=$title" \
+        "DATE=$current_date" \
+        "AUTHOR_NAMES=$author" \
+        "REVIEWER_NAMES=TBD" \
+        "AUTHOR=$author"
+    
+    log_success "Created ADR: $output"
+    log_info "ADR Number: $adr_number"
+}
+
+cmd_docs_api_guide() {
+    local name=""
+    local service=""
+    local output=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            -s|--service) service="$2"; shift 2 ;;
+            -o|--output) output="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$name" ]]; then
+        log_error "API family name is required (--name)"
+        exit 1
+    fi
+    
+    local template_file="${PROJECT_ROOT}/docs/templates/api-guide.md"
+    
+    if [[ ! -f "$template_file" ]]; then
+        log_error "Template not found: $template_file"
+        exit 1
+    fi
+    
+    # Generate filename from name
+    local filename=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd '[:alnum:]-')
+    local current_date=$(date +%Y-%m-%d)
+    
+    # Determine output path
+    if [[ -z "$output" ]]; then
+        if [[ -n "$service" ]]; then
+            validate_service "$service"
+            output="${PROJECT_ROOT}/${service}/docs/api/${filename}-api-guide.md"
+        else
+            output="${PROJECT_ROOT}/docs/api/${filename}-api-guide.md"
+        fi
+    fi
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create: $output"
+        log_info "  Template: $template_file"
+        log_info "  Replacements: API_FAMILY=$name, DATE=$current_date"
+        return
+    fi
+    
+    # Ensure output directory exists
+    mkdir -p "$(dirname "$output")"
+    
+    # Process template
+    process_template "$template_file" "$output" \
+        "API_FAMILY=$name" \
+        "DATE=$current_date"
+    
+    log_success "Created API guide: $output"
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -964,6 +1318,7 @@ main() {
         kafka-handler) cmd_kafka_handler "$@" ;;
         migration)     cmd_migration "$@" ;;
         test)          cmd_test "$@" ;;
+        docs)          cmd_docs "$@" ;;
         help|--help|-h) show_help ;;
         *)
             log_error "Unknown command: $command"
