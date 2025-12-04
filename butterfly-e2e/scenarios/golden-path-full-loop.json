@@ -1,0 +1,531 @@
+{
+  "name": "golden-path-full-loop",
+  "description": "Complete end-to-end golden path: PERCEPTION signal → CAPSULE store → ODYSSEY enrich → PLATO plan → SYNAPSE execute → PERCEPTION/CAPSULE feedback → NEXUS reasoning",
+  "version": "2.0.0",
+  "mode": "positive",
+  "target": "all",
+  "category": "golden-path",
+  "golden": true,
+  "timeout_seconds": 180,
+  "correlation_id": "golden-path-{{$timestamp}}",
+  "steps": [
+    {
+      "name": "verify-services-healthy",
+      "description": "Verify all 6 services are healthy before starting",
+      "type": "parallel",
+      "sub_steps": [
+        {
+          "name": "check-perception-health",
+          "service": "perception",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-capsule-health",
+          "service": "capsule",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-odyssey-health",
+          "service": "odyssey",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-plato-health",
+          "service": "plato",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-synapse-health",
+          "service": "synapse",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-nexus-health",
+          "service": "nexus",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        }
+      ]
+    },
+    {
+      "name": "step-1-perception-ingest-signal",
+      "description": "PERCEPTION: Ingest a test signal to start the data flow",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/signals",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "TEST_EVENT",
+        "source": "e2e-test-harness",
+        "rimNodeId": "rim:test:e2e:golden-path-{{$timestamp}}",
+        "payload": {
+          "testId": "golden-path-{{$timestamp}}",
+          "testValue": 42.0,
+          "description": "E2E golden path test signal"
+        },
+        "metadata": {
+          "priority": "HIGH",
+          "tags": ["e2e", "golden-path"]
+        }
+      },
+      "expect": {
+        "status": [201, 202],
+        "body": {
+          "signalId": { "$exists": true }
+        }
+      },
+      "outputs": {
+        "signalId": "$.signalId",
+        "rimNodeId": "$.rimNodeId"
+      }
+    },
+    {
+      "name": "step-2-wait-perception-processing",
+      "type": "wait",
+      "duration_seconds": 3,
+      "description": "Wait for PERCEPTION to process the signal"
+    },
+    {
+      "name": "step-3-verify-perception-state",
+      "description": "PERCEPTION: Verify the signal was processed and state updated",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/state/{{rimNodeId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "rimNodeId": "{{rimNodeId}}",
+          "status": ["ACTIVE", "OBSERVED"]
+        }
+      },
+      "outputs": {
+        "capsuleId": "$.capsuleId"
+      }
+    },
+    {
+      "name": "step-4-verify-capsule-stored",
+      "description": "CAPSULE: Verify the state was persisted as a CAPSULE",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/api/v1/capsules",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "scopeId": "{{rimNodeId}}",
+        "limit": 1
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "content": { "$exists": true }
+        }
+      },
+      "outputs": {
+        "storedCapsuleId": "$.content[0].capsuleId"
+      }
+    },
+    {
+      "name": "step-5-query-odyssey-context",
+      "description": "ODYSSEY: Query world context for the entity",
+      "service": "odyssey",
+      "method": "GET",
+      "endpoint": "/api/v1/entities",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "entityId": "{{rimNodeId}}"
+      },
+      "expect": {
+        "status": [200, 404]
+      },
+      "optional": true
+    },
+    {
+      "name": "step-6-create-plato-spec",
+      "description": "PLATO: Create a data contract spec for validation",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/specs",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "golden-path-spec-{{$timestamp}}",
+        "specType": "DATA_CONTRACT",
+        "content": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "testId": { "type": "string" },
+              "testValue": { "type": "number" }
+            },
+            "required": ["testId", "testValue"]
+          }
+        },
+        "description": "E2E golden path test spec",
+        "tags": ["e2e", "golden-path"]
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "status": "DRAFT"
+        }
+      },
+      "outputs": {
+        "specId": "$.id"
+      }
+    },
+    {
+      "name": "step-7-create-plato-plan",
+      "description": "PLATO: Create an execution plan with SYNAPSE actions",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "golden-path-plan-{{$timestamp}}",
+        "planType": "STANDARD",
+        "steps": [
+          {
+            "name": "validate-input",
+            "action": {
+              "type": "VALIDATE",
+              "parameters": {
+                "specId": "{{specId}}",
+                "mode": "DRY_RUN"
+              }
+            }
+          },
+          {
+            "name": "execute-synapse-action",
+            "action": {
+              "type": "EXECUTE",
+              "synapseAction": {
+                "toolId": "test-tool",
+                "actionType": "QUERY",
+                "parameters": {
+                  "targetId": "{{rimNodeId}}",
+                  "operation": "verify"
+                }
+              }
+            },
+            "dependsOn": ["validate-input"]
+          },
+          {
+            "name": "record-outcome",
+            "action": {
+              "type": "RECORD",
+              "parameters": {
+                "target": "capsule",
+                "scopeId": "{{rimNodeId}}"
+              }
+            },
+            "dependsOn": ["execute-synapse-action"]
+          }
+        ],
+        "description": "E2E golden path test plan with SYNAPSE execution",
+        "tags": ["e2e", "golden-path"]
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "status": "PENDING"
+        }
+      },
+      "outputs": {
+        "planId": "$.id"
+      }
+    },
+    {
+      "name": "step-8-execute-plato-plan",
+      "description": "PLATO: Execute the plan (triggers SYNAPSE)",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans/{{planId}}/execute",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "mode": "DRY_RUN"
+      },
+      "expect": {
+        "status": 202,
+        "body": {
+          "status": "EXECUTING"
+        }
+      },
+      "outputs": {
+        "executionId": "$.executionId"
+      }
+    },
+    {
+      "name": "step-9-wait-synapse-execution",
+      "type": "wait",
+      "duration_seconds": 8,
+      "description": "Wait for SYNAPSE to process the action"
+    },
+    {
+      "name": "step-10-verify-synapse-action",
+      "description": "SYNAPSE: Verify the action was received and processed",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "planId": "{{planId}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true,
+      "outputs": {
+        "actionId": "$.content[0].actionId"
+      }
+    },
+    {
+      "name": "step-11-check-plan-completion",
+      "description": "PLATO: Verify plan completed or is completing",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans/{{planId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": ["COMPLETED", "EXECUTING", "PARTIAL"]
+        }
+      }
+    },
+    {
+      "name": "step-12-verify-capsule-history",
+      "description": "CAPSULE: Verify execution outcome was recorded in history",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/api/v1/history",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "scopeId": "{{rimNodeId}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "content": { "$exists": true },
+          "totalElements": { "$gte": 1 }
+        }
+      }
+    },
+    {
+      "name": "step-13-query-perception-updated-state",
+      "description": "PERCEPTION: Verify state reflects the execution outcome",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/state/{{rimNodeId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "name": "step-14-nexus-temporal-query",
+      "description": "NEXUS: Query temporal slice for complete picture",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "entityId": "{{rimNodeId}}",
+        "timeframe": {
+          "lookback": "PT1H",
+          "lookahead": "PT30M"
+        },
+        "includeSources": ["capsule", "perception", "odyssey"]
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "coherenceScore": { "$gte": 0.3 }
+        }
+      },
+      "optional": true
+    },
+    {
+      "name": "step-15-nexus-learning-signal",
+      "description": "NEXUS: Submit learning signal for feedback loop",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/learning/signal",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "EXECUTION_COMPLETE",
+        "entityId": "{{rimNodeId}}",
+        "planId": "{{planId}}",
+        "outcome": "SUCCESS",
+        "metrics": {
+          "latency_ms": 150,
+          "steps_completed": 3
+        },
+        "feedback": {
+          "accuracy": 0.95,
+          "relevance": 0.9
+        }
+      },
+      "expect": {
+        "status": 202
+      },
+      "optional": true
+    },
+    {
+      "name": "step-16-nexus-reasoning-query",
+      "description": "NEXUS: Verify reasoning engine processed the learning signal",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/reasoning/inferences",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "entityId": "{{rimNodeId}}",
+        "limit": 5
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "All services are healthy",
+        "step": "verify-services-healthy",
+        "condition": "all_sub_steps_pass"
+      },
+      {
+        "description": "PERCEPTION signal ingested",
+        "step": "step-1-perception-ingest-signal",
+        "condition": "status in [201, 202]"
+      },
+      {
+        "description": "PERCEPTION state updated",
+        "step": "step-3-verify-perception-state",
+        "condition": "status == 200"
+      },
+      {
+        "description": "CAPSULE stored signal state",
+        "step": "step-4-verify-capsule-stored",
+        "condition": "status == 200"
+      },
+      {
+        "description": "PLATO spec created",
+        "step": "step-6-create-plato-spec",
+        "condition": "status == 201"
+      },
+      {
+        "description": "PLATO plan created",
+        "step": "step-7-create-plato-plan",
+        "condition": "status == 201"
+      },
+      {
+        "description": "PLATO plan execution started",
+        "step": "step-8-execute-plato-plan",
+        "condition": "status == 202"
+      },
+      {
+        "description": "PLATO plan completed or executing",
+        "step": "step-11-check-plan-completion",
+        "condition": "status == 200"
+      },
+      {
+        "description": "CAPSULE history contains execution record",
+        "step": "step-12-verify-capsule-history",
+        "condition": "status == 200"
+      }
+    ],
+    "slo_targets": {
+      "total_duration_ms": 60000,
+      "perception_latency_p99_ms": 2000,
+      "capsule_latency_p99_ms": 3000,
+      "odyssey_latency_p99_ms": 5000,
+      "plato_latency_p99_ms": 5000,
+      "synapse_latency_p99_ms": 3000,
+      "nexus_latency_p99_ms": 2000
+    }
+  },
+  "cleanup": {
+    "enabled": true,
+    "steps": [
+      {
+        "name": "cleanup-plan",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/plans/{{planId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      },
+      {
+        "name": "cleanup-spec",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/specs/{{specId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      }
+    ]
+  }
+}
