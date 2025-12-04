@@ -55,7 +55,7 @@ BUTTERFLY supports multiple authentication methods to accommodate different use 
 ### Obtaining a Token
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/auth/token \
+curl -X POST http://localhost:8084/api/v1/auth/token \
   -H "Content-Type: application/json" \
   -d '{
     "username": "user@example.com",
@@ -106,7 +106,7 @@ curl http://localhost:8081/api/v1/capsules \
 ### Refreshing Tokens
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/auth/refresh \
+curl -X POST http://localhost:8084/api/v1/auth/refresh \
   -H "Content-Type: application/json" \
   -d '{
     "refresh_token": "dGhpcyBpcyBhIHJlZnJlc2ggdG9rZW4..."
@@ -131,7 +131,7 @@ For service-to-service and automation scenarios.
 API keys are provisioned through the admin interface or API:
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/admin/api-keys \
+curl -X POST http://localhost:8084/api/v1/admin/api-keys \
   -H "Authorization: Bearer {admin-token}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -382,4 +382,3 @@ curl https://api.butterfly.example.com/api/v1/capsules \
 | [API Overview](README.md) | API section overview |
 | [Security Architecture](../architecture/security-architecture.md) | Security design |
 | [Error Handling](error-handling.md) | Error codes |
-

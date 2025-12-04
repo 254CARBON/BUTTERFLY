@@ -29,7 +29,7 @@ pnpm add @butterfly/sdk
 import { ButterflyClient } from '@butterfly/sdk';
 
 const client = new ButterflyClient({
-  nexusUrl: 'http://localhost:8083',
+  nexusUrl: 'http://localhost:8084',
   apiKey: 'your-api-key',
 });
 
@@ -52,7 +52,7 @@ for (const capsule of capsules) {
 ### Environment Variables
 
 ```bash
-export BUTTERFLY_NEXUS_URL=http://localhost:8083
+export BUTTERFLY_NEXUS_URL=http://localhost:8084
 export BUTTERFLY_API_KEY=your-api-key
 ```
 
@@ -69,7 +69,7 @@ const client = ButterflyClient.fromEnv();
 import { ButterflyClient, ButterflyConfig } from '@butterfly/sdk';
 
 const config: ButterflyConfig = {
-  nexusUrl: 'http://localhost:8083',
+  nexusUrl: 'http://localhost:8084',
   apiKey: 'your-api-key',
   timeout: 30000,
   maxRetries: 3,
@@ -523,4 +523,3 @@ app.get('/api/capsules/:scopeId', async (req, res) => {
 | [Client Integration Guide](../client-guide.md) | Integration patterns |
 | [Kafka Contracts](../kafka-contracts.md) | Event schemas |
 | [API Authentication](../../api/authentication.md) | Auth details |
-

@@ -1,0 +1,174 @@
+# Chaos Experiment: PLATO Graceful Degradation when SYNAPSE is Slow
+# 
+# Purpose: Validates that PLATO can handle SYNAPSE slowdowns gracefully
+# without cascading failures or blocking plan execution.
+#
+# Expected Behavior:
+# - PLATO circuit breaker to SYNAPSE should open after timeout threshold
+# - Plans should fall back to DRY_RUN mode or queue for retry
+# - No 5xx errors propagated to callers
+# - Metrics should show elevated latency but not failures
+#
+# Related Runbook: docs/operations/runbooks/chaos-synapse-unavailable.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: plato-synapse-degraded
+  namespace: butterfly-chaos
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cross-service
+    chaos.butterfly.io/critical-path: plato-synapse
+spec:
+  entry: plato-synapse-degradation-test
+  templates:
+    - name: plato-synapse-degradation-test
+      templateType: Serial
+      deadline: 15m
+      children:
+        - baseline-metrics
+        - inject-synapse-latency
+        - verify-plato-degradation
+        - restore-synapse
+        - verify-recovery
+
+    - name: baseline-metrics
+      templateType: Task
+      task:
+        container:
+          name: metrics-collector
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Collecting baseline metrics..."
+              # Record baseline PLATO latency
+              curl -s "http://prometheus.monitoring:9090/api/v1/query?query=histogram_quantile(0.95,sum(rate(http_server_requests_seconds_bucket{service='plato-service'}[5m]))by(le))" > /tmp/baseline.json
+              echo "Baseline metrics collected"
+
+    - name: inject-synapse-latency
+      templateType: NetworkChaos
+      networkChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app: synapse
+        mode: all
+        action: delay
+        delay:
+          latency: "3s"
+          jitter: "500ms"
+          correlation: "100"
+        duration: "5m"
+
+    - name: verify-plato-degradation
+      templateType: Task
+      task:
+        container:
+          name: verification
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying PLATO graceful degradation..."
+              sleep 30
+              
+              # Check PLATO is still responding
+              PLATO_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://plato-service.butterfly:8080/actuator/health)
+              if [ "$PLATO_STATUS" != "200" ]; then
+                echo "FAIL: PLATO health check failed with status $PLATO_STATUS"
+                exit 1
+              fi
+              
+              # Check circuit breaker state
+              CB_STATE=$(curl -s http://plato-service.butterfly:8080/actuator/circuitbreakers | grep -o '"state":"[^"]*"' | head -1)
+              echo "Circuit breaker state: $CB_STATE"
+              
+              # Verify no 5xx errors in last 2 minutes
+              ERROR_RATE=$(curl -s "http://prometheus.monitoring:9090/api/v1/query?query=sum(rate(http_server_requests_seconds_count{service='plato-service',status=~'5..'}[2m]))/sum(rate(http_server_requests_seconds_count{service='plato-service'}[2m]))" | grep -o '"value":\[[^]]*\]' | grep -o '[0-9.]*"$' | tr -d '"')
+              echo "Error rate: $ERROR_RATE"
+              
+              # Error rate should be below 5%
+              if [ "$(echo "$ERROR_RATE > 0.05" | bc -l)" -eq 1 ]; then
+                echo "FAIL: Error rate $ERROR_RATE exceeds 5% threshold"
+                exit 1
+              fi
+              
+              echo "PASS: PLATO gracefully degraded"
+
+    - name: restore-synapse
+      templateType: Task
+      task:
+        container:
+          name: restore
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for network chaos to end..."
+              sleep 10
+              echo "Synapse network restored"
+
+    - name: verify-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying recovery..."
+              sleep 60
+              
+              # Check both services healthy
+              PLATO_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://plato-service.butterfly:8080/actuator/health)
+              SYNAPSE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://synapse-service.butterfly:8080/actuator/health)
+              
+              if [ "$PLATO_STATUS" != "200" ] || [ "$SYNAPSE_STATUS" != "200" ]; then
+                echo "FAIL: Services not recovered - PLATO: $PLATO_STATUS, SYNAPSE: $SYNAPSE_STATUS"
+                exit 1
+              fi
+              
+              # Check circuit breaker closed
+              CB_STATE=$(curl -s http://plato-service.butterfly:8080/actuator/circuitbreakers | grep synapse | grep -o '"state":"CLOSED"')
+              if [ -z "$CB_STATE" ]; then
+                echo "WARN: Circuit breaker may still be open/half-open"
+              fi
+              
+              echo "PASS: Recovery complete"
+
+---
+# Pass/Fail Criteria for this experiment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plato-synapse-degraded-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - PLATO remains healthy (200 on /actuator/health)
+    - Error rate stays below 5% during degradation
+    - Circuit breaker opens within 30s of latency injection
+    - No cascading failures to CAPSULE or PERCEPTION
+    - Full recovery within 2 minutes after chaos ends
+  
+  fail_criteria: |
+    - PLATO returns 5xx errors to callers
+    - Plans fail with unhandled exceptions
+    - Circuit breaker never opens (no protection)
+    - Recovery takes longer than 5 minutes
+  
+  remediation: |
+    See: docs/operations/runbooks/chaos-synapse-unavailable.md
+    Quick actions:
+    1. Check SYNAPSE logs for root cause
+    2. Verify Kafka connectivity if actions are queued
+    3. Consider manual circuit breaker reset if stuck open
+

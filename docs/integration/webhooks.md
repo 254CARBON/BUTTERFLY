@@ -18,7 +18,7 @@ Webhooks provide a way to receive real-time notifications when events occur in B
 ### Create Webhook
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/webhooks \
+curl -X POST http://localhost:8084/api/v1/webhooks \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -45,14 +45,14 @@ curl -X POST http://localhost:8083/api/v1/webhooks \
 ### List Webhooks
 
 ```bash
-curl http://localhost:8083/api/v1/webhooks \
+curl http://localhost:8084/api/v1/webhooks \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Update Webhook
 
 ```bash
-curl -X PUT http://localhost:8083/api/v1/webhooks/whk_abc123 \
+curl -X PUT http://localhost:8084/api/v1/webhooks/whk_abc123 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -64,7 +64,7 @@ curl -X PUT http://localhost:8083/api/v1/webhooks/whk_abc123 \
 ### Delete Webhook
 
 ```bash
-curl -X DELETE http://localhost:8083/api/v1/webhooks/whk_abc123 \
+curl -X DELETE http://localhost:8084/api/v1/webhooks/whk_abc123 \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -425,4 +425,3 @@ Return appropriate status codes:
 |----------|-------------|
 | [Integration Guide](README.md) | Integration overview |
 | [API Authentication](../api/authentication.md) | Auth patterns |
-

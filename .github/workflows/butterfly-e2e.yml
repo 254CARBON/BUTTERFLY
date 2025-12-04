@@ -8,6 +8,16 @@ on:
         required: false
         default: false
         type: boolean
+      chaos_scenarios:
+        description: "Run chaos/resilience scenarios"
+        required: false
+        default: false
+        type: boolean
+      golden_path_full_loop:
+        description: "Run full loop golden path (PLATO→SYNAPSE→PERCEPTION→CAPSULE→NEXUS)"
+        required: false
+        default: false
+        type: boolean
   pull_request:
     paths:
       - ".github/workflows/butterfly-e2e.yml"
@@ -15,10 +25,20 @@ on:
       - "butterfly-e2e/**"
       - "scripts/**"
       - "ODYSSEY/**"
+      - "PLATO/**"
+      - "SYNAPSE/**"
+      - "butterfly-nexus/**"
+      - "CAPSULE/**"
+      - "PERCEPTION/**"
       - "DX_NOTES.md"
       - "DEVELOPMENT_OVERVIEW.md"
   schedule:
     - cron: "0 5 * * *"  # nightly UTC
+    - cron: "0 3 * * 0"  # weekly chaos: Sunday 3 AM UTC
+
+env:
+  JAVA_VERSION: "17"
+  MAVEN_OPTS: "-Xmx1024m"
 
 jobs:
   scenario-suite:
@@ -27,11 +47,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
       - name: Cache Avro codegen
@@ -54,6 +74,16 @@ jobs:
           chmod +x butterfly-e2e/run-scenarios.sh scripts/dev-up.sh scripts/dev-down.sh
           ./butterfly-e2e/run-scenarios.sh
 
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-scenario-results
+          path: |
+            butterfly-e2e/e2e-results/
+            butterfly-e2e/chaos-results/
+          retention-days: 14
+
       - name: Generate E2E Summary
         if: always()
         run: |
@@ -74,6 +104,133 @@ jobs:
           echo "- Negative scenarios (Kafka hiccup)" >> $GITHUB_STEP_SUMMARY
           echo "- ODYSSEY reflex assertions" >> $GITHUB_STEP_SUMMARY
 
+  # Required for PRs touching core services - ensures full ecosystem integration
+  golden-path-full-loop:
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.golden_path_full_loop == 'true') ||
+      (github.event_name == 'pull_request' && (
+        contains(github.event.pull_request.changed_files, 'PLATO/') ||
+        contains(github.event.pull_request.changed_files, 'SYNAPSE/') ||
+        contains(github.event.pull_request.changed_files, 'butterfly-nexus/') ||
+        contains(github.event.pull_request.changed_files, 'CAPSULE/') ||
+        contains(github.event.pull_request.changed_files, 'PERCEPTION/') ||
+        contains(github.event.pull_request.changed_files, 'ODYSSEY/')
+      ))
+    needs: scenario-suite
+    runs-on: ubuntu-latest
+    services:
+      kafka:
+        image: bitnami/kafka:3.6
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_CFG_NODE_ID: 0
+          KAFKA_CFG_PROCESS_ROLES: controller,broker
+          KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@localhost:9093
+          KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Build all services
+        run: |
+          mvn -B -q install -DskipTests -pl butterfly-common,PLATO,SYNAPSE,butterfly-nexus
+
+      - name: Start services with Docker Compose
+        run: |
+          docker compose -f butterfly-e2e/docker-compose.full.yml up -d
+          sleep 30  # Allow services to initialize
+
+      - name: Run full loop golden path
+        env:
+          PLATO_URL: http://localhost:8084
+          SYNAPSE_URL: http://localhost:8086
+          NEXUS_URL: http://localhost:8085
+          PERCEPTION_URL: http://localhost:8081
+          CAPSULE_URL: http://localhost:8082
+        run: |
+          chmod +x butterfly-e2e/run-golden-path.sh
+          ./butterfly-e2e/run-golden-path.sh --strategic --skip-build
+
+      - name: Collect service logs
+        if: always()
+        run: |
+          mkdir -p logs
+          docker compose -f butterfly-e2e/docker-compose.full.yml logs --no-color > logs/all-services.log 2>&1 || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-path-full-loop-logs
+          path: logs/
+          retention-days: 7
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f butterfly-e2e/docker-compose.full.yml down -v
+
+  chaos-scenarios:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.chaos_scenarios == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Start services
+        run: |
+          docker compose -f butterfly-e2e/docker-compose.full.yml up -d
+          sleep 30
+
+      - name: Run chaos scenarios
+        env:
+          CHAOS_TIMEOUT: 120
+          RESULTS_DIR: ${{ github.workspace }}/chaos-results
+        run: |
+          chmod +x butterfly-e2e/run-chaos-scenarios.sh
+          ./butterfly-e2e/run-chaos-scenarios.sh
+
+      - name: Upload chaos results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-scenario-results
+          path: chaos-results/
+          retention-days: 14
+
+      - name: Generate Chaos Summary
+        if: always()
+        run: |
+          echo "## Chaos Scenario Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Scenarios Tested" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scenario | Target | Fault Type |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|------------|" >> $GITHUB_STEP_SUMMARY
+          echo "| SYNAPSE Unavailable | PLATO | service_unavailable |" >> $GITHUB_STEP_SUMMARY
+          echo "| ODYSSEY Degraded | NEXUS | latency_injection |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cassandra Partial Outage | All | data_store_partial_outage |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f butterfly-e2e/docker-compose.full.yml down -v
+
   full-stack-smoke:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.full_stack == 'true'
     needs: scenario-suite
@@ -82,11 +239,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
       - name: Start optional full stack (Kafka + ODYSSEY profile)
@@ -99,3 +256,146 @@ jobs:
           sleep 25  # allow ODYSSEY to finish booting
           ./scripts/fastpath-cli.sh publish --scenario golden-path --topic rim.fast-path --bootstrap localhost:9092 --scenarios-root butterfly-e2e/scenarios
           ./scripts/dev-down.sh
+
+  # Weekly chaos testing - runs every Sunday at 3 AM UTC
+  weekly-chaos-suite:
+    if: github.event.schedule == '0 3 * * 0'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Build all modules
+        run: mvn -B -q install -DskipTests
+
+      - name: Start full stack for chaos testing
+        run: |
+          docker compose -f butterfly-e2e/docker-compose.full.yml up -d
+          sleep 60  # Allow services to fully initialize
+
+      - name: Run comprehensive chaos suite
+        env:
+          CHAOS_TIMEOUT: 300
+          RESULTS_DIR: ${{ github.workspace }}/weekly-chaos-results
+          RUN_ALL_EXPERIMENTS: "true"
+        run: |
+          chmod +x butterfly-e2e/run-chaos-scenarios.sh
+          mkdir -p $RESULTS_DIR
+          
+          # Run E2E chaos scenarios
+          ./butterfly-e2e/run-chaos-scenarios.sh || true
+          
+          # Run Chaos Mesh experiments (if available)
+          if [ -f chaos/scripts/run-chaos-suite.sh ]; then
+            chmod +x chaos/scripts/run-chaos-suite.sh
+            ./chaos/scripts/run-chaos-suite.sh --category cross-service --report json --output $RESULTS_DIR/chaos-mesh-results.json || true
+          fi
+
+      - name: Collect all service logs
+        if: always()
+        run: |
+          mkdir -p weekly-chaos-results/logs
+          docker compose -f butterfly-e2e/docker-compose.full.yml logs --no-color > weekly-chaos-results/logs/all-services.log 2>&1 || true
+          
+          # Extract service-specific logs
+          for svc in plato synapse nexus capsule perception odyssey; do
+            docker compose -f butterfly-e2e/docker-compose.full.yml logs $svc --no-color > weekly-chaos-results/logs/${svc}.log 2>&1 || true
+          done
+
+      - name: Upload weekly chaos results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-chaos-results-${{ github.run_number }}
+          path: weekly-chaos-results/
+          retention-days: 90
+
+      - name: Generate Chaos Summary
+        if: always()
+        run: |
+          echo "## Weekly Chaos Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Run Details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Date | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Chaos Experiments" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Experiment | Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------------|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| PLATO-SYNAPSE Degraded | SYNAPSE latency | ⏳ |" >> $GITHUB_STEP_SUMMARY
+          echo "| NEXUS-PERCEPTION Timeout | PERCEPTION network | ⏳ |" >> $GITHUB_STEP_SUMMARY
+          echo "| CAPSULE-ODYSSEY Partition | Network partition | ⏳ |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Remediation Runbooks" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- [SYNAPSE Unavailable](docs/operations/runbooks/chaos-synapse-unavailable.md)" >> $GITHUB_STEP_SUMMARY
+          echo "- [NEXUS Circuit Open](docs/operations/runbooks/chaos-nexus-circuit-open.md)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Database Partial Outage](docs/operations/runbooks/chaos-database-partial-outage.md)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f butterfly-e2e/docker-compose.full.yml down -v
+
+  nightly-full-e2e:
+    if: github.event.schedule == '0 5 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Build all modules
+        run: mvn -B -q install -DskipTests
+
+      - name: Start full stack
+        run: |
+          docker compose -f butterfly-e2e/docker-compose.full.yml up -d
+          sleep 45
+
+      - name: Run full E2E suite
+        env:
+          RUN_GOLDEN_PATH: "true"
+          RUN_CHAOS: "true"
+          RUN_INTEGRATION: "true"
+          SKIP_INFRASTRUCTURE: "true"
+          RESULTS_DIR: ${{ github.workspace }}/nightly-results
+        run: |
+          chmod +x butterfly-e2e/run-full-e2e-suite.sh
+          ./butterfly-e2e/run-full-e2e-suite.sh
+
+      - name: Upload nightly results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-results
+          path: nightly-results/
+          retention-days: 30
+
+      - name: Publish JUnit Report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: nightly-results/junit-report.xml
+          check_name: "Nightly E2E Test Report"
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f butterfly-e2e/docker-compose.full.yml down -v

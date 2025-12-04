@@ -2,7 +2,7 @@
 
 > Unified catalog of all API endpoints across the ecosystem
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: API consumers, developers, integrators
 
 ---
@@ -18,7 +18,7 @@ This document provides a consolidated view of all REST API endpoints across BUTT
 | PERCEPTION | 8080 | `/v3/api-docs` | `/swagger-ui.html` |
 | CAPSULE | 8081 | `/v3/api-docs` | `/swagger-ui.html` |
 | ODYSSEY | 8082 | [`odyssey-v1.yaml`](../../ODYSSEY/openapi/odyssey-v1.yaml) | `/swagger-ui.html` |
-| PLATO | 8083 | [`plato-v1.yaml`](../../PLATO/openapi/plato-v1.yaml) | `/swagger-ui.html` |
+| PLATO | 8080 | [`plato-v1.yaml`](../../PLATO/openapi/plato-v1.yaml) | `/swagger-ui.html` |
 | NEXUS | 8084 | `/v3/api-docs` | `/swagger-ui.html` |
 
 ---
@@ -252,7 +252,7 @@ This document provides a consolidated view of all REST API endpoints across BUTT
 
 ---
 
-## PLATO API (Port 8083)
+## PLATO API (Port 8080)
 
 **OpenAPI Spec**: [`PLATO/openapi/plato-v1.yaml`](../../PLATO/openapi/plato-v1.yaml)
 

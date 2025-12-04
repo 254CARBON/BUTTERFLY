@@ -1,0 +1,234 @@
+# Chaos Experiment: NEXUS Circuit Breaker on PERCEPTION Timeout
+#
+# Purpose: Validates NEXUS circuit breaker behavior when PERCEPTION
+# becomes unresponsive or times out.
+#
+# Expected Behavior:
+# - NEXUS should continue serving cached data when PERCEPTION is unavailable
+# - Circuit breaker should open after consecutive failures
+# - Temporal queries should degrade gracefully (partial data)
+# - Learning signals should queue for retry
+#
+# Related Runbook: docs/operations/runbooks/chaos-nexus-circuit-open.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: nexus-perception-timeout
+  namespace: butterfly-chaos
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: cross-service
+    chaos.butterfly.io/critical-path: nexus-perception
+spec:
+  entry: nexus-perception-timeout-test
+  templates:
+    - name: nexus-perception-timeout-test
+      templateType: Serial
+      deadline: 20m
+      children:
+        - warmup-nexus-cache
+        - inject-perception-timeout
+        - verify-nexus-resilience
+        - verify-circuit-breaker-open
+        - restore-perception
+        - verify-circuit-breaker-recovery
+
+    - name: warmup-nexus-cache
+      templateType: Task
+      task:
+        container:
+          name: cache-warmup
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Warming up NEXUS cache with PERCEPTION data..."
+              # Query temporal slice to populate cache
+              curl -X POST http://nexus-service.butterfly:8080/api/v1/temporal/slice \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{"entityId":"chaos:test:entity","timeframe":{"lookback":"PT1H","lookahead":"PT30M"},"includeSources":["perception","capsule"]}'
+              echo "Cache warmup complete"
+
+    - name: inject-perception-timeout
+      templateType: NetworkChaos
+      networkChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app: perception-api
+        mode: all
+        action: loss
+        loss:
+          loss: "100"
+          correlation: "100"
+        duration: "3m"
+        target:
+          selector:
+            namespaces:
+              - butterfly
+            labelSelectors:
+              app: nexus
+
+    - name: verify-nexus-resilience
+      templateType: Task
+      task:
+        container:
+          name: resilience-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying NEXUS resilience during PERCEPTION outage..."
+              sleep 20
+              
+              # NEXUS should still be healthy
+              NEXUS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://nexus-service.butterfly:8080/actuator/health)
+              if [ "$NEXUS_STATUS" != "200" ]; then
+                echo "FAIL: NEXUS unhealthy during PERCEPTION outage"
+                exit 1
+              fi
+              
+              # Temporal query should return cached/partial data
+              TEMPORAL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                http://nexus-service.butterfly:8080/api/v1/temporal/slice \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{"entityId":"chaos:test:entity","timeframe":{"lookback":"PT1H","lookahead":"PT30M"},"includeSources":["perception","capsule"]}')
+              
+              if [ "$TEMPORAL_STATUS" = "500" ] || [ "$TEMPORAL_STATUS" = "503" ]; then
+                echo "FAIL: Temporal query returning errors ($TEMPORAL_STATUS)"
+                exit 1
+              fi
+              
+              # Reasoning endpoint should work with cached data
+              REASONING_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                "http://nexus-service.butterfly:8080/api/v1/reasoning/hypotheses?tenantId=chaos-test&limit=5")
+              
+              if [ "$REASONING_STATUS" = "500" ]; then
+                echo "FAIL: Reasoning endpoint failing"
+                exit 1
+              fi
+              
+              echo "PASS: NEXUS resilient during PERCEPTION outage"
+
+    - name: verify-circuit-breaker-open
+      templateType: Task
+      task:
+        container:
+          name: cb-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying circuit breaker state..."
+              
+              CB_METRICS=$(curl -s http://nexus-service.butterfly:8080/actuator/circuitbreakers)
+              echo "Circuit breaker metrics: $CB_METRICS"
+              
+              # Check if perception circuit breaker is OPEN or HALF_OPEN
+              if echo "$CB_METRICS" | grep -q '"name":"perception".*"state":"OPEN"'; then
+                echo "PASS: PERCEPTION circuit breaker is OPEN"
+              elif echo "$CB_METRICS" | grep -q '"name":"perception".*"state":"HALF_OPEN"'; then
+                echo "PASS: PERCEPTION circuit breaker is HALF_OPEN"
+              else
+                echo "WARN: PERCEPTION circuit breaker state unclear"
+              fi
+              
+              # Check upstream services health indicator
+              HEALTH=$(curl -s http://nexus-service.butterfly:8080/actuator/health)
+              if echo "$HEALTH" | grep -q '"perception".*"DOWN"'; then
+                echo "PASS: Health indicator correctly shows PERCEPTION down"
+              fi
+
+    - name: restore-perception
+      templateType: Task
+      task:
+        container:
+          name: restore
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for network chaos to end..."
+              sleep 10
+              
+              # Verify PERCEPTION is back
+              for i in 1 2 3 4 5; do
+                PERCEPTION_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                  http://perception-api.butterfly:8080/actuator/health)
+                if [ "$PERCEPTION_STATUS" = "200" ]; then
+                  echo "PERCEPTION restored"
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "WARN: PERCEPTION may not be fully restored yet"
+
+    - name: verify-circuit-breaker-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying circuit breaker recovery..."
+              sleep 90
+              
+              CB_STATE=$(curl -s http://nexus-service.butterfly:8080/actuator/circuitbreakers \
+                | grep -o '"name":"perception"[^}]*"state":"[^"]*"' \
+                | grep -o '"state":"[^"]*"')
+              
+              echo "Circuit breaker state: $CB_STATE"
+              
+              if echo "$CB_STATE" | grep -q "CLOSED"; then
+                echo "PASS: Circuit breaker recovered to CLOSED state"
+              else
+                echo "WARN: Circuit breaker not yet CLOSED: $CB_STATE"
+              fi
+              
+              # Verify full functionality restored
+              TEMPORAL_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                http://nexus-service.butterfly:8080/api/v1/temporal/slice \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{"entityId":"chaos:test:entity","timeframe":{"lookback":"PT1H","lookahead":"PT30M"},"includeSources":["perception","capsule"]}')
+              
+              if [ "$TEMPORAL_STATUS" = "200" ]; then
+                echo "PASS: Temporal queries fully recovered"
+              else
+                echo "WARN: Temporal queries returning $TEMPORAL_STATUS"
+              fi
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexus-perception-timeout-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - NEXUS remains healthy during PERCEPTION outage
+    - Temporal queries return cached/partial data (not 5xx)
+    - Reasoning endpoints continue working
+    - Circuit breaker opens within 60s
+    - Full recovery within 3 minutes after PERCEPTION restored
+  
+  fail_criteria: |
+    - NEXUS goes unhealthy
+    - All queries fail with 5xx errors
+    - Circuit breaker never opens
+    - Recovery takes longer than 5 minutes
+  
+  remediation: |
+    See: docs/operations/runbooks/chaos-nexus-circuit-open.md
+

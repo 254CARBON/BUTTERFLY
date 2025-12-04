@@ -2,7 +2,7 @@
 
 > Technology decisions and rationale for the BUTTERFLY ecosystem
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Architects, developers, technical evaluators
 
 ---
@@ -24,7 +24,7 @@ This document outlines the technology choices for the BUTTERFLY ecosystem, inclu
 │  ─────────────────                                                          │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐  │
 │  │   Java 17    │ │ Spring Boot  │ │   WebFlux    │ │     Lombok       │  │
-│  │   Java 21    │ │    3.2.x     │ │  (Reactive)  │ │    MapStruct     │  │
+│  │   (LTS)      │ │    3.2.x     │ │  (Reactive)  │ │    MapStruct     │  │
 │  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────────┘  │
 │                                                                              │
 │  Messaging & Events                                                         │
@@ -74,14 +74,14 @@ This document outlines the technology choices for the BUTTERFLY ecosystem, inclu
 
 ## Core Platform
 
-### Java 17 / 21
+### Java 17
 
 | Aspect | Details |
 |--------|---------|
-| **Version** | Java 17 (most services), Java 21 (PLATO) |
+| **Version** | Java 17 (all services) |
 | **Distribution** | Eclipse Temurin (Adoptium) |
-| **Rationale** | LTS versions, modern language features, strong ecosystem |
-| **Features Used** | Records, sealed classes, pattern matching, virtual threads (21) |
+| **Rationale** | LTS version, modern language features, strong ecosystem |
+| **Features Used** | Records, improved switch/instanceof patterns, text blocks |
 
 ### Spring Boot 3.2.x
 
@@ -407,4 +407,3 @@ ENTRYPOINT ["java", "-jar", "app.jar"]
 | [ADR Index](../adr/README.md) | Architecture decisions |
 | [Ecosystem Overview](ecosystem-overview.md) | System architecture |
 | [Parent POM](../../pom.xml) | Version management |
-

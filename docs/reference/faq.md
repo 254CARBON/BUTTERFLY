@@ -2,7 +2,7 @@
 
 > Frequently Asked Questions
 
-**Last Updated**: 2025-12-03
+**Last Updated**: 2025-12-04
 
 ---
 
@@ -48,21 +48,19 @@ The name references the "butterfly effect" - the concept that small changes can 
 
 ```bash
 # Clone repository
-git clone https://github.com/butterfly-org/butterfly.git
-cd butterfly/apps
+git clone https://github.com/254CARBON/BUTTERFLY.git
+cd BUTTERFLY/apps
 
-# Start with Docker Compose
-docker compose up -d
-
-# Verify health
-curl http://localhost:8083/actuator/health
+# Start local dev stack (Kafka + fast-path harness)
+./scripts/setup.sh
+./scripts/dev-up.sh
 ```
 
-See the [Installation Guide](../getting-started/installation.md) for detailed instructions.
+See the [Installation Guide](../getting-started/installation.md) for detailed options, including full-service Docker Compose and production deployments.
 
 ### Which Java version is required?
 
-Java 21 (LTS) is required. We recommend Eclipse Temurin (Adoptium) distribution.
+Java 17 (LTS) is required for all services. We recommend the Eclipse Temurin (Adoptium) distribution. Java 21 is supported for local development but not required.
 
 ---
 
@@ -224,7 +222,7 @@ ODYSSEY (via JanusGraph) can scale to billions of vertices and edges. Performanc
 ### How do I execute a plan?
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/plato/plans \
+curl -X POST http://localhost:8084/api/v1/plato/plans \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -333,11 +331,11 @@ See [Contributing Guide](../development/contributing.md) for details.
 
 ### Where do I report bugs?
 
-Open an issue on GitHub: https://github.com/butterfly-org/butterfly/issues
+Open an issue on GitHub: https://github.com/254CARBON/BUTTERFLY/issues
 
 ### How do I request features?
 
-Use GitHub Discussions: https://github.com/butterfly-org/butterfly/discussions
+Use GitHub Discussions: https://github.com/254CARBON/BUTTERFLY/discussions
 
 ---
 
@@ -348,4 +346,3 @@ Use GitHub Discussions: https://github.com/butterfly-org/butterfly/discussions
 | [Reference Index](README.md) | Reference overview |
 | [Glossary](glossary.md) | Terminology |
 | [Getting Started](../getting-started/README.md) | Quick start |
-

@@ -2,7 +2,7 @@
 
 > Complete technical architecture of the BUTTERFLY platform
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Architects, senior developers, technical leads
 
 ---
@@ -46,7 +46,7 @@ BUTTERFLY is an enterprise cognitive intelligence platform consisting of six int
 │   │   │  │  Sensory   │  │   Memory   │  │ Cognition  │  │ Governance ││  │  │
 │   │   │  │   Layer    │  │   Layer    │  │   Layer    │  │   Layer    ││  │  │
 │   │   │  │            │  │            │  │            │  │            ││  │  │
-│   │   │  │ :8080      │  │ :8081      │  │ :8082      │  │ :8083      ││  │  │
+│   │   │  │ :8080      │  │ :8081      │  │ :8082      │  │ :8080      ││  │  │
 │   │   │  └────────────┘  └────────────┘  └────────────┘  └────────────┘│  │  │
 │   │   │        │                │                │                │     │  │  │
 │   │   └────────┼────────────────┼────────────────┼────────────────┼─────┘  │  │
@@ -342,6 +342,12 @@ The BUTTERFLY ecosystem implements a deliberate separation between backend servi
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+#### Governance Pluralism (Phase 6)
+
+- PLATO now supports opt-in **governance pluralism**: evaluating policies under multiple `GovernanceSchool` archetypes (CONSERVATIVE, BALANCED, PROGRESSIVE, DOMAIN_SPECIFIC, CUSTOM).
+- When `plato.governance-pluralism.enabled=true`, the policy engine computes per-school results plus a `PluralismSummary` (consensus and divergence scores).
+- NEXUS integrates this via `PlatoGovernanceHooks`, annotating strategic options with school-level decisions and highlighting high-divergence cases for human review.
+
 ### NEXUS - Integration Layer
 
 **Purpose**: Unified integration with emergent cross-system capabilities.
@@ -381,7 +387,9 @@ The BUTTERFLY ecosystem implements a deliberate separation between backend servi
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 │  Clients: CapsuleClient, PerceptionClient, OdysseyClient, PlatoClient      │
-│  Resilience: Circuit breakers, retries with backoff                        │
+│  Resilience: WebClient + Resilience4j (circuit breakers, retries,         │
+│              bulkheads, time limiters) with trace and correlation ID      │
+│              propagation via TracePropagatingWebClientFactory             │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -454,4 +462,3 @@ Central event backbone for async communication:
 | [Identity Model](identity-model.md) | RimNodeId specification |
 | [Security Architecture](security-architecture.md) | Security design |
 | [Technology Stack](technology-stack.md) | Technology decisions |
-

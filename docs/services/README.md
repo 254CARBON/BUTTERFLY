@@ -2,7 +2,7 @@
 
 > Individual service documentation and summaries
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Developers, architects, operators
 
 ---
@@ -47,7 +47,7 @@ The BUTTERFLY ecosystem consists of six primary services, each with a specific r
 | [**PERCEPTION**](perception.md) | Sensory and interpretation layer | Java 17, Kafka, PostgreSQL | 8080 | [Full Docs](../../PERCEPTION/README.md) |
 | [**CAPSULE**](capsule.md) | 4D atomic history storage | Java 17, Cassandra, Redis | 8081 | [Full Docs](../../CAPSULE/README.md) |
 | [**ODYSSEY**](odyssey.md) | Strategic cognition engine | Java 17, JanusGraph | 8082 | [Full Docs](../../ODYSSEY/README.md) |
-| [**PLATO**](plato.md) | Governance and intelligence | Java 21, WebFlux, Cassandra | 8083 | [Full Docs](../../PLATO/README.md) |
+| [**PLATO**](plato.md) | Governance and intelligence | Java 17, WebFlux, Cassandra | 8080 | [Full Docs](../../PLATO/README.md) |
 | [**NEXUS**](nexus.md) | Integration cortex layer | Java 17, WebFlux | 8084 | [Full Docs](../../butterfly-nexus/README.md) |
 | [**butterfly-common**](butterfly-common.md) | Shared library | Java 17, Avro | N/A | [Full Docs](../../butterfly-common/README.md) |
 
@@ -262,4 +262,3 @@ The BUTTERFLY ecosystem follows a clear separation between backend services and 
 | [Architecture Overview](../architecture/ecosystem-overview.md) | System architecture |
 | [Data Flow](../architecture/data-flow.md) | Cross-service data flows |
 | [API Catalog](../api/api-catalog.md) | Unified API reference |
-

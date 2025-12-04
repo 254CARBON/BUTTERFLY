@@ -227,18 +227,19 @@ The `integration/` package contains clients for external BUTTERFLY services.
 
 | Class | Description |
 |-------|-------------|
-| `PerceptionClient` | Interface for PERCEPTION integration |
-| `PerceptionClientImpl` | RIM node attachment, evidence retrieval |
-| `CapsuleClient` | Interface for CAPSULE integration |
-| `CapsuleClientImpl` | Historical data queries |
-| `OdysseyClient` | Interface for ODYSSEY integration |
-| `OdysseyClientImpl` | World state access, experiments |
-| `SynapseClient` | Interface for SYNAPSE integration |
+| `PerceptionClient` | Interface for PERCEPTION integration (RIM, evidence, data profiles) |
+| `PerceptionClientImpl` | WebClient-based client with attachments, evidence, profiling APIs |
+| `CapsuleClient` | Interface for CAPSULE integration (history, scopes, lineage, proofs) |
+| `CapsuleClientImpl` | WebClient-based client for typed history, aggregation, atomic storage |
+| `OdysseyClient` | Interface for ODYSSEY integration (world state, projections, experiments) |
+| `OdysseyClientImpl` | WebClient-based client with cached fallbacks for strategic context |
+| `SynapseClient` | Interface for SYNAPSE integration (tool registry and inference) |
+| `SynapseClientImpl` | WebClient-based client for tool registration and invocation reporting |
 
-**Resilience patterns:**
-- Resilience4j circuit breakers
-- Retry with exponential backoff
-- Fallback methods for graceful degradation
+**Resilience and observability patterns:**
+- Resilience4j circuit breakers, retries, time limiters, and bulkheads (via `ResilienceConfig` / `ResilienceOperators`)
+- WebClient with trace propagation (`TracePropagatingWebClient`) and standard headers
+- Micrometer metrics (`plato.client.*`) for duration, success/error counters
 
 ---
 
@@ -336,4 +337,3 @@ The `event/` package handles event publishing and broadcasting.
 - Review [Common Workflows](common-workflows.md) for development patterns
 - Explore the [PLATO Architecture Docs](../../PLATO/docs/architecture/) for design details
 - Check [Troubleshooting](troubleshooting.md) if you encounter issues
-

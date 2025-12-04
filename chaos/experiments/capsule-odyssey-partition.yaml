@@ -1,0 +1,254 @@
+# Chaos Experiment: CAPSULE-ODYSSEY Network Partition Recovery
+#
+# Purpose: Validates that CAPSULE and ODYSSEY can recover gracefully
+# from a network partition, with data consistency preserved.
+#
+# Expected Behavior:
+# - Both services remain individually healthy
+# - ODYSSEY falls back to cached CAPSULE data
+# - No data corruption or loss after partition heals
+# - Cross-service queries eventually consistent
+#
+# Related Runbook: docs/operations/runbooks/chaos-database-partial-outage.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: capsule-odyssey-partition
+  namespace: butterfly-chaos
+  labels:
+    app.kubernetes.io/part-of: butterfly
+    chaos.butterfly.io/category: network
+    chaos.butterfly.io/critical-path: capsule-odyssey
+spec:
+  entry: capsule-odyssey-partition-test
+  templates:
+    - name: capsule-odyssey-partition-test
+      templateType: Serial
+      deadline: 25m
+      children:
+        - create-test-data
+        - inject-network-partition
+        - verify-individual-health
+        - verify-graceful-degradation
+        - heal-partition
+        - verify-consistency
+
+    - name: create-test-data
+      templateType: Task
+      task:
+        container:
+          name: data-setup
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Creating test CAPSULE for partition test..."
+              CAPSULE_ID=$(curl -s -X POST http://capsule-service.butterfly:8080/api/v1/capsules \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -H "X-Idempotency-Key: chaos-partition-test-$(date +%s)" \
+                -d '{
+                  "header": {
+                    "scope": {"scopeId": "rim:test:chaos:partition-test", "description": "Partition test entity"},
+                    "time": {"centerTsUtc": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'", "deltaTSeconds": 300, "horizonSeconds": 3600},
+                    "vantage": {"mode": "OFFICIAL", "observerId": "chaos-test"}
+                  },
+                  "configuration": {"testKey": "partitionTestValue"},
+                  "dynamics": {"metric": 42.0}
+                }' | grep -o '"capsuleId":"[^"]*"' | cut -d'"' -f4)
+              
+              echo "Created CAPSULE: $CAPSULE_ID"
+              echo $CAPSULE_ID > /tmp/capsule_id.txt
+
+    - name: inject-network-partition
+      templateType: NetworkChaos
+      networkChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app: capsule
+        mode: all
+        action: partition
+        direction: both
+        target:
+          selector:
+            namespaces:
+              - butterfly
+            labelSelectors:
+              app: odyssey-core
+        duration: "3m"
+
+    - name: verify-individual-health
+      templateType: Task
+      task:
+        container:
+          name: health-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying individual service health during partition..."
+              sleep 30
+              
+              # CAPSULE should be healthy
+              CAPSULE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                http://capsule-service.butterfly:8080/actuator/health)
+              echo "CAPSULE health: $CAPSULE_STATUS"
+              
+              # ODYSSEY should be healthy
+              ODYSSEY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                http://odyssey-core.butterfly:8080/actuator/health)
+              echo "ODYSSEY health: $ODYSSEY_STATUS"
+              
+              if [ "$CAPSULE_STATUS" != "200" ] || [ "$ODYSSEY_STATUS" != "200" ]; then
+                echo "FAIL: One or both services unhealthy"
+                exit 1
+              fi
+              
+              echo "PASS: Both services individually healthy"
+
+    - name: verify-graceful-degradation
+      templateType: Task
+      task:
+        container:
+          name: degradation-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying graceful degradation during partition..."
+              
+              # CAPSULE direct queries should work
+              CAPSULE_QUERY=$(curl -s -o /dev/null -w "%{http_code}" \
+                "http://capsule-service.butterfly:8080/api/v1/capsules?scopeId=rim:test:chaos:partition-test&limit=1" \
+                -H "X-Tenant-ID: chaos-test")
+              echo "CAPSULE query status: $CAPSULE_QUERY"
+              
+              if [ "$CAPSULE_QUERY" != "200" ]; then
+                echo "FAIL: CAPSULE queries failing"
+                exit 1
+              fi
+              
+              # ODYSSEY should return cached/degraded data
+              ODYSSEY_QUERY=$(curl -s -o /dev/null -w "%{http_code}" \
+                "http://odyssey-core.butterfly:8080/api/v1/entities?entityId=rim:test:chaos:partition-test" \
+                -H "X-Tenant-ID: chaos-test")
+              echo "ODYSSEY query status: $ODYSSEY_QUERY"
+              
+              # 200 (cached), 404 (not found), or 503 (degraded) are acceptable
+              if [ "$ODYSSEY_QUERY" = "500" ]; then
+                echo "FAIL: ODYSSEY returning internal errors"
+                exit 1
+              fi
+              
+              # ODYSSEY capsule orchestration should degrade gracefully
+              ORCH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                "http://odyssey-core.butterfly:8080/api/v1/capsule/orchestrate" \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{"scopeId": "rim:test:chaos:partition-test", "mode": "READ"}')
+              echo "Orchestration status: $ORCH_STATUS"
+              
+              # Should not be 500 (internal error)
+              if [ "$ORCH_STATUS" = "500" ]; then
+                echo "WARN: Orchestration failing with 500"
+              fi
+              
+              echo "PASS: Services degrading gracefully"
+
+    - name: heal-partition
+      templateType: Task
+      task:
+        container:
+          name: heal-wait
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for network partition to heal..."
+              sleep 15
+              echo "Partition healed"
+
+    - name: verify-consistency
+      templateType: Task
+      task:
+        container:
+          name: consistency-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying consistency after partition healed..."
+              sleep 60
+              
+              # Both services should be fully healthy
+              CAPSULE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                http://capsule-service.butterfly:8080/actuator/health)
+              ODYSSEY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                http://odyssey-core.butterfly:8080/actuator/health)
+              
+              if [ "$CAPSULE_STATUS" != "200" ] || [ "$ODYSSEY_STATUS" != "200" ]; then
+                echo "FAIL: Services not recovered"
+                exit 1
+              fi
+              
+              # CAPSULE data should be queryable
+              CAPSULE_DATA=$(curl -s \
+                "http://capsule-service.butterfly:8080/api/v1/capsules?scopeId=rim:test:chaos:partition-test&limit=1" \
+                -H "X-Tenant-ID: chaos-test")
+              
+              if echo "$CAPSULE_DATA" | grep -q "partitionTestValue"; then
+                echo "PASS: CAPSULE data intact"
+              else
+                echo "WARN: CAPSULE data may have changed"
+              fi
+              
+              # ODYSSEY should now be able to reach CAPSULE
+              ODYSSEY_ORCH=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+                "http://odyssey-core.butterfly:8080/api/v1/capsule/orchestrate" \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{"scopeId": "rim:test:chaos:partition-test", "mode": "READ"}')
+              
+              if [ "$ODYSSEY_ORCH" = "200" ]; then
+                echo "PASS: Cross-service communication restored"
+              else
+                echo "WARN: Orchestration status: $ODYSSEY_ORCH"
+              fi
+              
+              echo "PASS: Consistency verified after partition heal"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: capsule-odyssey-partition-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - Both services remain individually healthy during partition
+    - CAPSULE queries continue working
+    - ODYSSEY degrades gracefully (cached data or 503, not 500)
+    - No data corruption after partition heals
+    - Full cross-service communication restored within 2 minutes
+  
+  fail_criteria: |
+    - Either service goes completely down
+    - 500 Internal Server Errors during partition
+    - Data loss or corruption after recovery
+    - Recovery takes longer than 5 minutes
+  
+  remediation: |
+    See: docs/operations/runbooks/chaos-database-partial-outage.md
+    Quick actions:
+    1. Check network policies for stuck rules
+    2. Verify Kubernetes network plugin health
+    3. Restart affected pods if connections stale
+

@@ -46,7 +46,7 @@ import com.z254.butterfly.sdk.config.ButterflyConfig;
 
 // Configure client
 ButterflyConfig config = ButterflyConfig.builder()
-    .nexusUrl("http://localhost:8083")
+    .nexusUrl("http://localhost:8084")
     .apiKey("your-api-key")
     .connectTimeout(Duration.ofSeconds(10))
     .readTimeout(Duration.ofSeconds(30))
@@ -81,7 +81,7 @@ public class ButterflyConfiguration {
 # application.yml
 butterfly:
   nexus:
-    url: http://localhost:8083
+    url: http://localhost:8084
   api-key: ${BUTTERFLY_API_KEY}
 ```
 
@@ -364,7 +364,7 @@ public class FastPathEventListener {
 import com.z254.butterfly.sdk.retry.RetryConfig;
 
 ButterflyConfig config = ButterflyConfig.builder()
-    .nexusUrl("http://localhost:8083")
+    .nexusUrl("http://localhost:8084")
     .apiKey("your-api-key")
     .retryConfig(RetryConfig.builder()
         .maxAttempts(3)
@@ -410,7 +410,7 @@ The SDK exposes Micrometer metrics:
 MeterRegistry registry = new SimpleMeterRegistry();
 
 ButterflyConfig config = ButterflyConfig.builder()
-    .nexusUrl("http://localhost:8083")
+    .nexusUrl("http://localhost:8084")
     .apiKey("your-api-key")
     .meterRegistry(registry)
     .build();
@@ -428,7 +428,7 @@ Available metrics:
 Tracer tracer = GlobalOpenTelemetry.getTracer("butterfly-sdk");
 
 ButterflyConfig config = ButterflyConfig.builder()
-    .nexusUrl("http://localhost:8083")
+    .nexusUrl("http://localhost:8084")
     .apiKey("your-api-key")
     .tracer(tracer)
     .build();
@@ -444,4 +444,3 @@ ButterflyConfig config = ButterflyConfig.builder()
 | [Kafka Contracts](../kafka-contracts.md) | Event schemas |
 | [API Authentication](../../api/authentication.md) | Auth details |
 | [butterfly-common](../../services/butterfly-common.md) | Shared library |
-

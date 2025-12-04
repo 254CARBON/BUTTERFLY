@@ -2,7 +2,7 @@
 
 > Complete guide to installing and configuring the BUTTERFLY ecosystem
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Developers, DevOps engineers, system administrators
 
 ---
@@ -17,7 +17,7 @@ This guide covers multiple installation methods for BUTTERFLY, from quick local 
 
 | Tool | Minimum Version | Purpose | Install |
 |------|-----------------|---------|---------|
-| **Java JDK** | 17 (21 for PLATO) | Backend services | [Adoptium](https://adoptium.net/) |
+| **Java JDK** | 17 (LTS) | Backend services | [Adoptium](https://adoptium.net/) |
 | **Maven** | 3.9+ | Build tool | [Apache Maven](https://maven.apache.org/) |
 | **Docker** | 20+ | Container runtime | [Docker](https://docs.docker.com/get-docker/) |
 | **Docker Compose** | v2+ | Multi-container orchestration | Included with Docker Desktop |
@@ -29,7 +29,7 @@ This guide covers multiple installation methods for BUTTERFLY, from quick local 
 ```bash
 # Check Java version
 java -version
-# Expected: openjdk version "17.x.x" or "21.x.x"
+# Expected: openjdk version "17.x.x"
 
 # Check Maven version
 mvn -version
@@ -223,7 +223,7 @@ Each service uses environment variables for configuration:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PLATO_API_PORT` | `8083` | API server port |
+| `PLATO_API_PORT` | `8080` | API server port |
 | `PLATO_PERSISTENCE_TYPE` | `inmemory` | Persistence backend |
 | `JWT_SECRET` | (generated) | JWT signing secret |
 
@@ -321,11 +321,11 @@ docker exec -it perception-redis redis-cli ping
 ### Health Checks
 
 ```bash
-# Check service health endpoints
-curl http://localhost:8080/actuator/health  # PERCEPTION
+# Check service health endpoints (default ports)
+curl http://localhost:8080/actuator/health  # PERCEPTION (API)
 curl http://localhost:8081/actuator/health  # CAPSULE
 curl http://localhost:8082/actuator/health  # ODYSSEY
-curl http://localhost:8083/actuator/health  # PLATO
+curl http://localhost:8080/actuator/health  # PLATO (standalone; see PLATO/README.md)
 curl http://localhost:8084/actuator/health  # NEXUS
 
 # Expected response for healthy service:
@@ -349,7 +349,7 @@ curl http://localhost:8084/actuator/health  # NEXUS
 | PERCEPTION | http://localhost:8080/swagger-ui.html |
 | CAPSULE | http://localhost:8081/swagger-ui.html |
 | ODYSSEY | http://localhost:8082/swagger-ui.html |
-| PLATO | http://localhost:8083/swagger-ui.html |
+| PLATO | http://localhost:8080/swagger-ui.html |
 | NEXUS | http://localhost:8084/swagger-ui.html |
 
 ---
@@ -447,4 +447,3 @@ tail -f PLATO/logs/plato.log
 | [Development Overview](../../DEVELOPMENT_OVERVIEW.md) | Developer environment setup |
 | [Docker Deployment](../operations/deployment/docker.md) | Docker deployment guide |
 | [Troubleshooting](../onboarding/troubleshooting.md) | Common issues and solutions |
-

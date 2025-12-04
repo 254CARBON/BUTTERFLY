@@ -2,7 +2,7 @@
 
 > Testing approach and best practices for BUTTERFLY
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Developers, QA engineers
 
 ---
@@ -246,17 +246,17 @@ query_withInvalidTimeRange_throwsException
 ### Running Unit Tests
 
 ```bash
-# All unit tests
-./gradlew test
+# All unit tests (from apps/)
+mvn test
 
 # Specific service
-./gradlew :capsule:test
+mvn -f CAPSULE/pom.xml test
 
 # Specific test class
-./gradlew :capsule:test --tests "CapsuleServiceTest"
+mvn -f CAPSULE/pom.xml test -Dtest=CapsuleServiceTest
 
 # With coverage report
-./gradlew test jacocoTestReport
+mvn test jacoco:report
 ```
 
 ---
@@ -349,11 +349,11 @@ class CapsuleApiIntegrationTest {
 ### Running Integration Tests
 
 ```bash
-# All integration tests
-./gradlew integrationTest
+# All integration tests (where profile is defined)
+mvn verify -Pintegration-tests
 
-# With specific profile
-./gradlew integrationTest -Dspring.profiles.active=test
+# With specific Spring profile
+mvn verify -Pintegration-tests -Dspring.profiles.active=test
 ```
 
 ---
@@ -451,14 +451,17 @@ class CapsuleWorkflowE2ETest {
 ### Running E2E Tests
 
 ```bash
-# Start services first
-docker compose up -d
+# Start required services first (see DEVELOPMENT_OVERVIEW.md)
+./scripts/dev-up.sh
 
-# Run E2E tests
-./gradlew :butterfly-e2e:test
+# Run golden-path integration
+./butterfly-e2e/run-golden-path.sh
+
+# Run full scenario suite
+./butterfly-e2e/run-scenarios.sh
 
 # Against specific environment
-E2E_BASE_URL=http://staging.butterfly.example.com ./gradlew :butterfly-e2e:test
+E2E_BASE_URL=http://staging.butterfly.example.com ./butterfly-e2e/run-scenarios.sh
 ```
 
 ---
@@ -471,7 +474,7 @@ E2E_BASE_URL=http://staging.butterfly.example.com ./gradlew :butterfly-e2e:test
 class CapsuleSimulation extends Simulation {
   
   val httpProtocol = http
-    .baseUrl("http://localhost:8083")
+    .baseUrl("http://localhost:8080")
     .acceptHeader("application/json")
     .header("Authorization", "Bearer ${token}")
   
@@ -586,11 +589,12 @@ jacocoTestCoverageVerification {
 ### Local
 
 ```bash
-# Start test infrastructure
-docker compose -f docker-compose.test.yml up -d
+# Start test infrastructure (per service; see service-level docs)
+# Example:
+#   docker compose -f CAPSULE/docker-compose.yml up -d
 
-# Run all tests
-./gradlew check
+# Run all tests from apps/
+mvn clean verify
 ```
 
 ### CI
@@ -609,4 +613,3 @@ Tests run automatically on:
 | [Contributing](contributing.md) | Contribution guide |
 | [Coding Standards](coding-standards.md) | Code style |
 | [CI/CD](ci-cd.md) | Build pipelines |
-

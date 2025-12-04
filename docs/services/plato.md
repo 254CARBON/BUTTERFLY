@@ -2,8 +2,8 @@
 
 > Governance and Intelligence Service for the BUTTERFLY Ecosystem
 
-**Last Updated**: 2025-12-03  
-**Service Port**: 8083  
+**Last Updated**: 2025-12-04  
+**Service Port**: 8080  
 **Full Documentation**: [PLATO README](../../PLATO/README.md)
 
 ---
@@ -87,7 +87,7 @@ PLATO operates as a **background service** with no dedicated UI. It is designed 
 │  │                                                                      │    │
 │  └────────────────────────────────────────────────────────────────────┘    │
 │                                                                              │
-│  Technology: Java 21 │ Spring Boot WebFlux │ Cassandra │ JanusGraph        │
+│  Technology: Java 17 │ Spring Boot WebFlux │ Cassandra │ JanusGraph        │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -127,10 +127,10 @@ PLATO operates as a **background service** with no dedicated UI. It is designed 
 
 ### WebSocket Endpoints
 
-Real-time plan execution streaming:
+Real-time plan execution streaming (default port from PLATO service):
 
 ```
-ws://localhost:8083/ws/plans/{planId}
+ws://localhost:8080/ws/plans/{planId}
 ```
 
 Message types:
@@ -170,12 +170,23 @@ The Control Plane enforces governance across all primitives:
 
 ---
 
+## Governance Pluralism (Phase 6)
+
+PLATO now supports opt-in **governance pluralism** for multi-school policy evaluation:
+- Controlled via `plato.governance-pluralism.*` configuration (disabled by default)
+- Evaluates policies under multiple `GovernanceSchool` archetypes and returns per-school results plus a consensus/divergence summary
+- Exposed via `/api/v1/governance/pluralism/*` endpoints and integrated with NEXUS strategic option synthesis
+
+See ADR 0007 "Governance Pluralism and Multi-School Policy Evaluation" for the full design.
+
+---
+
 ## Example: Create and Execute a Plan
 
 ### 1. Create a Spec
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/specs \
+curl -X POST http://localhost:8080/api/v1/specs \
   -H "Content-Type: application/json" \
   -d '{
     "name": "market-volatility-alert",
@@ -191,7 +202,7 @@ curl -X POST http://localhost:8083/api/v1/specs \
 ### 2. Create a Plan
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/plans \
+curl -X POST http://localhost:8080/api/v1/plans \
   -H "Content-Type: application/json" \
   -d '{
     "name": "volatility-response",
@@ -205,7 +216,7 @@ curl -X POST http://localhost:8083/api/v1/plans \
 ### 3. Execute the Plan
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/plans/plan_456/execute
+curl -X POST http://localhost:8080/api/v1/plans/plan_456/execute
 ```
 
 ---
@@ -268,7 +279,7 @@ mvn spring-boot:run
 ### Health Check
 
 ```bash
-curl http://localhost:8083/actuator/health
+curl http://localhost:8080/actuator/health
 ```
 
 ### Key Metrics
@@ -288,4 +299,3 @@ curl http://localhost:8083/actuator/health
 | [API Reference](../../PLATO/docs/api/) | API documentation |
 | [Operations Guide](../../PLATO/docs/operations/) | Operational guides |
 | [Engine Details](../../PLATO/docs/engines/) | Individual engine docs |
-

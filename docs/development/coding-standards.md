@@ -2,7 +2,7 @@
 
 > Code style and conventions for BUTTERFLY development
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Developers
 
 ---
@@ -17,24 +17,19 @@ Consistent code style improves readability and maintainability. These standards 
 
 ### General
 
-- Java 21 features encouraged
+- Java 17 (LTS) baseline
 - Follow Google Java Style Guide (with modifications)
 - Maximum line length: 120 characters
 - Indentation: 4 spaces (no tabs)
 
 ### Formatting
 
-Enforced via Spotless:
+Formatting and static analysis are enforced via Maven plugins:
 
-```groovy
-// build.gradle
-spotless {
-    java {
-        googleJavaFormat('1.17.0')
-        removeUnusedImports()
-        importOrder('java', 'javax', '', 'com.z254')
-    }
-}
+```bash
+# From apps/ (root)
+mvn -Pquality verify          # Checkstyle + SpotBugs
+mvn checkstyle:check          # Style only
 ```
 
 ### Naming Conventions
@@ -431,4 +426,3 @@ All checks must pass before merge.
 | [Contributing](contributing.md) | Contribution guide |
 | [Testing Strategy](testing-strategy.md) | Testing approach |
 | [CI/CD](ci-cd.md) | Build pipelines |
-

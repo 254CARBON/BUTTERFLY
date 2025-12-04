@@ -32,7 +32,7 @@ BUTTERFLY exposes REST APIs across all services, providing programmatic access t
 | PERCEPTION | `http://localhost:8080/api/v1` | [Swagger](http://localhost:8080/swagger-ui.html) | `/actuator/health` |
 | CAPSULE | `http://localhost:8081/api/v1` | [Swagger](http://localhost:8081/swagger-ui.html) | `/actuator/health` |
 | ODYSSEY | `http://localhost:8082/api/v1` | [Swagger](http://localhost:8082/swagger-ui.html) | `/actuator/health` |
-| PLATO | `http://localhost:8083/api/v1` | [Swagger](http://localhost:8083/swagger-ui.html) | `/actuator/health` |
+| PLATO | `http://localhost:8080/api/v1` | [Swagger](http://localhost:8080/swagger-ui.html) | `/actuator/health` |
 | NEXUS | `http://localhost:8084/api/v1` | [Swagger](http://localhost:8084/swagger-ui.html) | `/actuator/health` |
 
 ### Authentication Summary
@@ -164,4 +164,3 @@ For easier integration, consider:
 | [Documentation Index](../index.md) | Main documentation portal |
 | [Integration Guide](../integration/README.md) | Integration patterns |
 | [First Steps](../getting-started/first-steps.md) | First API calls |
-

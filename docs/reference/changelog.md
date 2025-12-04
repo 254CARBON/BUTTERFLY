@@ -58,7 +58,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - WebSocket support for real-time updates
 
 ### Changed
-- Upgraded to Java 21
+- Standardized on Java 17 across services
 - Spring Boot 3.2.x migration
 - Improved Kafka consumer performance
 
@@ -156,10 +156,10 @@ Initial release of BUTTERFLY ecosystem:
 
 ### 1.1.x to 1.2.x
 
-1. **Java 21 Required**
+1. **Standardize on Java 17**
    ```bash
-   # Update JAVA_HOME
-   export JAVA_HOME=/path/to/jdk-21
+   # Update JAVA_HOME to a Java 17 LTS installation
+   export JAVA_HOME=/path/to/jdk-17
    ```
 
 2. **Spring Boot 3.2 Migration**
@@ -207,4 +207,3 @@ Initial release of BUTTERFLY ecosystem:
 | [Reference Index](README.md) | Reference overview |
 | [Migration Guide](../getting-started/installation.md) | Installation |
 | [API Versioning](../api/versioning.md) | API versions |
-

@@ -34,7 +34,7 @@ from butterfly_sdk import ButterflyClient
 
 # Create client
 client = ButterflyClient(
-    nexus_url="http://localhost:8083",
+    nexus_url="http://localhost:8084",
     api_key="your-api-key"
 )
 
@@ -57,7 +57,7 @@ from butterfly_sdk import AsyncButterflyClient
 
 async def main():
     async with AsyncButterflyClient(
-        nexus_url="http://localhost:8083",
+        nexus_url="http://localhost:8084",
         api_key="your-api-key"
     ) as client:
         capsules = await client.capsule.query(
@@ -79,7 +79,7 @@ asyncio.run(main())
 ### Environment Variables
 
 ```bash
-export BUTTERFLY_NEXUS_URL=http://localhost:8083
+export BUTTERFLY_NEXUS_URL=http://localhost:8084
 export BUTTERFLY_API_KEY=your-api-key
 ```
 
@@ -96,7 +96,7 @@ client = ButterflyClient.from_env()
 from butterfly_sdk import ButterflyClient, ButterflyConfig
 
 config = ButterflyConfig(
-    nexus_url="http://localhost:8083",
+    nexus_url="http://localhost:8084",
     api_key="your-api-key",
     timeout=30.0,
     max_retries=3,
@@ -459,4 +459,3 @@ def test_capsule_query():
 | [Client Integration Guide](../client-guide.md) | Integration patterns |
 | [Kafka Contracts](../kafka-contracts.md) | Event schemas |
 | [API Authentication](../../api/authentication.md) | Auth details |
-

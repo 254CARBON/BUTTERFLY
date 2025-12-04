@@ -347,7 +347,7 @@ public void handleFastPathEvent(RimFastEvent event) {
 
 ```javascript
 const planId = 'plan_123';
-const ws = new WebSocket(`ws://localhost:8083/ws/plans/${planId}`);
+const ws = new WebSocket(`ws://localhost:8080/ws/plans/${planId}`);
 
 ws.onopen = () => {
   console.log('Connected to plan execution stream');
@@ -453,4 +453,3 @@ public Mono<List<Capsule>> fallbackGetHistory(
 | [API Catalog](../api/api-catalog.md) | Complete API reference |
 | [Kafka Contracts](../integration/kafka-contracts.md) | Event schemas |
 | [Authentication](../api/authentication.md) | Auth patterns |
-

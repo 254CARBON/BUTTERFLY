@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "BUTTERFLY Ecosystem SLO Dashboard - Phase 4 Reliability",
+  "description": "BUTTERFLY Ecosystem SLO Dashboard - All 6 Services (CAPSULE, PERCEPTION, ODYSSEY, PLATO, NEXUS, SYNAPSE) with unified observability",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -271,9 +271,24 @@
           "refId": "B"
         },
         {
+          "expr": "100 * (1 - ((1 - (1 - sum(rate(http_server_requests_seconds_count{service=\"odyssey-core\",status=~\"5..\"}[$__range])) / sum(rate(http_server_requests_seconds_count{service=\"odyssey-core\"}[$__range])))) / 0.001))",
+          "legendFormat": "ODYSSEY",
+          "refId": "C"
+        },
+        {
+          "expr": "100 * (1 - ((1 - (1 - sum(rate(http_server_requests_seconds_count{service=\"plato-service\",status=~\"5..\"}[$__range])) / sum(rate(http_server_requests_seconds_count{service=\"plato-service\"}[$__range])))) / 0.005))",
+          "legendFormat": "PLATO",
+          "refId": "D"
+        },
+        {
           "expr": "100 * (1 - ((1 - (1 - sum(rate(http_server_requests_seconds_count{service=\"butterfly-nexus\",status=~\"5..\"}[$__range])) / sum(rate(http_server_requests_seconds_count{service=\"butterfly-nexus\"}[$__range])))) / 0.0001))",
           "legendFormat": "NEXUS",
-          "refId": "C"
+          "refId": "E"
+        },
+        {
+          "expr": "100 * (1 - ((1 - (1 - sum(rate(http_server_requests_seconds_count{service=\"synapse-service\",status=~\"5..\"}[$__range])) / sum(rate(http_server_requests_seconds_count{service=\"synapse-service\"}[$__range])))) / 0.001))",
+          "legendFormat": "SYNAPSE",
+          "refId": "F"
         }
       ],
       "title": "Error Budget Remaining (30d)",
@@ -309,9 +324,24 @@
           "refId": "B"
         },
         {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{service=\"odyssey-core\"}[5m])) by (le)) * 1000",
+          "legendFormat": "ODYSSEY P95",
+          "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{service=\"plato-service\"}[5m])) by (le)) * 1000",
+          "legendFormat": "PLATO P95",
+          "refId": "D"
+        },
+        {
           "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{service=\"butterfly-nexus\"}[5m])) by (le)) * 1000",
           "legendFormat": "NEXUS P95",
-          "refId": "C"
+          "refId": "E"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{service=\"synapse-service\"}[5m])) by (le)) * 1000",
+          "legendFormat": "SYNAPSE P95",
+          "refId": "F"
         }
       ],
       "title": "Cross-Service Latency (P95)",

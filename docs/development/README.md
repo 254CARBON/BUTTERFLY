@@ -2,7 +2,7 @@
 
 > Developer resources for contributing to BUTTERFLY
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Developers, contributors
 
 ---
@@ -29,35 +29,32 @@ This section provides comprehensive guidance for developers working on the BUTTE
 
 ### Prerequisites
 
-- Java 21 (Temurin/Adoptium recommended)
-- Maven 3.9+ or Gradle 8.x
+- Java 17 (Temurin/Adoptium recommended)
+- Maven 3.9+
 - Docker and Docker Compose
-- Node.js 18+ (for frontend tools)
+- Node.js 20+ (for frontend tools)
 - Git
 
 ### Clone Repository
 
 ```bash
-git clone https://github.com/your-org/butterfly.git
-cd butterfly/apps
+git clone https://github.com/254CARBON/BUTTERFLY.git
+cd BUTTERFLY/apps
 ```
 
 ### Setup Development Environment
 
+For a unified dev setup, prefer the root scripts described in `DEVELOPMENT_OVERVIEW.md`:
+
 ```bash
-# Install pre-commit hooks
-npm install
-npx husky install
+# One-time setup (checks tools, installs butterfly-common, hooks, portal deps)
+./scripts/setup.sh
 
-# Start infrastructure
-docker compose -f docker-compose.infra.yml up -d
-
-# Build all services
-./gradlew build
-
-# Run specific service
-./gradlew :capsule:bootRun
+# Start dev Kafka stack (see DEVELOPMENT_OVERVIEW for flags/profiles)
+./scripts/dev-up.sh
 ```
+
+You can still work on individual services in isolation using Maven and per-service Docker Compose files (see sections below and service-specific docs).
 
 ---
 
@@ -65,14 +62,14 @@ docker compose -f docker-compose.infra.yml up -d
 
 ```
 apps/
-├── butterfly-common/     # Shared library
-├── butterfly-nexus/      # API Gateway
-├── butterfly-e2e/        # E2E tests
-├── capsule/              # 4D Atomic History Service
-├── odyssey/              # Strategic Cognition Engine
-├── perception/           # Sensory Layer
-├── plato/                # Governance Service
-└── docs/                 # Documentation
+├── butterfly-common/     # Shared library and Avro contracts
+├── butterfly-nexus/      # Integration cortex / gateway
+├── butterfly-e2e/        # E2E harness and scenarios
+├── CAPSULE/              # 4D Atomic History Service
+├── ODYSSEY/              # Strategic Cognition Engine
+├── PERCEPTION/           # Sensory Layer
+├── PLATO/                # Governance Service
+└── docs/                 # Unified ecosystem documentation
 ```
 
 ---
@@ -127,7 +124,7 @@ docs(api): update authentication examples
 
 1. Create feature branch from `develop`
 2. Implement changes with tests
-3. Run `./gradlew check` locally
+3. Run `mvn clean verify` locally (from `apps/`)
 4. Create PR with description
 5. Address review feedback
 6. Merge after approval
@@ -139,33 +136,34 @@ docs(api): update authentication examples
 ### Running Services
 
 ```bash
-# Single service with hot reload
-./gradlew :capsule:bootRun
+# Single service with hot reload (example)
+mvn -f CAPSULE/pom.xml spring-boot:run
+mvn -f PERCEPTION/pom.xml spring-boot:run
+mvn -f PLATO/pom.xml spring-boot:run
 
-# All services via Docker Compose
-docker compose up
-
-# Specific service
-docker compose up capsule
+# Service via Docker Compose (per-module)
+docker compose -f CAPSULE/docker-compose.yml up
+docker compose -f PERCEPTION/docker-compose.yml up
+docker compose -f PLATO/docker-compose.yml up
+docker compose -f butterfly-nexus/docker-compose.yml up
 ```
 
 ### Database Setup
 
-```bash
-# Cassandra
-docker compose up cassandra
-./gradlew :capsule:cassandraMigrate
+Database bootstrap and migration flows differ per service. Refer to:
 
-# PostgreSQL
-docker compose up postgres
-./gradlew :perception:flywayMigrate
-```
+- `CAPSULE/docs/operations/deployment.md` and `CAPSULE/schema/README.md`
+- `PERCEPTION/docs/operations/deployment.md`
+- `PLATO/docs/getting-started/configuration.md`
+
+for authoritative instructions on Cassandra/PostgreSQL schemas and tooling.
 
 ### Debugging
 
 ```bash
 # Start with debug port
-./gradlew :capsule:bootRun --debug-jvm
+mvn -f CAPSULE/pom.xml spring-boot:run \
+  -Dspring-boot.run.jvmArguments="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
 
 # Connect IDE debugger to port 5005
 ```
@@ -176,7 +174,7 @@ docker compose up postgres
 
 ### IntelliJ IDEA (Recommended)
 
-1. Open project root as Gradle project
+1. Open project root as Maven project
 2. Enable annotation processing
 3. Install plugins:
    - Lombok
@@ -201,26 +199,20 @@ docker compose up postgres
 ## Useful Commands
 
 ```bash
-# Build everything
-./gradlew build
+# Build everything (from apps/)
+mvn clean verify
 
-# Run tests
-./gradlew test
+# Run only tests
+mvn test
 
-# Run integration tests
-./gradlew integrationTest
+# Run integration tests where defined
+mvn verify -Pintegration-tests
 
-# Check code quality
-./gradlew check
+# Code quality (Checkstyle + SpotBugs)
+mvn -Pquality verify
 
-# Format code
-./gradlew spotlessApply
-
-# Update dependencies
-./gradlew dependencyUpdates
-
-# Generate API docs
-./gradlew openApiGenerate
+# Coverage report (aggregate or per-module)
+mvn test jacoco:report
 ```
 
 ---
@@ -243,4 +235,3 @@ docker compose up postgres
 | [Architecture](../architecture/README.md) | System design |
 | [API Documentation](../api/README.md) | API reference |
 | [Operations](../operations/README.md) | Deployment |
-

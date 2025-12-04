@@ -303,13 +303,13 @@ services:
       dockerfile: Dockerfile
     container_name: butterfly-nexus
     ports:
-      - "8083:8083"
+      - "8084:8084"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - CAPSULE_URL=http://capsule:8080
-      - ODYSSEY_URL=http://odyssey:8081
+      - CAPSULE_URL=http://capsule:8081
+      - ODYSSEY_URL=http://odyssey:8083
       - PERCEPTION_URL=http://perception:8082
-      - PLATO_URL=http://plato:8086
+      - PLATO_URL=http://plato:8085
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
       - REDIS_HOST=redis
     depends_on:
@@ -322,7 +322,7 @@ services:
       plato:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8084/actuator/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -460,4 +460,3 @@ services:
 |----------|-------------|
 | [Kubernetes Deployment](kubernetes.md) | K8s deployment |
 | [Production Checklist](production-checklist.md) | Go-live checklist |
-

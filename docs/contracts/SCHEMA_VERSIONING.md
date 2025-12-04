@@ -161,9 +161,12 @@ This ensures:
 |-------------|--------|------------|-----------|
 | `rim.fast-path` | RimFastEvent | 12 | 7d |
 | `rim.state.updates` | RimFastEvent | 6 | 14d |
-| `perception.events` | UnifiedEventHeader + payload | 6 | 7d |
+| `perception.events` | PerceptionToCapsuleEvent | 6 | 7d |
+| `perception.signals` | PerceptionSignalEvent | 6 | 14d |
+| `perception.detections` | PerceptionDetectionResult | 6 | 14d |
 | `capsule.snapshots` | CapsuleSnapshot* | 6 | 30d |
 | `capsule.history` | CapsuleHistory* | 6 | 90d |
+| `capsule.detections` | CapsuleDetectionEvent | 6 | 30d |
 | `odyssey.paths` | NarrativePath* | 6 | 14d |
 | `odyssey.actors` | ActorEvent* | 6 | 14d |
 | `nexus.temporal.slices` | NexusTemporalEvent | 6 | 7d |
@@ -172,6 +175,23 @@ This ensures:
 | `plato.specs` | PlatoEvent | 6 | 90d |
 
 *These schemas are defined in `butterfly-common` but may have service-specific extensions.
+
+## PERCEPTION → CAPSULE Integration Schemas
+
+The following schemas enable the PERCEPTION → CAPSULE data spine:
+
+| Schema | Version | Purpose | Producer | Consumers |
+|--------|---------|---------|----------|-----------|
+| `PerceptionSignalEvent.avsc` | 1.0.0 | Signal detector outputs | PERCEPTION | NEXUS, CAPSULE |
+| `PerceptionDetectionResult.avsc` | 1.0.0 | Detection result envelope | PERCEPTION | NEXUS, CAPSULE |
+| `PerceptionToCapsuleEvent.avsc` | 1.0.0 | CAPSULE ingestion event | PERCEPTION | CAPSULE |
+| `CapsuleDetectionEvent.avsc` | 1.0.0 | High-value detection output | CAPSULE | ODYSSEY, PLATO |
+
+These schemas align with CAPSULE's temporal query capabilities:
+- `scope_id` maps to CAPSULE's `scopeId` for entity-based queries
+- `timestamp` uses `logicalType: timestamp-millis` for temporal slicing
+- `resolution` in seconds for snapshot alignment
+- `vantage_mode` for perspective-based querying (OMNISCIENT, OBSERVER_SPECIFIC, SYSTEM_SPECIFIC)
 
 ## Best Practices
 

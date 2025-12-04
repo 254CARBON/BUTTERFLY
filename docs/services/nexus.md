@@ -2,7 +2,7 @@
 
 > Unified Integration Layer (Cognitive Cortex) for the BUTTERFLY Ecosystem
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Service Port**: 8084  
 **Full Documentation**: [NEXUS README](../../butterfly-nexus/README.md)
 
@@ -202,39 +202,64 @@ curl "http://localhost:8084/api/v1/temporal/slice/rim:entity:finance:EURUSD?past
 
 ## Service Clients
 
-NEXUS maintains resilient clients to all services:
+NEXUS maintains resilient, **WebClient-based** clients to all upstream services:
+
+- `WebClientCapsuleClient` → `CapsuleClient`
+- `WebClientPerceptionClient` → `PerceptionClient`
+- `WebClientOdysseyClient` → `OdysseyClient`
+- `WebClientPlatoClient` → `PlatoClient`
+
+All clients share a common foundation:
+- `TracePropagatingWebClientFactory` for W3C trace context and correlation ID propagation
+- `NexusClientProperties` (`nexus.clients.*`) for URLs and timeouts
+- Resilience4j circuit breakers, retries, bulkheads, and time limiters
+- Micrometer timers and counters (`nexus.client.*`) for latency and outcome metrics
+
+Example (Perception client):
 
 ```java
-// Client configuration with Resilience4j
-@Configuration
-public class NexusClientConfig {
-    
-    @Bean
-    public CapsuleClient capsuleClient(WebClient.Builder builder) {
-        return new CapsuleClient(
-            builder.baseUrl("http://localhost:8081").build()
-        );
+@Component
+@Slf4j
+@EnableConfigurationProperties(NexusClientProperties.class)
+public class WebClientPerceptionClient implements PerceptionClient {
+
+    private static final String CIRCUIT_BREAKER_NAME = "perception-client";
+
+    private final WebClient webClient;
+    private final MeterRegistry meterRegistry;
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
+    private final Duration defaultTimeout;
+    private final Duration quickTimeout;
+
+    public WebClientPerceptionClient(
+        TracePropagatingWebClientFactory webClientFactory,
+        NexusClientProperties properties,
+        MeterRegistry meterRegistry,
+        CircuitBreakerRegistry circuitBreakerRegistry
+    ) {
+        NexusClientProperties.ClientConfig config = properties.perception();
+        this.webClient = webClientFactory.createClientBuilder(
+            config.url(),
+            config.connectTimeout(),
+            config.readTimeout()
+        ).build();
+
+        this.meterRegistry = meterRegistry;
+        this.circuitBreakerRegistry = circuitBreakerRegistry;
+        this.defaultTimeout = config.readTimeout();
+        this.quickTimeout = properties.defaults().quickTimeout();
     }
-    
-    @Bean
-    public PerceptionClient perceptionClient(WebClient.Builder builder) {
-        return new PerceptionClient(
-            builder.baseUrl("http://localhost:8080").build()
-        );
-    }
-    
-    @Bean
-    public OdysseyClient odysseyClient(WebClient.Builder builder) {
-        return new OdysseyClient(
-            builder.baseUrl("http://localhost:8082").build()
-        );
-    }
-    
-    @Bean
-    public PlatoClient platoClient(WebClient.Builder builder) {
-        return new PlatoClient(
-            builder.baseUrl("http://localhost:8083").build()
-        );
+
+    @Override
+    @CircuitBreaker(name = CIRCUIT_BREAKER_NAME, fallbackMethod = "getRimNodeStateFallback")
+    @Retry(name = CIRCUIT_BREAKER_NAME)
+    public Mono<RimNodeState> getRimNodeState(String rimNodeId) {
+        Mono<RimNodeState> call = webClient.get()
+            .uri("/api/v1/rim/nodes/{rimNodeId}/state", rimNodeId)
+            .retrieve()
+            .bodyToMono(RimNodeState.class)
+            .timeout(defaultTimeout);
+        return instrumentMono("getRimNodeState", call);
     }
 }
 ```
@@ -250,15 +275,31 @@ NEXUS implements comprehensive resilience:
 ```yaml
 resilience4j:
   circuitbreaker:
+    configs:
+      internal-service:
+        registerHealthIndicator: true
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 15s
+        failureRateThreshold: 50
+        slowCallRateThreshold: 80
+        slowCallDurationThreshold: 1s
     instances:
-      capsule:
-        sliding-window-size: 10
-        failure-rate-threshold: 50
-        wait-duration-in-open-state: 30s
-      perception:
-        sliding-window-size: 10
-        failure-rate-threshold: 50
-        wait-duration-in-open-state: 30s
+      capsule-client:
+        baseConfig: internal-service
+        slowCallDurationThreshold: 3s
+      perception-client:
+        baseConfig: internal-service
+        slowCallDurationThreshold: 3s
+      odyssey-client:
+        baseConfig: internal-service
+        slowCallDurationThreshold: 5s
+      plato-client:
+        baseConfig: internal-service
+        slowCallDurationThreshold: 3s
 ```
 
 ### Retry with Backoff
@@ -266,11 +307,22 @@ resilience4j:
 ```yaml
 resilience4j:
   retry:
+    configs:
+      internal-service:
+        maxAttempts: 3
+        waitDuration: 200ms
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2
+        exponentialMaxWaitDuration: 2s
     instances:
-      capsule:
-        max-attempts: 3
-        wait-duration: 500ms
-        exponential-backoff-multiplier: 2
+      capsule-client:
+        baseConfig: internal-service
+      perception-client:
+        baseConfig: internal-service
+      odyssey-client:
+        baseConfig: internal-service
+      plato-client:
+        baseConfig: internal-service
 ```
 
 ### Fallback Behavior
@@ -300,25 +352,51 @@ When services are unavailable:
 ```yaml
 nexus:
   clients:
+    # Default timeout settings applied unless overridden per-client
+    defaults:
+      connect-timeout: 5s
+      read-timeout: 30s
+      quick-timeout: 5s
+      long-timeout: 60s
+
+    # CAPSULE client – historical data
     capsule:
-      base-url: http://localhost:8081
-      timeout-ms: 5000
+      url: ${CAPSULE_URL:http://localhost:8081}
+      connect-timeout: 5s
+      read-timeout: 30s
+      long-timeout: 60s
+
+    # PERCEPTION client – current state & signals
     perception:
-      base-url: http://localhost:8080
-      timeout-ms: 5000
+      url: ${PERCEPTION_URL:http://localhost:8082}
+      connect-timeout: 5s
+      read-timeout: 30s
+      long-timeout: 30s
+
+    # ODYSSEY client – projections and futures
     odyssey:
-      base-url: http://localhost:8082
-      timeout-ms: 10000
+      url: ${ODYSSEY_URL:http://localhost:8083}
+      connect-timeout: 5s
+      read-timeout: 30s
+      long-timeout: 30s
+
+    # PLATO client – governance and plans
     plato:
-      base-url: http://localhost:8083
-      timeout-ms: 10000
+      url: ${PLATO_URL:http://localhost:8085}
+      connect-timeout: 5s
+      read-timeout: 30s
+      long-timeout: 30s
+
   temporal:
-    max-past-days: 365
-    max-future-days: 90
-    cache-ttl-seconds: 60
+    default-lookback: P30D
+    default-lookahead: P7D
+    default-resolution: PT1H
+    cache-ttl: PT5M
+
   evolution:
-    learning-enabled: true
-    metric-window-days: 30
+    learning-rate: 0.01
+    optimization-interval: PT1H
+    min-samples: 100
 ```
 
 ---
@@ -364,4 +442,3 @@ curl http://localhost:8084/actuator/health
 | [Full README](../../butterfly-nexus/README.md) | Complete documentation |
 | [Data Flow](../architecture/data-flow.md) | Cross-service data flows |
 | [Communication Patterns](../architecture/communication-patterns.md) | Integration patterns |
-

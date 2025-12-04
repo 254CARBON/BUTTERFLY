@@ -134,7 +134,7 @@ BUTTERFLY is an enterprise **cognitive intelligence platform** consisting of six
 | PERCEPTION | 8080 | http://localhost:8080/swagger-ui.html |
 | CAPSULE | 8081 | http://localhost:8081/swagger-ui.html |
 | ODYSSEY | 8082 | http://localhost:8082/swagger-ui.html |
-| PLATO | 8083 | http://localhost:8083/swagger-ui.html |
+| PLATO | 8080 | http://localhost:8080/swagger-ui.html |
 | NEXUS | 8084 | http://localhost:8084/swagger-ui.html |
 
 ### Infrastructure Ports
@@ -224,4 +224,3 @@ mvn clean install -DskipTests
 | [Development Overview](../../DEVELOPMENT_OVERVIEW.md) | Developer setup guide |
 | [Services Overview](../services/README.md) | Individual service guides |
 | [Troubleshooting](../onboarding/troubleshooting.md) | Common issues and solutions |
-

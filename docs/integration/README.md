@@ -118,8 +118,8 @@ For event notifications without polling:
 ### REST API Quick Start
 
 ```bash
-# Get authentication token
-TOKEN=$(curl -s -X POST http://localhost:8083/api/v1/auth/token \
+# Get authentication token (via NEXUS)
+TOKEN=$(curl -s -X POST http://localhost:8084/api/v1/auth/token \
   -H "Content-Type: application/json" \
   -d '{"apiKey": "your-api-key"}' | jq -r '.access_token')
 
@@ -154,7 +154,7 @@ while (true) {
 
 ```bash
 # Register webhook
-curl -X POST http://localhost:8083/api/v1/webhooks \
+curl -X POST http://localhost:8084/api/v1/webhooks \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -186,4 +186,3 @@ curl -X POST http://localhost:8083/api/v1/webhooks \
 | [API Documentation](../api/README.md) | REST API reference |
 | [Architecture](../architecture/README.md) | System architecture |
 | [Data Flow](../architecture/data-flow.md) | How data flows |
-

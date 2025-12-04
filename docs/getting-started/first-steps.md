@@ -20,7 +20,7 @@ Ensure services are running:
 # Check service health
 curl http://localhost:8080/actuator/health  # PERCEPTION
 curl http://localhost:8081/actuator/health  # CAPSULE
-curl http://localhost:8083/actuator/health  # PLATO
+curl http://localhost:8080/actuator/health  # PLATO (standalone; see PLATO/README.md)
 
 # All should return: {"status":"UP"}
 ```
@@ -193,7 +193,7 @@ PLATO provides governance and intelligence capabilities. Let's interact with it:
 ### Create a Spec
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/specs \
+curl -X POST http://localhost:8080/api/v1/specs \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-token>" \
   -d '{
@@ -228,7 +228,7 @@ curl -X POST http://localhost:8083/api/v1/specs \
 ### Evaluate a Policy
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/governance/evaluate \
+curl -X POST http://localhost:8080/api/v1/governance/evaluate \
   -H "Content-Type: application/json" \
   -d '{
     "specId": "spec_vol_alert_001",
@@ -259,7 +259,7 @@ curl -X POST http://localhost:8083/api/v1/governance/evaluate \
 ### Create a Plan
 
 ```bash
-curl -X POST http://localhost:8083/api/v1/plans \
+curl -X POST http://localhost:8080/api/v1/plans \
   -H "Content-Type: application/json" \
   -d '{
     "name": "volatility-response-plan",
@@ -295,7 +295,7 @@ PLATO supports WebSocket for real-time plan execution updates:
 
 ```javascript
 // JavaScript example
-const ws = new WebSocket('ws://localhost:8083/ws/plans/plan_123');
+const ws = new WebSocket('ws://localhost:8080/ws/plans/plan_123');
 
 ws.onopen = () => {
   console.log('Connected to plan execution stream');
@@ -316,7 +316,7 @@ ws.onerror = (error) => {
 
 ```bash
 # Install websocat if needed: cargo install websocat
-websocat ws://localhost:8083/ws/plans/plan_123
+websocat ws://localhost:8080/ws/plans/plan_123
 ```
 
 ---
@@ -357,7 +357,7 @@ Each service provides interactive API documentation:
 |---------|------------|-------------|
 | PERCEPTION | http://localhost:8080/swagger-ui.html | Signal acquisition and processing |
 | CAPSULE | http://localhost:8081/swagger-ui.html | Historical storage API |
-| PLATO | http://localhost:8083/swagger-ui.html | Governance and intelligence |
+| PLATO | http://localhost:8080/swagger-ui.html | Governance and intelligence |
 
 ### Try It Out
 
@@ -452,7 +452,7 @@ def api_call_with_retry(url, max_retries=3, base_delay=1):
 
 ```bash
 # Get an API token (if authentication is enabled)
-curl -X POST http://localhost:8083/api/v1/auth/token \
+curl -X POST http://localhost:8080/api/v1/auth/token \
   -H "Content-Type: application/json" \
   -d '{"apiKey": "your-api-key"}'
 ```
@@ -485,4 +485,3 @@ curl -X POST http://localhost:8083/api/v1/auth/token \
 | [Authentication](../api/authentication.md) | Auth patterns and tokens |
 | [Error Handling](../api/error-handling.md) | Error codes and handling |
 | [Client Guide](../integration/client-guide.md) | SDK and integration patterns |
-

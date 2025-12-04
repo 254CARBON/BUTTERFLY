@@ -2,7 +2,7 @@
 
 > Reference materials and quick lookups
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: All users
 
 ---
@@ -32,7 +32,7 @@ This section contains reference materials for quick lookups and common questions
 | CAPSULE | `http://localhost:8080` | `/actuator/health` |
 | ODYSSEY | `http://localhost:8081` | `/actuator/health` |
 | PERCEPTION | `http://localhost:8082` | `/actuator/health` |
-| NEXUS | `http://localhost:8083` | `/actuator/health` |
+| NEXUS | `http://localhost:8084` | `/actuator/health` |
 | PLATO | `http://localhost:8086` | `/actuator/health` |
 
 ### API Versions
@@ -62,9 +62,9 @@ rim:event:market:evt_123
 
 | Resource | URL |
 |----------|-----|
-| GitHub | https://github.com/butterfly-org/butterfly |
-| Issue Tracker | https://github.com/butterfly-org/butterfly/issues |
-| Discussions | https://github.com/butterfly-org/butterfly/discussions |
+| GitHub | https://github.com/254CARBON/BUTTERFLY |
+| Issue Tracker | https://github.com/254CARBON/BUTTERFLY/issues |
+| Discussions | https://github.com/254CARBON/BUTTERFLY/discussions |
 | Status Page | https://status.butterfly.example.com |
 | API Docs | https://api.butterfly.example.com/docs |
 
@@ -77,4 +77,3 @@ rim:event:market:evt_123
 | [Getting Started](../getting-started/README.md) | Quick start |
 | [API Documentation](../api/README.md) | API reference |
 | [Architecture](../architecture/README.md) | System design |
-

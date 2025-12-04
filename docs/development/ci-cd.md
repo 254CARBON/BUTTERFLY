@@ -2,7 +2,7 @@
 
 > Continuous Integration and Deployment processes
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: Developers, DevOps engineers
 
 ---
@@ -56,7 +56,7 @@ BUTTERFLY uses GitHub Actions for CI/CD with a multi-stage pipeline ensuring qua
 
 ## GitHub Actions Workflows
 
-### Build & Test (`.github/workflows/build.yml`)
+### Build & Test (`.github/workflows/build.yml` - example pattern)
 
 ```yaml
 name: Build & Test
@@ -78,15 +78,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
+          cache: 'maven'
       
       - name: Build
-        run: ./gradlew build -x test
+        run: mvn -B clean install -DskipTests
       
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -103,27 +103,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
+          cache: 'maven'
       
       - name: Run unit tests
-        run: ./gradlew test
+        run: mvn -B test
       
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
-          path: '**/build/test-results/test/'
+          path: '**/target/surefire-reports/*.xml'
       
       - name: Upload coverage report
         uses: codecov/codecov-action@v3
         with:
-          files: '**/build/reports/jacoco/test/jacocoTestReport.xml'
+          files: '**/target/site/jacoco/*.xml'
 
   lint:
     runs-on: ubuntu-latest
@@ -131,21 +131,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
-      
-      - name: Check formatting
-        run: ./gradlew spotlessCheck
+          cache: 'maven'
       
       - name: Run Checkstyle
-        run: ./gradlew checkstyleMain checkstyleTest
+        run: mvn -B checkstyle:check
       
       - name: Run SpotBugs
-        run: ./gradlew spotbugsMain
+        run: mvn -B spotbugs:check
 
   security:
     runs-on: ubuntu-latest
@@ -226,15 +223,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Set up JDK 21
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
+          cache: 'maven'
       
       - name: Run integration tests
-        run: ./gradlew integrationTest
+        run: mvn -B verify -Pintegration-tests
         env:
           CASSANDRA_HOST: localhost
           POSTGRES_HOST: localhost
@@ -245,7 +242,7 @@ jobs:
         if: always()
         with:
           name: integration-results
-          path: '**/build/test-results/integrationTest/'
+          path: '**/target/failsafe-reports/*.xml'
 ```
 
 ### Deploy (`.github/workflows/deploy.yml`)
@@ -347,7 +344,7 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Run E2E tests
-        run: ./gradlew :butterfly-e2e:test
+        run: ./butterfly-e2e/run-scenarios.sh
         env:
           E2E_BASE_URL: ${{ secrets.STAGING_URL }}
           E2E_API_KEY: ${{ secrets.STAGING_API_KEY }}
@@ -471,7 +468,7 @@ jobs:
 | Security scan | No critical/high CVEs | (CI only) |
 | Code coverage | ≥ 80% | `mvn test jacoco:report` |
 | Code review | 1 approval | (PR process) |
-| Lint/Checkstyle | Must pass | `mvn checkstyle:check` |
+| Lint/Style | Must pass | `mvn -Pquality verify` |
 | Commit format | Conventional commits | Husky pre-commit hook |
 
 ### Per-Service CI Workflows
@@ -495,7 +492,7 @@ For a PR to be mergeable, all of the following must pass:
 2. **Build**: Service compiles without errors
 3. **Unit Tests**: All unit tests pass
 4. **Coverage**: Coverage threshold met (≥80% for services, ≥90% for butterfly-common)
-5. **Lint/Style**: Checkstyle/Spotless checks pass
+5. **Lint/Style**: Checkstyle/SpotBugs checks pass
 6. **Security**: No critical/high CVEs in dependencies
 7. **Code Review**: At least one approval from a maintainer
 
@@ -513,8 +510,8 @@ mvn compile
 # Just tests
 mvn test
 
-# Style check
-mvn checkstyle:check spotless:check
+# Style check (Checkstyle + SpotBugs)
+mvn -Pquality verify
 
 # Coverage report
 mvn test jacoco:report
@@ -571,7 +568,7 @@ kubectl rollout undo deployment/capsule -n butterfly --to-revision=2
 | Failure | Cause | Solution |
 |---------|-------|----------|
 | Commitlint fails | Commit message format | Use `<type>(<scope>): <subject>` |
-| Checkstyle fails | Code style violations | Run `mvn spotless:apply` |
+| Checkstyle fails | Code style violations | Run `mvn checkstyle:check` and fix reported issues |
 | Coverage too low | Insufficient tests | Add tests for new code |
 | Security scan fails | Vulnerable dependency | Update dependency version |
 | Integration test fails | Missing infrastructure | Check Docker containers |
@@ -593,4 +590,3 @@ kubectl rollout undo deployment/capsule -n butterfly --to-revision=2
 | [Testing Strategy](testing-strategy.md) | Testing approach |
 | [Deployment](../operations/deployment/README.md) | Deployment guides |
 | [PERCEPTION CI Troubleshooting](../../PERCEPTION/docs/runbooks/ci-pipeline-troubleshooting.md) | CI debugging |
-
