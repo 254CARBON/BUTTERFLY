@@ -1,0 +1,514 @@
+{
+  "name": "perception-source-to-scenario-golden-path",
+  "description": "Complete PERCEPTION domain golden path: Source registration → Content acquisition → Integrity trust scoring → Intelligence event detection → Scenario generation",
+  "version": "1.0.0",
+  "mode": "positive",
+  "target": "perception",
+  "category": "golden-path",
+  "golden": true,
+  "timeout_seconds": 120,
+  "correlation_id": "perception-golden-{{$timestamp}}",
+  
+  "slo_targets": {
+    "acquisition_ingestion_latency_p95_ms": 200,
+    "acquisition_freshness_lag_p95_ms": 60000,
+    "acquisition_success_rate": 0.995,
+    "acquisition_dlq_rate_max": 0.01,
+    "integrity_trust_scoring_latency_p95_ms": 100,
+    "integrity_embedding_latency_p95_ms": 500,
+    "integrity_quarantine_rate_max": 0.05,
+    "intelligence_detection_latency_p95_ms": 300000,
+    "intelligence_scenario_completion_rate": 0.90,
+    "e2e_latency_p95_ms": 600000,
+    "total_duration_ms": 90000
+  },
+  
+  "steps": [
+    {
+      "name": "verify-perception-healthy",
+      "description": "Verify PERCEPTION API service is healthy",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": { 
+        "status": 200, 
+        "body": { "status": "UP" } 
+      }
+    },
+    
+    {
+      "name": "step-1-register-test-source",
+      "description": "ACQUISITION: Register a new test source for content acquisition",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/acquisition/sources",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "name": "E2E Golden Path Test Source",
+        "type": "API",
+        "endpoint": "https://test.example.com/api/feed",
+        "tenantId": "e2e-test",
+        "enabled": true,
+        "shadowMode": false,
+        "schedule": "0 */5 * * * ?",
+        "rateLimit": 100,
+        "config": {
+          "format": "json",
+          "batchSize": 10
+        },
+        "metadata": {
+          "rimNodeId": "rim:test:e2e:source:{{$timestamp}}",
+          "testCase": "perception-golden-path"
+        }
+      },
+      "expect": {
+        "status": [200, 201],
+        "body": {
+          "sourceId": { "$exists": true },
+          "status": "ACTIVE"
+        }
+      },
+      "outputs": {
+        "sourceId": "$.sourceId"
+      },
+      "timing": {
+        "record_metric": "acquisition_source_registration_latency_ms"
+      }
+    },
+    
+    {
+      "name": "step-2-ingest-test-content",
+      "description": "ACQUISITION: Ingest test content through the registered source",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/acquisition/ingest",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "sourceId": "{{sourceId}}",
+        "contentType": "application/json",
+        "timestamp": "{{$now_iso}}",
+        "content": {
+          "title": "E2E Golden Path Test Event",
+          "body": "This is a test content item for the golden path validation. It contains keywords related to market volatility and unusual trading patterns that should trigger event detection.",
+          "metadata": {
+            "category": "MARKET_EVENT",
+            "severity": "HIGH",
+            "entities": ["EURUSD", "FX_MARKET"],
+            "tags": ["volatility", "trading", "golden-path"]
+          }
+        },
+        "idempotencyKey": "gp-{{$timestamp}}-{{$random}}"
+      },
+      "expect": {
+        "status": [200, 201, 202],
+        "body": {
+          "contentId": { "$exists": true },
+          "status": ["ACCEPTED", "PROCESSING", "INGESTED"]
+        }
+      },
+      "outputs": {
+        "contentId": "$.contentId"
+      },
+      "timing": {
+        "record_metric": "acquisition_ingestion_latency_ms",
+        "slo_target_ms": 200
+      }
+    },
+    
+    {
+      "name": "step-3-wait-acquisition-processing",
+      "type": "wait",
+      "duration_seconds": 3,
+      "description": "Wait for content acquisition and DLQ processing"
+    },
+    
+    {
+      "name": "step-4-verify-acquisition-stats",
+      "description": "ACQUISITION: Verify source statistics show successful ingestion",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/acquisition/sources/{{sourceId}}/stats",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "sourceId": "{{sourceId}}",
+          "totalAcquisitions": { "$gte": 1 },
+          "successfulAcquisitions": { "$gte": 1 }
+        }
+      },
+      "outputs": {
+        "acquisitionSuccessRate": "$.successRate",
+        "dlqCount": "$.failedAcquisitions"
+      }
+    },
+    
+    {
+      "name": "step-5-check-dlq-empty",
+      "description": "ACQUISITION: Verify no messages in DLQ for this source",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/acquisition/dlq",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "sourceId": "{{sourceId}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "totalElements": { "$lte": 0 }
+        }
+      },
+      "optional": true
+    },
+    
+    {
+      "name": "step-6-verify-integrity-trust-score",
+      "description": "INTEGRITY: Verify content received trust score assessment",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/integrity/trust/content/{{contentId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "contentId": "{{contentId}}",
+          "score": { "$gte": 0.0, "$lte": 1.0 },
+          "level": ["HIGH", "MEDIUM", "LOW"],
+          "assessedAt": { "$exists": true }
+        }
+      },
+      "outputs": {
+        "trustScore": "$.score",
+        "trustLevel": "$.level"
+      },
+      "timing": {
+        "record_metric": "integrity_trust_scoring_latency_ms",
+        "slo_target_ms": 100
+      }
+    },
+    
+    {
+      "name": "step-7-verify-not-quarantined",
+      "description": "INTEGRITY: Verify content was not quarantined",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/integrity/quarantine",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "contentId": "{{contentId}}"
+      },
+      "expect": {
+        "status": [200, 404],
+        "body_if_200": {
+          "totalElements": 0
+        }
+      },
+      "optional": true
+    },
+    
+    {
+      "name": "step-8-check-integrity-storyline",
+      "description": "INTEGRITY: Check if content was linked to a storyline",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/integrity/storylines",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "contentId": "{{contentId}}",
+        "limit": 5
+      },
+      "expect": {
+        "status": 200
+      },
+      "outputs": {
+        "storylineId": "$.content[0].storylineId"
+      },
+      "optional": true
+    },
+    
+    {
+      "name": "step-9-wait-intelligence-processing",
+      "type": "wait",
+      "duration_seconds": 5,
+      "description": "Wait for intelligence event detection and pattern matching"
+    },
+    
+    {
+      "name": "step-10-query-intelligence-events",
+      "description": "INTELLIGENCE: Query for detected events related to the content",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/intelligence/events",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "sourceContentId": "{{contentId}}",
+        "fromTimestamp": "{{$now_minus_5m}}",
+        "toTimestamp": "{{$now}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      },
+      "outputs": {
+        "eventId": "$.content[0].eventId",
+        "eventType": "$.content[0].eventType"
+      },
+      "timing": {
+        "record_metric": "intelligence_event_detection_latency_ms",
+        "slo_target_ms": 300000
+      },
+      "optional": true
+    },
+    
+    {
+      "name": "step-11-query-intelligence-scenarios",
+      "description": "INTELLIGENCE: Query for generated scenarios",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/intelligence/scenarios",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "sourceEventId": "{{eventId}}",
+        "limit": 5
+      },
+      "expect": {
+        "status": 200
+      },
+      "outputs": {
+        "scenarioId": "$.content[0].scenarioId",
+        "scenarioStatus": "$.content[0].status"
+      },
+      "optional": true
+    },
+    
+    {
+      "name": "step-12-submit-feedback",
+      "description": "INTELLIGENCE: Submit feedback for the scenario (testing feedback loop)",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/intelligence/scenarios/{{scenarioId}}/feedback",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "feedbackType": "ACCURACY",
+        "outcome": "ACCURATE",
+        "confidence": 0.9,
+        "notes": "E2E golden path validation - automated feedback",
+        "metadata": {
+          "testCase": "golden-path",
+          "automated": true
+        }
+      },
+      "expect": {
+        "status": [200, 201, 202]
+      },
+      "optional": true,
+      "skip_if_missing": ["scenarioId"]
+    },
+    
+    {
+      "name": "step-13-verify-monitoring-health",
+      "description": "MONITORING: Verify pipeline health reflects successful processing",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/monitoring/health",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "overallScore": { "$gte": 0.7 },
+          "status": ["HEALTHY", "DEGRADED"]
+        }
+      },
+      "outputs": {
+        "healthScore": "$.overallScore",
+        "pipelineStatus": "$.status"
+      }
+    },
+    
+    {
+      "name": "step-14-verify-slo-compliance",
+      "description": "MONITORING: Verify SLO compliance for all domains",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/monitoring/slo/snapshot",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "overallStatus": ["MET", "WARNING"],
+          "slosCritical": { "$lte": 2 }
+        }
+      },
+      "outputs": {
+        "slosMet": "$.slosMet",
+        "slosWarning": "$.slosWarning",
+        "slosCritical": "$.slosCritical",
+        "errorBudgetRemaining": "$.errorBudgetRemaining"
+      }
+    },
+    
+    {
+      "name": "step-15-check-domain-slos",
+      "description": "MONITORING: Check individual domain SLO summaries",
+      "type": "parallel",
+      "sub_steps": [
+        {
+          "name": "check-acquisition-slos",
+          "service": "perception",
+          "method": "GET",
+          "endpoint": "/api/v1/monitoring/slo/domain/ACQUISITION",
+          "headers": {
+            "X-Tenant-ID": "e2e-test",
+            "X-Correlation-ID": "{{correlation_id}}"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "domain": "ACQUISITION",
+              "status": ["MET", "WARNING"]
+            }
+          }
+        },
+        {
+          "name": "check-integrity-slos",
+          "service": "perception",
+          "method": "GET",
+          "endpoint": "/api/v1/monitoring/slo/domain/INTEGRITY",
+          "headers": {
+            "X-Tenant-ID": "e2e-test",
+            "X-Correlation-ID": "{{correlation_id}}"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "domain": "INTEGRITY",
+              "status": ["MET", "WARNING"]
+            }
+          }
+        },
+        {
+          "name": "check-intelligence-slos",
+          "service": "perception",
+          "method": "GET",
+          "endpoint": "/api/v1/monitoring/slo/domain/INTELLIGENCE",
+          "headers": {
+            "X-Tenant-ID": "e2e-test",
+            "X-Correlation-ID": "{{correlation_id}}"
+          },
+          "expect": {
+            "status": 200,
+            "body": {
+              "domain": "INTELLIGENCE",
+              "status": ["MET", "WARNING"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "PERCEPTION service is healthy",
+        "step": "verify-perception-healthy",
+        "condition": "status == 200"
+      },
+      {
+        "description": "Source registered successfully",
+        "step": "step-1-register-test-source",
+        "condition": "status in [200, 201]"
+      },
+      {
+        "description": "Content ingested successfully",
+        "step": "step-2-ingest-test-content",
+        "condition": "status in [200, 201, 202]"
+      },
+      {
+        "description": "Acquisition statistics available",
+        "step": "step-4-verify-acquisition-stats",
+        "condition": "status == 200"
+      },
+      {
+        "description": "Trust score assessment completed",
+        "step": "step-6-verify-integrity-trust-score",
+        "condition": "status == 200"
+      },
+      {
+        "description": "Pipeline health is acceptable",
+        "step": "step-13-verify-monitoring-health",
+        "condition": "status == 200"
+      },
+      {
+        "description": "SLO compliance verified",
+        "step": "step-14-verify-slo-compliance",
+        "condition": "status == 200"
+      }
+    ],
+    "metrics_to_capture": [
+      "acquisition_source_registration_latency_ms",
+      "acquisition_ingestion_latency_ms",
+      "integrity_trust_scoring_latency_ms",
+      "intelligence_event_detection_latency_ms",
+      "total_e2e_duration_ms"
+    ]
+  },
+  
+  "cleanup": {
+    "enabled": true,
+    "steps": [
+      {
+        "name": "cleanup-source",
+        "service": "perception",
+        "method": "DELETE",
+        "endpoint": "/api/v1/acquisition/sources/{{sourceId}}",
+        "headers": { 
+          "X-Tenant-ID": "e2e-test",
+          "X-Correlation-ID": "{{correlation_id}}"
+        },
+        "optional": true
+      }
+    ]
+  }
+}
