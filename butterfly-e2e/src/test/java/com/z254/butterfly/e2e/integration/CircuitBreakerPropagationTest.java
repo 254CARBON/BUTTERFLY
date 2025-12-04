@@ -6,6 +6,7 @@ import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
@@ -38,6 +39,8 @@ import static org.assertj.core.api.Assertions.*;
  */
 @Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@Tag("integration")
+@EnabledIfEnvironmentVariable(named = "BUTTERFLY_INTEGRATION_TESTS", matches = "true")
 public class CircuitBreakerPropagationTest {
 
     private static final String CIRCUIT_BREAKER_TOPIC = "ecosystem.circuit-breaker.events";

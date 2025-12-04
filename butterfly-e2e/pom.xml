@@ -115,6 +115,19 @@
             <version>3.3.1</version>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <version>6.1.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Pact for contract testing -->
+        <dependency>
+            <groupId>au.com.dius.pact.consumer</groupId>
+            <artifactId>junit5</artifactId>
+            <version>4.6.5</version>
+            <scope>test</scope>
+        </dependency>
         
         <!-- Avro and Schema Registry for contract testing -->
         <dependency>

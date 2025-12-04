@@ -10,6 +10,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
@@ -48,6 +49,8 @@ import static org.assertj.core.api.Assertions.*;
  */
 @Testcontainers
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@Tag("integration")
+@EnabledIfEnvironmentVariable(named = "BUTTERFLY_INTEGRATION_TESTS", matches = "true")
 public class GoldenLoopIntegrationTest {
 
     private static final String CORRELATION_ID_HEADER = "X-Correlation-ID";
@@ -512,8 +515,6 @@ public class GoldenLoopIntegrationTest {
 
     // === DTOs ===
 
-    @lombok.Builder
-    @lombok.Data
     private static class LoopCompletionResult {
         private String correlationId;
         private boolean completed;
@@ -521,5 +522,31 @@ public class GoldenLoopIntegrationTest {
         private Map<String, Long> checkpointTimestamps;
         private Map<String, Long> checkpointDurations;
         private long totalDurationMs;
+
+        public String getCorrelationId() { return correlationId; }
+        public void setCorrelationId(String correlationId) { this.correlationId = correlationId; }
+        public boolean isCompleted() { return completed; }
+        public void setCompleted(boolean completed) { this.completed = completed; }
+        public List<String> getCheckpointsVisited() { return checkpointsVisited; }
+        public void setCheckpointsVisited(List<String> checkpointsVisited) { this.checkpointsVisited = checkpointsVisited; }
+        public Map<String, Long> getCheckpointTimestamps() { return checkpointTimestamps; }
+        public void setCheckpointTimestamps(Map<String, Long> checkpointTimestamps) { this.checkpointTimestamps = checkpointTimestamps; }
+        public Map<String, Long> getCheckpointDurations() { return checkpointDurations; }
+        public void setCheckpointDurations(Map<String, Long> checkpointDurations) { this.checkpointDurations = checkpointDurations; }
+        public long getTotalDurationMs() { return totalDurationMs; }
+        public void setTotalDurationMs(long totalDurationMs) { this.totalDurationMs = totalDurationMs; }
+
+        public static Builder builder() { return new Builder(); }
+
+        public static class Builder {
+            private final LoopCompletionResult result = new LoopCompletionResult();
+            public Builder correlationId(String correlationId) { result.correlationId = correlationId; return this; }
+            public Builder completed(boolean completed) { result.completed = completed; return this; }
+            public Builder checkpointsVisited(List<String> checkpointsVisited) { result.checkpointsVisited = checkpointsVisited; return this; }
+            public Builder checkpointTimestamps(Map<String, Long> checkpointTimestamps) { result.checkpointTimestamps = checkpointTimestamps; return this; }
+            public Builder checkpointDurations(Map<String, Long> checkpointDurations) { result.checkpointDurations = checkpointDurations; return this; }
+            public Builder totalDurationMs(long totalDurationMs) { result.totalDurationMs = totalDurationMs; return this; }
+            public LoopCompletionResult build() { return result; }
+        }
     }
 }
