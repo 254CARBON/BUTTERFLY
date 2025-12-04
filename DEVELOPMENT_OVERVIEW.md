@@ -75,14 +75,26 @@ mvn -f ODYSSEY/pom.xml spring-boot:run -Dhft.kafka.bootstrap-servers=localhost:9
 ### Running Individual Services
 
 ```bash
-# CAPSULE
+# Using the setup script (recommended)
+./scripts/setup.sh --module PERCEPTION   # Start PERCEPTION infrastructure
+./scripts/setup.sh --module CAPSULE      # Start CAPSULE infrastructure
+./scripts/setup.sh --module ODYSSEY      # Start ODYSSEY infrastructure
+./scripts/setup.sh --module PLATO        # Start PLATO infrastructure
+./scripts/setup.sh --module NEXUS        # Start NEXUS infrastructure
+
+# List available modules and their status
+./scripts/setup.sh --list                # Show all modules and compose files
+./scripts/setup.sh --status              # Check health of running modules
+
+# Stop modules
+./scripts/setup.sh --stop PERCEPTION     # Stop specific module
+./scripts/setup.sh --stop-all            # Stop all modules
+
+# Or using docker compose directly
 docker compose -f CAPSULE/docker-compose.yml up
-
-# PERCEPTION (dev profile with hot reload)
 docker compose -f PERCEPTION/docker-compose.dev.yml up
-
-# ODYSSEY
 docker compose -f ODYSSEY/docker-compose.yml up
+docker compose -f butterfly-nexus/docker-compose.dev.yml up
 
 # PLATO (with in-memory persistence)
 ./PLATO/scripts/dev-up.sh
@@ -90,6 +102,16 @@ docker compose -f ODYSSEY/docker-compose.yml up
 # PLATO (with full infrastructure: Cassandra, Kafka, Prometheus)
 ./PLATO/scripts/dev-up.sh full
 ```
+
+### Module Health Endpoints
+
+| Module | Port | Health Endpoint |
+|--------|------|-----------------|
+| PERCEPTION | 8080 | http://localhost:8080/actuator/health |
+| CAPSULE | 8081 | http://localhost:8081/actuator/health |
+| ODYSSEY | 8082 | http://localhost:8082/actuator/health |
+| PLATO | 8083 | http://localhost:8083/actuator/health |
+| NEXUS | 8084 | http://localhost:8084/actuator/health |
 
 ## Pre-commit Hooks
 
@@ -145,6 +167,25 @@ START_DEV_STACK=0 ./butterfly-e2e/run-scenarios.sh
 **Scenario catalog:** `butterfly-e2e/scenarios/catalog.json`
 
 Payloads: `edge-high-stress`, `minimal-ok`, `invalid-node`, `kafka-hiccup`, etc.
+
+### Governance + Decision Loop Drill
+
+```bash
+# Start Kafka/mocks + run PERCEPTION → CAPSULE → ODYSSEY → NEXUS → PLATO → SYNAPSE
+./scripts/run-governance-loop.sh
+
+# Skip docker-compose if services already running + allow partial runs
+./scripts/run-governance-loop.sh --skip-stack --allow-partial
+```
+
+- Drives the new `governance-decision-loop` scenario in `butterfly-e2e/scenarios/governance-decision-loop.json`, wiring evidence ingestion, policy/spec creation, plan execution, and NEXUS learning feedback with a single command.
+- Health-checks every service up front and prints the correlation id so you can trace logs end-to-end. Use `--golden-path` to prepend the classic `run-golden-path.sh --strategic` run or `--keep-stack` to leave docker-compose running for debugging.
+- In CI, the nightly workflow runs the helper in `--allow-partial` mode so we keep coverage without blocking PR builds; locally you get full validation once the six core services are running on their dev ports.
+
+### Chaos Experiments
+
+- Net-new specs live in `chaos/experiments/capsule-outage.yaml`, `chaos/experiments/nexus-partial-degradation.yaml`, and `chaos/experiments/plato-latency-spike.yaml` (with Kubernetes-native twins under `k8s/chaos/experiments/`). Apply them via `kubectl apply -f chaos/experiments/capsule-outage.yaml` or run a curated set with `chaos/scripts/run-chaos-suite.sh --category governance`.
+- Each manifest ships with success/failure ConfigMaps + runbook pointers so SREs can quickly validate DLQ recovery (CAPSULE outage), backpressure behavior (NEXUS degradation), and SYNAPSE buffering (PLATO latency spike).
 
 ### Full-stack Smoke Test
 

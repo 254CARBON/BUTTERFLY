@@ -1,0 +1,130 @@
+name: docs-lint
+
+on:
+  push:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - '**/CONTRIBUTING.md'
+      - '.github/workflows/docs-lint.yml'
+      - '.markdown-link-check.json'
+      - 'scripts/lint-docs.py'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - '**/README.md'
+      - '**/CONTRIBUTING.md'
+
+jobs:
+  markdown-link-check:
+    name: "Check markdown links"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run markdown-link-check on docs
+        run: |
+          set -euo pipefail
+          echo "Checking markdown links in docs/ directory..."
+          
+          # Find all markdown files in docs/ and root README files
+          find docs -name '*.md' -print0 | xargs -0 -I {} npx markdown-link-check {} --config .markdown-link-check.json --quiet || FAILED=1
+          
+          # Check service README files
+          for readme in PERCEPTION/README.md CAPSULE/README.md ODYSSEY/README.md PLATO/README.md butterfly-nexus/README.md butterfly-common/README.md; do
+            if [ -f "$readme" ]; then
+              echo "Checking $readme..."
+              npx markdown-link-check "$readme" --config .markdown-link-check.json --quiet || FAILED=1
+            fi
+          done
+          
+          # Check root documentation files
+          for doc in DEVELOPMENT_OVERVIEW.md DX_NOTES.md; do
+            if [ -f "$doc" ]; then
+              echo "Checking $doc..."
+              npx markdown-link-check "$doc" --config .markdown-link-check.json --quiet || FAILED=1
+            fi
+          done
+          
+          if [ "${FAILED:-0}" -eq 1 ]; then
+            echo "::error::Broken links detected in documentation"
+            exit 1
+          fi
+          
+          echo "✅ All markdown links are valid"
+
+  semantic-cross-reference:
+    name: "Validate documentation cross-references"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run semantic documentation linter
+        run: |
+          python scripts/lint-docs.py
+          echo "✅ Documentation cross-references are valid"
+
+  docs-structure-check:
+    name: "Verify docs structure"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify required documentation exists
+        run: |
+          set -euo pipefail
+          MISSING=()
+          
+          # Required top-level docs
+          REQUIRED_DOCS=(
+            "docs/index.md"
+            "docs/getting-started/README.md"
+            "docs/architecture/README.md"
+            "docs/services/README.md"
+            "docs/api/README.md"
+            "docs/operations/README.md"
+            "docs/security/README.md"
+            "docs/development/README.md"
+            "docs/development/contributing.md"
+            "docs/adr/README.md"
+          )
+          
+          for doc in "${REQUIRED_DOCS[@]}"; do
+            if [ ! -f "$doc" ]; then
+              MISSING+=("$doc")
+            fi
+          done
+          
+          # Required service summaries
+          SERVICES=(perception capsule odyssey plato nexus butterfly-common)
+          for svc in "${SERVICES[@]}"; do
+            if [ ! -f "docs/services/${svc}.md" ]; then
+              MISSING+=("docs/services/${svc}.md")
+            fi
+          done
+          
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::Missing required documentation files:"
+            printf ' - %s\n' "${MISSING[@]}"
+            exit 1
+          fi
+          
+          echo "✅ All required documentation files exist"
+

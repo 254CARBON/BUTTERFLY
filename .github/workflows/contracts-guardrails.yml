@@ -185,3 +185,76 @@ jobs:
             echo "⚠️ The following schemas should add a 'schema_version' field:"
             printf ' - %s\n' "${MISSING_VERSION[@]}"
           fi
+
+  require-contract-approval:
+    name: "Require contract-change-approved label"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check if contract files changed
+        id: contract-changes
+        run: |
+          # Get list of changed files in this PR
+          CHANGED_FILES=$(gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files[].path')
+          
+          CONTRACT_CHANGED=false
+          
+          # Check for Avro schema changes
+          if echo "$CHANGED_FILES" | grep -q "butterfly-common/src/main/avro/"; then
+            CONTRACT_CHANGED=true
+            echo "Avro schema changes detected"
+          fi
+          
+          # Check for RimNodeId changes
+          if echo "$CHANGED_FILES" | grep -q "butterfly-common/src/main/java/.*identity/"; then
+            CONTRACT_CHANGED=true
+            echo "Identity contract changes detected"
+          fi
+          
+          # Check for contract-related files
+          if echo "$CHANGED_FILES" | grep -q "butterfly-common/src/main/java/.*contract/\|butterfly-common/src/main/java/.*RimKafka"; then
+            CONTRACT_CHANGED=true
+            echo "Kafka contract changes detected"
+          fi
+          
+          echo "contract_changed=$CONTRACT_CHANGED" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Require approval label for contract changes
+        if: steps.contract-changes.outputs.contract_changed == 'true'
+        run: |
+          set -euo pipefail
+          
+          echo "Contract changes detected. Checking for approval label..."
+          
+          # Get PR labels
+          LABELS=$(gh pr view ${{ github.event.pull_request.number }} --json labels --jq '.labels[].name')
+          
+          if echo "$LABELS" | grep -q "contract-change-approved"; then
+            echo "✅ PR has 'contract-change-approved' label - proceeding"
+          else
+            echo ""
+            echo "::error::Contract changes require explicit approval"
+            echo ""
+            echo "This PR modifies contracts in butterfly-common which are frozen during Phase 0."
+            echo ""
+            echo "To proceed with contract changes:"
+            echo "  1. Request review from a tech lead"
+            echo "  2. Tech lead must add the 'contract-change-approved' label"
+            echo "  3. Re-run this workflow after the label is added"
+            echo ""
+            echo "For more information, see docs/contracts/FREEZE_POLICY.md"
+            echo ""
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: No contract changes - skipping approval check
+        if: steps.contract-changes.outputs.contract_changed != 'true'
+        run: |
+          echo "✅ No contract changes detected - approval check not required"

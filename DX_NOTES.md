@@ -2,7 +2,7 @@
 
 > Developer experience notes and observations for the BUTTERFLY ecosystem
 
-**Last Updated**: 2025-12-03
+**Last Updated**: 2025-12-04
 
 ---
 
@@ -53,15 +53,70 @@ Follow-up ideas (not implemented yet):
 
 ---
 
+## Phase 0: Alignment & Contract Freeze
+
+Implemented infrastructure for contract stability and documentation consistency:
+
+### Documentation Linting
+
+- **Semantic linter**: `scripts/lint-docs.py` validates bidirectional cross-references between docs/index.md and service READMEs
+- **Link validation**: `.github/workflows/docs-lint.yml` runs markdown-link-check on all documentation
+- **CI enforcement**: Documentation drift is flagged automatically in PRs
+
+### Contract Freeze Enforcement
+
+- **Approval gate**: `contracts-guardrails.yml` now requires `contract-change-approved` label for any schema changes
+- **Freeze policy**: [docs/contracts/FREEZE_POLICY.md](docs/contracts/FREEZE_POLICY.md) documents the approval process
+- **Labels created**: `dx`, `epic`, `phase-0`, `contract-change-approved`
+
+### Module Bootstrap Automation
+
+- **Enhanced setup.sh**: New flags `--module`, `--full`, `--status`, `--list`, `--stop`, `--stop-all`
+- **NEXUS compose**: `butterfly-nexus/docker-compose.dev.yml` for standardized dev setup
+- **Health checks**: Module status shows health of running services
+
+### DX Backlog (GitHub Issues Created)
+
+- [#1 - API Documentation Generation](https://github.com/254CARBON/BUTTERFLY/issues/1)
+- [#2 - Template Scaffolding CLI](https://github.com/254CARBON/BUTTERFLY/issues/2)
+- [#3 - IDE Snippets and Live Templates](https://github.com/254CARBON/BUTTERFLY/issues/3)
+
+---
+
 ## Future DX Improvements
 
-Based on Sprint 5 alignment work, these improvements are recommended for future sprints:
+Based on Sprint 5 alignment work, these improvements are tracked as GitHub issues:
 
-- **Auto-generate API docs from CI**: Use OpenAPI spec generation in CI pipelines
-- **Template scaffolding CLI**: Create a CLI tool to scaffold new modules using templates
+- **Auto-generate API docs from CI**: [Issue #1](https://github.com/254CARBON/BUTTERFLY/issues/1) - OpenAPI spec generation in CI pipelines
+- **Template scaffolding CLI**: [Issue #2](https://github.com/254CARBON/BUTTERFLY/issues/2) - CLI tool to scaffold new modules using templates
+- **IDE snippets/templates**: [Issue #3](https://github.com/254CARBON/BUTTERFLY/issues/3) - IntelliJ and VS Code snippets for common patterns
 - **Chaos test automation**: Add more automation around chaos tests with clearer reporting
 - **ADR for centralized patterns**: Create an ADR documenting the decision to centralize contributing and testing patterns
-- **IDE snippets/templates**: Add IntelliJ and VS Code snippets for common patterns
+
+---
+
+## Workstream 9: Governance Loop + Chaos Harness
+
+### Governance + Decision Loop Scenario
+
+- Added `butterfly-e2e/scenarios/governance-decision-loop.json` plus `scripts/run-governance-loop.sh` so contributors can launch PERCEPTION → CAPSULE → ODYSSEY → NEXUS → PLATO → SYNAPSE with a single command.
+- The helper performs health checks, creates policies/specs/plans, executes them via SYNAPSE, and posts learning signals back into NEXUS; it surfaces the correlation id for quick log-chasing.
+- **Quick usage:** `./scripts/run-governance-loop.sh --keep-stack` (full validation) or `./scripts/run-governance-loop.sh --skip-stack --allow-partial` (useful inside CI or when you only want NEXUS/ODYSSEY running).
+- **Troubleshooting tips:**
+  - If a health check fails, run the service-specific dev script (`./PLATO/scripts/dev-up.sh`, `mvn -f PERCEPTION/pom.xml spring-boot:run`, `./SYNAPSE/scripts/dev-up.sh`).
+  - Override endpoints via `PERCEPTION_URL=http://localhost:8181 ./scripts/run-governance-loop.sh` if you expose services on non-standard ports.
+  - Install `jq` + `curl` locally (`brew install jq curl` or `apt-get install jq curl`) before running; the helper will exit early if either is missing.
+  - Use the emitted correlation id with `rg -n "<id>" -g '*.log'` across service logs when tracing failures.
+- Nightly CI now invokes the helper in partial mode so full-loop coverage runs daily without slowing PR builds; the detailed governance drill remains an opt-in local workflow for contributors.
+
+### Chaos Coverage
+
+- New experiments target the resilience scenarios called out in the workstream:
+  - `chaos/experiments/capsule-outage.yaml` / `k8s/chaos/experiments/capsule-outage.yaml`: hard-stops CAPSULE pods, verifies DLQ capture and NEXUS temporal fallbacks.
+  - `chaos/experiments/nexus-partial-degradation.yaml` / `k8s/chaos/experiments/nexus-partial-degradation.yaml`: CPU + latency stress on NEXUS while PLATO/SYNAPSE keep pace.
+  - `chaos/experiments/plato-latency-spike.yaml` / `k8s/chaos/experiments/plato-latency-spike.yaml`: PLATO governance APIs slowed to ensure SYNAPSE buffering + CAPSULE continuity.
+- Each YAML ships with success/failure ConfigMaps and links to the relevant remediation runbooks so platform engineers can tie failures back to docs quickly.
+- The chaos runner (`butterfly-e2e/run-chaos-scenarios.sh`) automatically sweeps the new definitions because they are categorized as `chaos`, and the nightly GitHub Action already executes the suite instead of every PR.
 
 ---
 
@@ -72,4 +127,6 @@ Based on Sprint 5 alignment work, these improvements are recommended for future 
 | [DEVELOPMENT_OVERVIEW.md](DEVELOPMENT_OVERVIEW.md) | Quick start guide |
 | [docs/development/contributing.md](docs/development/contributing.md) | Canonical contributing guide |
 | [docs/development/testing-strategy.md](docs/development/testing-strategy.md) | Per-service test matrices |
+| [docs/contracts/FREEZE_POLICY.md](docs/contracts/FREEZE_POLICY.md) | Contract freeze policy and approval process |
 | [docs/onboarding/](docs/onboarding/) | New contributor onboarding |
+| [.github/dx-issues/](.github/dx-issues/) | DX backlog issue templates |
