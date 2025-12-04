@@ -1,0 +1,167 @@
+# =============================================================================
+# PodDisruptionBudgets for BUTTERFLY HA Deployment
+# =============================================================================
+# These PDBs ensure minimum availability during voluntary disruptions
+# such as node drains, rolling updates, and cluster maintenance.
+# =============================================================================
+
+---
+# CAPSULE PDB - Maintain at least 2 replicas
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: capsule-pdb
+  namespace: butterfly
+  labels:
+    app: capsule
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: capsule
+
+---
+# PERCEPTION PDB - Maintain at least 2 replicas
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: perception-pdb
+  namespace: butterfly
+  labels:
+    app: perception-api
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: perception-api
+
+---
+# ODYSSEY PDB - Maintain at least 2 replicas
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: odyssey-pdb
+  namespace: butterfly
+  labels:
+    app: odyssey
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: odyssey
+
+---
+# PLATO PDB - Maintain at least 2 replicas (governance must remain available)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: plato-pdb
+  namespace: butterfly
+  labels:
+    app: plato
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: plato
+
+---
+# NEXUS PDB - Maintain at least 3 replicas (critical gateway)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nexus-pdb
+  namespace: butterfly
+  labels:
+    app: nexus
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: nexus
+
+---
+# SYNAPSE PDB - Maintain at least 2 replicas
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: synapse-pdb
+  namespace: butterfly
+  labels:
+    app: synapse
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: synapse
+
+---
+# Cassandra PDB - Allow max 1 unavailable (for RF=3)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cassandra-pdb
+  namespace: butterfly
+  labels:
+    app: cassandra
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: cassandra
+
+---
+# Kafka PDB - Allow max 1 unavailable (for 3-node cluster)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka-pdb
+  namespace: butterfly
+  labels:
+    app: kafka
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: kafka
+
+---
+# Redis PDB - Allow max 1 unavailable (for sentinel cluster)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: butterfly
+  labels:
+    app: redis
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: redis
+
+---
+# PostgreSQL PDB - Maintain primary availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgresql-pdb
+  namespace: butterfly
+  labels:
+    app: postgresql
+    app.kubernetes.io/part-of: butterfly-platform
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgresql
+

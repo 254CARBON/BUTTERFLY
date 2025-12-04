@@ -84,7 +84,7 @@ This baseline is aligned with:
 | TLS-02 | TLS version | Not specified | TLS 1.2+ only | Configure | High |
 | TLS-03 | HSTS header | Not configured | `max-age=31536000` | Implement | High |
 | TLS-04 | Certificate management | Manual | Automated rotation | Roadmap | Medium |
-| TLS-05 | Internal TLS/mTLS | Not implemented | Service mesh encryption | Roadmap | Medium |
+| TLS-05 | Internal TLS/mTLS | PLATO→CAPSULE client secured with mTLS | Extend to Kafka/Redis mesh | In progress | Medium |
 
 ### 2.4 Rate Limiting Controls
 
@@ -134,7 +134,7 @@ This baseline is aligned with:
 |----|---------|---------------|--------------|-----|----------|
 | SEC-01 | Secrets in code | Gitignored `.env` | No secrets in repo | Active | N/A |
 | SEC-02 | Environment variables | Documented | Enforced injection | Active | N/A |
-| SEC-03 | Vault integration | Documented | Production deployment | Roadmap | Medium |
+| SEC-03 | Vault integration | Shared SecretProvider in PLATO + ODYSSEY | Rollout to remaining services | Partial (PERCEPTION pending) | Medium |
 | SEC-04 | Secret rotation | Manual | Automated | Roadmap | Medium |
 | SEC-05 | Secret scanning | TruffleHog/Gitleaks | CI blocking | Active | N/A |
 
@@ -239,6 +239,11 @@ This baseline is aligned with:
 | Data | TLS enforcement | Connection without TLS rejected |
 | Infra | CORS configuration | Cross-origin request from unknown origin rejected |
 
+**Workstream 8 Updates**
+- `butterfly-security-starter` now carries a Vault-backed `SecretProvider` auto-configured via `butterfly.security.secrets.*`; PLATO and ODYSSEY both consume it and PERCEPTION has a documented path (see service configs).
+- `scripts/security/check-secure-config.sh` is wired into `npm run security:check` to fail CI when insecure production config (plaintext secrets or `http://` endpoints) is detected.
+- PLATO's CAPSULE client enforces mTLS (keystore/truststore with secrets pulled from Vault) providing the reference implementation for internal service-to-service TLS.
+
 ---
 
 ## 5. Security Configuration Checklist
@@ -334,6 +339,12 @@ spring.datasource.password=${DB_PASSWORD}
 server.ssl.enabled=false  # TLS terminated at load balancer
 server.forward-headers-strategy=native
 ```
+
+### 5.3 Automated Validation
+
+Run `npm run security:check` (wrapper around `scripts/security/check-secure-config.sh`) in CI to ensure:
+- Production Helm values never fall back to `http://` endpoints or `devpassword`.
+- Application configs (PLATO + ODYSSEY) always declare the shared `butterfly.security.secrets` block before building.
 
 ---
 
@@ -444,4 +455,3 @@ Currently private program. Contact security@254studioz.com for information.
 
 **Document Maintained By:** BUTTERFLY Security Team, 254STUDIOZ  
 **Security Contact:** security@254studioz.com
-

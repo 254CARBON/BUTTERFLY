@@ -1,0 +1,395 @@
+# =============================================================================
+# Phase 1 Integration Release Gate
+# =============================================================================
+# Automated validation that blocks release tagging until Phase 1 criteria pass.
+# Runs on:
+#   - Push to release/* branches
+#   - Manual dispatch for integration validation
+#   - Pre-tag validation workflow
+#
+# Requirements:
+#   - All 17 E2E scenarios must pass (3 consecutive runs)
+#   - SLO targets must be met
+#   - Zero DLQ messages during validation
+#   - Circuit breakers must remain CLOSED
+# =============================================================================
+
+name: Release Gate - Phase 1 Validation
+
+on:
+  push:
+    branches:
+      - 'release/*'
+      - 'main'
+    paths:
+      - 'butterfly-e2e/**'
+      - 'butterfly-common/**'
+      - 'NEXUS/**'
+      - 'butterfly-nexus/**'
+      - 'PERCEPTION/**'
+      - 'CAPSULE/**'
+      - 'ODYSSEY/**'
+      - 'PLATO/**'
+      - 'SYNAPSE/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment for validation'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - canary
+      skip_soak_test:
+        description: 'Skip 24-hour soak test (for quick validation)'
+        required: false
+        default: false
+        type: boolean
+      consecutive_runs:
+        description: 'Number of consecutive successful runs required'
+        required: false
+        default: '3'
+        type: string
+  # Block tag creation until validation passes
+  push:
+    tags:
+      - 'v1.0.0-integration-complete'
+
+env:
+  JAVA_VERSION: '17'
+  NEXUS_URL: ${{ vars.NEXUS_URL || 'http://localhost:8084' }}
+  PROMETHEUS_URL: ${{ vars.PROMETHEUS_URL || 'http://localhost:9090' }}
+  PUSHGATEWAY_URL: ${{ vars.PUSHGATEWAY_URL || '' }}
+  CONSECUTIVE_RUNS: ${{ inputs.consecutive_runs || '3' }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Pre-flight: Verify infrastructure and dependencies
+  # ---------------------------------------------------------------------------
+  preflight:
+    name: Pre-flight Checks
+    runs-on: ubuntu-latest
+    outputs:
+      stack_ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc curl kafkacat
+
+      - name: Build butterfly-common
+        run: |
+          mvn -f butterfly-common/pom.xml clean install -DskipTests -q
+
+      - name: Start infrastructure stack
+        id: stack
+        run: |
+          cd butterfly-e2e
+          FASTPATH_SKIP_STUB=1 ../scripts/dev-up.sh --profile full-stack
+          echo "Stack started"
+
+      - name: Wait for services
+        id: check
+        run: |
+          echo "Waiting for services to be ready..."
+          max_attempts=30
+          attempt=0
+          
+          while [ $attempt -lt $max_attempts ]; do
+            if curl -sf "${NEXUS_URL}/actuator/health" > /dev/null 2>&1; then
+              echo "ready=true" >> $GITHUB_OUTPUT
+              echo "Services are ready"
+              exit 0
+            fi
+            attempt=$((attempt + 1))
+            echo "Attempt $attempt/$max_attempts - waiting for services..."
+            sleep 10
+          done
+          
+          echo "ready=false" >> $GITHUB_OUTPUT
+          echo "Services failed to start"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # E2E Scenarios: Run all 17 scenarios with consecutive passes
+  # ---------------------------------------------------------------------------
+  e2e-scenarios:
+    name: E2E Scenarios (${{ matrix.run }} of ${{ needs.preflight.outputs.consecutive_runs || 3 }})
+    runs-on: ubuntu-latest
+    needs: preflight
+    if: needs.preflight.outputs.stack_ready == 'true'
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        run: [1, 2, 3]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Run E2E scenarios - Golden Path
+        run: |
+          cd butterfly-e2e
+          ./run-scenarios.sh --category golden-path --junit-report results/golden-path-${{ matrix.run }}.xml
+
+      - name: Run E2E scenarios - Temporal Navigation
+        run: |
+          cd butterfly-e2e
+          ./run-scenarios.sh --category temporal-navigation --junit-report results/temporal-${{ matrix.run }}.xml
+
+      - name: Run E2E scenarios - Failure Injection
+        run: |
+          cd butterfly-e2e
+          ./run-scenarios.sh --category failure-injection --junit-report results/failure-${{ matrix.run }}.xml
+
+      - name: Run E2E scenarios - NEXUS Core
+        run: |
+          cd butterfly-e2e
+          ./run-scenarios.sh --category nexus-core --junit-report results/nexus-${{ matrix.run }}.xml
+
+      - name: Run E2E scenarios - Edge Cases
+        run: |
+          cd butterfly-e2e
+          ./run-scenarios.sh --category edge --junit-report results/edge-${{ matrix.run }}.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-results-run-${{ matrix.run }}
+          path: butterfly-e2e/results/*.xml
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # SLO Validation: Check all SLO targets are met
+  # ---------------------------------------------------------------------------
+  slo-validation:
+    name: SLO Validation
+    runs-on: ubuntu-latest
+    needs: [preflight, e2e-scenarios]
+    if: needs.preflight.outputs.stack_ready == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc curl
+
+      - name: Run SLO validation
+        run: |
+          chmod +x butterfly-e2e/validate-slos.sh
+          ./butterfly-e2e/validate-slos.sh \
+            --prometheus-url "${PROMETHEUS_URL}" \
+            --junit-report butterfly-e2e/results/slo-validation.xml \
+            --json-report butterfly-e2e/results/slo-validation.json
+
+      - name: Upload SLO results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: slo-validation-results
+          path: |
+            butterfly-e2e/results/slo-validation.xml
+            butterfly-e2e/results/slo-validation.json
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Resilience Check: DLQ and Circuit Breaker validation
+  # ---------------------------------------------------------------------------
+  resilience-check:
+    name: Resilience Validation
+    runs-on: ubuntu-latest
+    needs: [preflight, e2e-scenarios]
+    if: needs.preflight.outputs.stack_ready == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl kafkacat
+
+      - name: Check DLQ topics
+        id: dlq
+        run: |
+          echo "Checking DLQ topics for messages..."
+          dlq_clean=true
+          
+          for topic in $(kafkacat -b localhost:9092 -L 2>/dev/null | grep "\.dlq$" | awk '{print $2}' || echo ""); do
+            count=$(kafkacat -b localhost:9092 -t "$topic" -C -e -q 2>/dev/null | wc -l)
+            if [ "$count" -gt 0 ]; then
+              echo "::error::DLQ topic $topic has $count messages"
+              dlq_clean=false
+            else
+              echo "DLQ topic $topic is clean"
+            fi
+          done
+          
+          echo "dlq_clean=$dlq_clean" >> $GITHUB_OUTPUT
+
+      - name: Check circuit breakers
+        id: cb
+        run: |
+          echo "Checking circuit breaker states..."
+          cb_response=$(curl -sf "${NEXUS_URL}/actuator/health" | jq -r '.components.circuitBreakers.details // {}')
+          
+          if echo "$cb_response" | grep -q '"state":"OPEN"'; then
+            echo "::error::Some circuit breakers are OPEN"
+            echo "cb_closed=false" >> $GITHUB_OUTPUT
+          else
+            echo "All circuit breakers are CLOSED"
+            echo "cb_closed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate resilience criteria
+        run: |
+          if [ "${{ steps.dlq.outputs.dlq_clean }}" != "true" ]; then
+            echo "::error::DLQ validation failed - messages found in DLQ topics"
+            exit 1
+          fi
+          
+          if [ "${{ steps.cb.outputs.cb_closed }}" != "true" ]; then
+            echo "::error::Circuit breaker validation failed - some breakers are OPEN"
+            exit 1
+          fi
+          
+          echo "Resilience validation passed"
+
+  # ---------------------------------------------------------------------------
+  # Phase 1 Criteria Check: Comprehensive checklist validation
+  # ---------------------------------------------------------------------------
+  phase1-criteria:
+    name: Phase 1 Criteria Check
+    runs-on: ubuntu-latest
+    needs: [e2e-scenarios, slo-validation, resilience-check]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc curl
+
+      - name: Run Phase 1 criteria check
+        run: |
+          chmod +x butterfly-e2e/check-phase1-criteria.sh
+          ./butterfly-e2e/check-phase1-criteria.sh \
+            --prometheus-url "${PROMETHEUS_URL}" \
+            --json-report butterfly-e2e/results/phase1-criteria.json
+
+      - name: Upload criteria results
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase1-criteria-results
+          path: butterfly-e2e/results/phase1-criteria.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # Soak Test (Optional): 24-hour stability validation
+  # ---------------------------------------------------------------------------
+  soak-test:
+    name: Soak Test (24-hour)
+    runs-on: ubuntu-latest
+    needs: phase1-criteria
+    if: ${{ !inputs.skip_soak_test && github.event_name != 'pull_request' }}
+    timeout-minutes: 1500  # 25 hours
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run soak test
+        run: |
+          chmod +x butterfly-e2e/run-soak-test.sh
+          ./butterfly-e2e/run-soak-test.sh \
+            --duration 24h \
+            --prometheus-url "${PROMETHEUS_URL}" \
+            --pushgateway-url "${PUSHGATEWAY_URL}" \
+            --report butterfly-e2e/results/soak-test.json
+
+      - name: Upload soak test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: soak-test-results
+          path: butterfly-e2e/results/soak-test.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # Release Gate: Final approval for v1.0.0-integration-complete
+  # ---------------------------------------------------------------------------
+  release-gate:
+    name: Release Gate Decision
+    runs-on: ubuntu-latest
+    needs: [phase1-criteria]
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Evaluate gate status
+        id: gate
+        run: |
+          # Check all required jobs passed
+          if [ "${{ needs.phase1-criteria.result }}" != "success" ]; then
+            echo "gate_status=blocked" >> $GITHUB_OUTPUT
+            echo "::error::Phase 1 criteria not met - release blocked"
+            exit 1
+          fi
+          
+          echo "gate_status=approved" >> $GITHUB_OUTPUT
+          echo "Phase 1 validation passed - release approved"
+
+      - name: Push validation metrics
+        if: env.PUSHGATEWAY_URL != ''
+        run: |
+          cat << EOF | curl -sf --data-binary @- "${PUSHGATEWAY_URL}/metrics/job/phase1_release_gate/instance/${{ github.run_id }}"
+          # HELP butterfly_phase1_release_gate_status Release gate status (1=approved, 0=blocked)
+          # TYPE butterfly_phase1_release_gate_status gauge
+          butterfly_phase1_release_gate_status{branch="${{ github.ref_name }}"} ${{ steps.gate.outputs.gate_status == 'approved' && '1' || '0' }}
+          # HELP butterfly_phase1_release_gate_timestamp Timestamp of release gate evaluation
+          # TYPE butterfly_phase1_release_gate_timestamp gauge
+          butterfly_phase1_release_gate_timestamp $(date +%s)
+          EOF
+
+      - name: Create release gate badge
+        if: steps.gate.outputs.gate_status == 'approved'
+        run: |
+          echo "## Phase 1 Release Gate: APPROVED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All Phase 1 criteria have been met. The release is approved for tagging." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Obtain integration team sign-off" >> $GITHUB_STEP_SUMMARY
+          echo "2. Run \`./scripts/tag-integration-complete.sh\` to create the release tag" >> $GITHUB_STEP_SUMMARY
+          echo "3. Monitor production deployment" >> $GITHUB_STEP_SUMMARY
+
+      - name: Block release on failure
+        if: steps.gate.outputs.gate_status != 'approved'
+        run: |
+          echo "## Phase 1 Release Gate: BLOCKED" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Phase 1 criteria have NOT been met. Review the failed checks above." >> $GITHUB_STEP_SUMMARY
+          exit 1
+

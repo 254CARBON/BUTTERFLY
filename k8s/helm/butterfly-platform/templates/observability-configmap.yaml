@@ -1,0 +1,30 @@
+{{- if .Values.observability.enabled }}
+{{- $fullname := include "butterfly-platform.fullname" . -}}
+{{- $promName := default (printf "%s-slo-rules" $fullname) .Values.observability.prometheus.configMapName -}}
+{{- $grafanaName := default (printf "%s-grafana-dashboards" $fullname) .Values.observability.grafana.configMapName -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $promName }}
+  labels:
+    {{- include "butterfly-platform.labels" . | nindent 4 }}
+    {{- range $key, $value := .Values.observability.prometheus.labels }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+data:
+  butterfly-slo-recording-rules.yaml: |-
+{{ (.Files.Get "config/prometheus/butterfly-slo-recording-rules.yaml") | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $grafanaName }}
+  labels:
+    {{- include "butterfly-platform.labels" . | nindent 4 }}
+    {{- range $key, $value := .Values.observability.grafana.labels }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+data:
+  butterfly-ecosystem-slo-dashboard.json: |-
+{{ (.Files.Get "config/grafana/butterfly-ecosystem-slo-dashboard.json") | indent 4 }}
+{{- end }}

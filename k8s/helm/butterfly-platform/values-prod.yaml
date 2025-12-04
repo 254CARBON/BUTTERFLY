@@ -13,7 +13,7 @@ global:
   
   kafka:
     bootstrapServers: kafka-prod:9093
-    schemaRegistryUrl: http://schema-registry-prod:8081
+    schemaRegistryUrl: https://schema-registry-prod:8081
   
   redis:
     host: redis-prod
@@ -105,3 +105,14 @@ serviceMonitor:
 networkPolicies:
   enabled: true
 
+observability:
+  enabled: true
+  prometheus:
+    labels:
+      release: prometheus
+      role: slo-rules
+      env: prod
+  grafana:
+    labels:
+      grafana_dashboard: "1"
+      env: prod

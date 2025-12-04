@@ -1,0 +1,256 @@
+# Reusable Coverage Check Workflow
+#
+# This workflow provides consistent coverage checking across all BUTTERFLY services.
+# It enforces the coverage thresholds defined in docs/development/testing-strategy.md:
+# - 80% for services (CAPSULE, ODYSSEY, PERCEPTION, PLATO, NEXUS)
+# - 90% for butterfly-common
+#
+# Usage in service CI workflows:
+#   jobs:
+#     coverage:
+#       uses: ./.github/workflows/coverage-check.yml
+#       with:
+#         service-name: PERCEPTION
+#         working-directory: PERCEPTION
+#         coverage-threshold: 80
+#       secrets: inherit
+
+name: Coverage Check
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Name of the service (for reporting)'
+        required: true
+        type: string
+      working-directory:
+        description: 'Working directory for the service'
+        required: true
+        type: string
+      coverage-threshold:
+        description: 'Minimum coverage percentage required (default: 80)'
+        required: false
+        type: number
+        default: 80
+      coverage-hard-minimum:
+        description: 'Hard minimum coverage that fails the build (default: 70)'
+        required: false
+        type: number
+        default: 70
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '17'
+      install-common:
+        description: 'Whether to install butterfly-common first'
+        required: false
+        type: boolean
+        default: true
+      excluded-groups:
+        description: 'Test groups to exclude (e.g., chaos,integration)'
+        required: false
+        type: string
+        default: 'chaos'
+      codecov-flags:
+        description: 'Codecov flags for this service'
+        required: false
+        type: string
+        default: ''
+
+env:
+  JAVA_DISTRIBUTION: 'temurin'
+
+jobs:
+  coverage:
+    name: Code Coverage - ${{ inputs.service-name }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for accurate diff coverage
+
+      - name: Set up JDK ${{ inputs.java-version }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          cache: maven
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Install butterfly-common
+        if: ${{ inputs.install-common }}
+        run: mvn -B -f ../butterfly-common/pom.xml install -DskipTests -q
+
+      - name: Install butterfly-testing
+        if: ${{ inputs.install-common }}
+        run: mvn -B -f ../butterfly-testing/pom.xml install -DskipTests -q
+        continue-on-error: true  # May not exist yet during initial rollout
+
+      - name: Run tests with coverage
+        run: |
+          if [ -n "${{ inputs.excluded-groups }}" ]; then
+            mvn test jacoco:report -B -DexcludedGroups=${{ inputs.excluded-groups }}
+          else
+            mvn test jacoco:report -B
+          fi
+
+      - name: Generate aggregate coverage report
+        run: |
+          # Try aggregate report for multi-module projects
+          mvn jacoco:report-aggregate -B || true
+
+      - name: Find coverage report
+        id: find-report
+        run: |
+          # Look for aggregate report first, then individual module reports
+          if [ -f "target/site/jacoco-aggregate/jacoco.xml" ]; then
+            echo "report_path=target/site/jacoco-aggregate/jacoco.xml" >> $GITHUB_OUTPUT
+            echo "html_path=target/site/jacoco-aggregate/index.html" >> $GITHUB_OUTPUT
+          elif [ -f "target/site/jacoco/jacoco.xml" ]; then
+            echo "report_path=target/site/jacoco/jacoco.xml" >> $GITHUB_OUTPUT
+            echo "html_path=target/site/jacoco/index.html" >> $GITHUB_OUTPUT
+          else
+            # Find any jacoco.xml in submodules
+            REPORT=$(find . -name "jacoco.xml" -path "*/site/jacoco/*" | head -1)
+            if [ -n "$REPORT" ]; then
+              echo "report_path=$REPORT" >> $GITHUB_OUTPUT
+              echo "html_path=$(dirname $REPORT)/index.html" >> $GITHUB_OUTPUT
+            else
+              echo "report_path=" >> $GITHUB_OUTPUT
+              echo "html_path=" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Upload coverage to Codecov
+        if: ${{ steps.find-report.outputs.report_path != '' }}
+        uses: codecov/codecov-action@v4
+        with:
+          files: ${{ inputs.working-directory }}/${{ steps.find-report.outputs.report_path }}
+          flags: ${{ inputs.codecov-flags || inputs.service-name }}
+          name: ${{ inputs.service-name }}-coverage
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+      - name: Check coverage threshold
+        id: check-coverage
+        run: |
+          HTML_PATH="${{ steps.find-report.outputs.html_path }}"
+          
+          if [ -z "$HTML_PATH" ] || [ ! -f "$HTML_PATH" ]; then
+            echo "::warning::Coverage report not found"
+            echo "coverage=unknown" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Extract total coverage from HTML report
+          COVERAGE=$(grep -o 'Total[^%]*%' "$HTML_PATH" | grep -o '[0-9]*%' | head -1 | tr -d '%' || echo "0")
+          
+          echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+          echo "Code coverage: ${COVERAGE}%"
+          
+          # Check against threshold
+          THRESHOLD=${{ inputs.coverage-threshold }}
+          HARD_MIN=${{ inputs.coverage-hard-minimum }}
+          
+          if [ "$COVERAGE" -lt "$HARD_MIN" ]; then
+            echo "::error::Coverage ${COVERAGE}% is below hard minimum of ${HARD_MIN}%"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          elif [ "$COVERAGE" -lt "$THRESHOLD" ]; then
+            echo "::warning::Coverage ${COVERAGE}% is below target of ${THRESHOLD}%"
+            echo "status=warning" >> $GITHUB_OUTPUT
+          else
+            echo "Coverage ${COVERAGE}% meets target of ${THRESHOLD}%"
+            echo "status=passed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate coverage summary
+        if: always()
+        run: |
+          COVERAGE="${{ steps.check-coverage.outputs.coverage }}"
+          STATUS="${{ steps.check-coverage.outputs.status }}"
+          THRESHOLD=${{ inputs.coverage-threshold }}
+          HARD_MIN=${{ inputs.coverage-hard-minimum }}
+          
+          echo "## ${{ inputs.service-name }} Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$COVERAGE" = "unknown" ]; then
+            echo "⚠️ Coverage report not found" >> $GITHUB_STEP_SUMMARY
+          else
+            # Determine emoji based on status
+            if [ "$STATUS" = "passed" ]; then
+              EMOJI="✅"
+            elif [ "$STATUS" = "warning" ]; then
+              EMOJI="⚠️"
+            else
+              EMOJI="❌"
+            fi
+            
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Line Coverage | ${EMOJI} ${COVERAGE}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Target | ${THRESHOLD}% |" >> $GITHUB_STEP_SUMMARY
+            echo "| Hard Minimum | ${HARD_MIN}% |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$STATUS" = "passed" ]; then
+              echo "✅ **Coverage meets requirements**" >> $GITHUB_STEP_SUMMARY
+            elif [ "$STATUS" = "warning" ]; then
+              echo "⚠️ **Coverage below target but above hard minimum**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Consider improving coverage before the next release." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Coverage below hard minimum - build failed**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Add more tests to improve coverage above ${HARD_MIN}%." >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Coverage thresholds defined in [testing-strategy.md](../docs/development/testing-strategy.md)*" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ inputs.service-name }}
+          path: |
+            ${{ inputs.working-directory }}/target/site/jacoco*/
+            ${{ inputs.working-directory }}/**/target/site/jacoco*/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Post coverage to PR
+        if: github.event_name == 'pull_request' && steps.find-report.outputs.report_path != ''
+        uses: madrapps/jacoco-report@v1.6.1
+        with:
+          paths: ${{ inputs.working-directory }}/${{ steps.find-report.outputs.report_path }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          min-coverage-overall: ${{ inputs.coverage-hard-minimum }}
+          min-coverage-changed-files: ${{ inputs.coverage-threshold }}
+          title: '${{ inputs.service-name }} Coverage Report'
+          update-comment: true
+          pass-emoji: '✅'
+          fail-emoji: '❌'
+        continue-on-error: true  # Don't fail if PR comment fails
+
+    outputs:
+      coverage: ${{ steps.check-coverage.outputs.coverage }}
+      status: ${{ steps.check-coverage.outputs.status }}
+

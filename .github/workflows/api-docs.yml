@@ -1,0 +1,455 @@
+# BUTTERFLY API Documentation Generation Workflow
+# 
+# This workflow automatically generates and publishes OpenAPI documentation
+# for all BUTTERFLY services using springdoc-openapi.
+#
+# Features:
+# - Generates OpenAPI specs from annotated Spring Boot services
+# - Publishes combined API documentation to GitHub Pages
+# - Validates OpenAPI schemas
+# - Generates SDK clients (optional)
+#
+# Related Epic: .github/dx-issues/epic-api-docs.md
+
+name: API Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/src/main/java/**'
+      - '**/pom.xml'
+      - '.github/workflows/api-docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/src/main/java/**'
+      - '**/pom.xml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to GitHub Pages'
+        required: false
+        default: 'false'
+        type: boolean
+      generate_sdk:
+        description: 'Generate SDK clients'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  JAVA_VERSION: '21'
+  DOCS_OUTPUT_DIR: 'docs/api-output'
+
+jobs:
+  # ===========================================================================
+  # Generate OpenAPI Specifications
+  # ===========================================================================
+  generate-specs:
+    name: Generate OpenAPI Specs
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: capsule
+            path: CAPSULE
+            port: 8081
+          - name: odyssey
+            path: ODYSSEY/odyssey-core
+            port: 8082
+          - name: perception
+            path: PERCEPTION/perception-api
+            port: 8083
+          - name: plato
+            path: PLATO
+            port: 8084
+          - name: nexus
+            path: butterfly-nexus
+            port: 8085
+          - name: synapse
+            path: SYNAPSE
+            port: 8086
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Install dependencies
+        run: |
+          mvn -B -f butterfly-parent/pom.xml install -DskipTests
+          mvn -B -f butterfly-common/pom.xml install -DskipTests
+
+      - name: Start service for OpenAPI generation
+        working-directory: ${{ matrix.service.path }}
+        run: |
+          # Build the service
+          mvn -B package -DskipTests
+          
+          # Start service in background with test profile
+          java -jar target/*.jar \
+            --spring.profiles.active=test,openapi \
+            --server.port=${{ matrix.service.port }} \
+            --springdoc.api-docs.enabled=true \
+            --springdoc.swagger-ui.enabled=false &
+          
+          # Wait for service to be ready
+          echo "Waiting for ${{ matrix.service.name }} to start..."
+          timeout 120 bash -c 'until curl -sf http://localhost:${{ matrix.service.port }}/actuator/health; do sleep 2; done'
+          echo "${{ matrix.service.name }} is ready"
+
+      - name: Download OpenAPI spec
+        run: |
+          mkdir -p ${{ env.DOCS_OUTPUT_DIR }}
+          curl -sf http://localhost:${{ matrix.service.port }}/v3/api-docs \
+            -o ${{ env.DOCS_OUTPUT_DIR }}/${{ matrix.service.name }}-openapi.json
+          
+          # Also get YAML version
+          curl -sf http://localhost:${{ matrix.service.port }}/v3/api-docs.yaml \
+            -o ${{ env.DOCS_OUTPUT_DIR }}/${{ matrix.service.name }}-openapi.yaml
+
+      - name: Validate OpenAPI spec
+        uses: char0n/swagger-editor-validate@v1
+        with:
+          definition-file: ${{ env.DOCS_OUTPUT_DIR }}/${{ matrix.service.name }}-openapi.json
+
+      - name: Upload OpenAPI spec artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec-${{ matrix.service.name }}
+          path: |
+            ${{ env.DOCS_OUTPUT_DIR }}/${{ matrix.service.name }}-openapi.json
+            ${{ env.DOCS_OUTPUT_DIR }}/${{ matrix.service.name }}-openapi.yaml
+          retention-days: 30
+
+  # ===========================================================================
+  # Build Combined Documentation
+  # ===========================================================================
+  build-docs:
+    name: Build API Documentation
+    runs-on: ubuntu-latest
+    needs: generate-specs
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all OpenAPI specs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: openapi-spec-*
+          path: ${{ env.DOCS_OUTPUT_DIR }}
+          merge-multiple: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Redoc CLI
+        run: npm install -g @redocly/cli
+
+      - name: Create combined OpenAPI specification
+        run: |
+          # Create a combined OpenAPI spec with links to all services
+          cat > ${{ env.DOCS_OUTPUT_DIR }}/butterfly-combined.yaml << 'EOF'
+          openapi: 3.0.3
+          info:
+            title: BUTTERFLY Ecosystem API
+            description: |
+              # BUTTERFLY Platform API Documentation
+              
+              This documentation covers all services in the BUTTERFLY ecosystem:
+              
+              ## Services
+              
+              | Service | Description | API Spec |
+              |---------|-------------|----------|
+              | **CAPSULE** | Time capsule state management | [View Spec](./capsule-openapi.yaml) |
+              | **ODYSSEY** | World-scale understanding engine | [View Spec](./odyssey-openapi.yaml) |
+              | **PERCEPTION** | Signal acquisition & reasoning | [View Spec](./perception-openapi.yaml) |
+              | **PLATO** | AI reasoning & LLM orchestration | [View Spec](./plato-openapi.yaml) |
+              | **NEXUS** | Authentication & authorization | [View Spec](./nexus-openapi.yaml) |
+              | **SYNAPSE** | External system connector mesh | [View Spec](./synapse-openapi.yaml) |
+              
+              ## Quick Links
+              
+              - [GitHub Repository](https://github.com/z254/butterfly)
+              - [Grafana Dashboards](/d/butterfly-ecosystem-slo)
+              - [Runbooks](https://docs.butterfly.example.com/runbooks)
+              
+            version: '1.0.0'
+            contact:
+              name: BUTTERFLY Platform Team
+              email: platform@example.com
+            license:
+              name: Proprietary
+          servers:
+            - url: https://api.butterfly.example.com
+              description: Production
+            - url: https://api-staging.butterfly.example.com
+              description: Staging
+          tags:
+            - name: CAPSULE
+              description: Time capsule and state management
+            - name: ODYSSEY
+              description: World-scale understanding and strategy
+            - name: PERCEPTION
+              description: Signal acquisition and intelligence
+            - name: PLATO
+              description: AI reasoning and feature engineering
+            - name: NEXUS
+              description: Authentication and identity
+            - name: SYNAPSE
+              description: External system integration
+          paths: {}
+          EOF
+
+      - name: Generate HTML documentation
+        run: |
+          mkdir -p docs/api
+          
+          # Generate individual service docs
+          for spec in ${{ env.DOCS_OUTPUT_DIR }}/*-openapi.yaml; do
+            service=$(basename "$spec" -openapi.yaml)
+            echo "Generating docs for $service..."
+            redocly build-docs "$spec" --output "docs/api/${service}.html" --title "BUTTERFLY $service API"
+          done
+          
+          # Generate landing page
+          redocly build-docs "${{ env.DOCS_OUTPUT_DIR }}/butterfly-combined.yaml" \
+            --output "docs/api/index.html" \
+            --title "BUTTERFLY Platform API"
+
+      - name: Create navigation page
+        run: |
+          cat > docs/api/services.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>BUTTERFLY API Documentation</title>
+            <style>
+              :root {
+                --bg-primary: #0d1117;
+                --bg-secondary: #161b22;
+                --text-primary: #c9d1d9;
+                --text-secondary: #8b949e;
+                --accent: #58a6ff;
+                --border: #30363d;
+              }
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+                background: var(--bg-primary);
+                color: var(--text-primary);
+                margin: 0;
+                padding: 2rem;
+                min-height: 100vh;
+              }
+              .container {
+                max-width: 1200px;
+                margin: 0 auto;
+              }
+              h1 {
+                font-size: 2.5rem;
+                margin-bottom: 0.5rem;
+                background: linear-gradient(135deg, #58a6ff 0%, #a371f7 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+              }
+              .subtitle {
+                color: var(--text-secondary);
+                font-size: 1.25rem;
+                margin-bottom: 2rem;
+              }
+              .services {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                gap: 1.5rem;
+              }
+              .service-card {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border);
+                border-radius: 12px;
+                padding: 1.5rem;
+                transition: transform 0.2s, border-color 0.2s;
+              }
+              .service-card:hover {
+                transform: translateY(-4px);
+                border-color: var(--accent);
+              }
+              .service-card h2 {
+                margin: 0 0 0.5rem 0;
+                font-size: 1.5rem;
+              }
+              .service-card p {
+                color: var(--text-secondary);
+                margin: 0 0 1rem 0;
+              }
+              .service-card a {
+                display: inline-block;
+                color: var(--accent);
+                text-decoration: none;
+                padding: 0.5rem 1rem;
+                border: 1px solid var(--accent);
+                border-radius: 6px;
+                transition: background 0.2s;
+              }
+              .service-card a:hover {
+                background: rgba(88, 166, 255, 0.1);
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>BUTTERFLY Platform</h1>
+              <p class="subtitle">API Documentation for the BUTTERFLY Ecosystem</p>
+              <div class="services">
+                <div class="service-card">
+                  <h2>CAPSULE</h2>
+                  <p>Time capsule state management and historical data storage</p>
+                  <a href="./capsule.html">View API Docs →</a>
+                </div>
+                <div class="service-card">
+                  <h2>ODYSSEY</h2>
+                  <p>World-scale understanding and strategy engine</p>
+                  <a href="./odyssey.html">View API Docs →</a>
+                </div>
+                <div class="service-card">
+                  <h2>PERCEPTION</h2>
+                  <p>Signal acquisition, intelligence, and reasoning</p>
+                  <a href="./perception.html">View API Docs →</a>
+                </div>
+                <div class="service-card">
+                  <h2>PLATO</h2>
+                  <p>AI reasoning, feature engineering, and LLM orchestration</p>
+                  <a href="./plato.html">View API Docs →</a>
+                </div>
+                <div class="service-card">
+                  <h2>NEXUS</h2>
+                  <p>Authentication, authorization, and identity management</p>
+                  <a href="./nexus.html">View API Docs →</a>
+                </div>
+                <div class="service-card">
+                  <h2>SYNAPSE</h2>
+                  <p>External system connector mesh and integration hub</p>
+                  <a href="./synapse.html">View API Docs →</a>
+                </div>
+              </div>
+            </div>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload documentation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-documentation
+          path: docs/api
+          retention-days: 30
+
+  # ===========================================================================
+  # Publish to GitHub Pages
+  # ===========================================================================
+  publish:
+    name: Publish to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build-docs
+    if: github.ref == 'refs/heads/main' || github.event.inputs.publish == 'true'
+    
+    permissions:
+      pages: write
+      id-token: write
+    
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    
+    steps:
+      - name: Download documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: api-documentation
+          path: docs/api
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/api
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # ===========================================================================
+  # Generate SDK Clients (Optional)
+  # ===========================================================================
+  generate-sdk:
+    name: Generate SDK Clients
+    runs-on: ubuntu-latest
+    needs: generate-specs
+    if: github.event.inputs.generate_sdk == 'true'
+    
+    strategy:
+      matrix:
+        language: [typescript, python]
+        service: [capsule, odyssey, perception, plato, nexus, synapse]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download OpenAPI spec
+        uses: actions/download-artifact@v4
+        with:
+          name: openapi-spec-${{ matrix.service }}
+          path: specs
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install OpenAPI Generator
+        run: npm install -g @openapitools/openapi-generator-cli
+
+      - name: Generate ${{ matrix.language }} SDK
+        run: |
+          mkdir -p sdk/${{ matrix.language }}/${{ matrix.service }}
+          
+          case "${{ matrix.language }}" in
+            typescript)
+              openapi-generator-cli generate \
+                -i specs/${{ matrix.service }}-openapi.json \
+                -g typescript-axios \
+                -o sdk/typescript/${{ matrix.service }} \
+                --additional-properties=supportsES6=true,npmName=@butterfly/${{ matrix.service }}-client
+              ;;
+            python)
+              openapi-generator-cli generate \
+                -i specs/${{ matrix.service }}-openapi.json \
+                -g python \
+                -o sdk/python/${{ matrix.service }} \
+                --additional-properties=packageName=butterfly_${{ matrix.service }}_client
+              ;;
+          esac
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ matrix.language }}-${{ matrix.service }}
+          path: sdk/${{ matrix.language }}/${{ matrix.service }}
+          retention-days: 30
+

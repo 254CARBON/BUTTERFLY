@@ -85,6 +85,19 @@ serviceMonitor:
   labels:
     release: prometheus
 
+observability:
+  enabled: true
+  prometheus:
+    configMapName: ""
+    labels:
+      release: prometheus
+      role: slo-rules
+  grafana:
+    configMapName: ""
+    labels:
+      grafana_dashboard: "1"
+      app: grafana
+
 # =============================================================================
 # Network Policies
 # =============================================================================
@@ -96,4 +109,3 @@ networkPolicies:
 # =============================================================================
 podSecurityPolicy:
   enabled: false
-

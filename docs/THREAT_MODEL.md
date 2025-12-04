@@ -326,8 +326,9 @@ HORIZONBOX Fusion → QUANTUMROOM Fusion → Strategy Synthesis
 | JWT validation | Spring Security `SecurityFilterChain` | Planned |
 | Token expiration | Short-lived tokens (1h), refresh tokens | Planned |
 | Scope enforcement | `@PreAuthorize` annotations | Planned |
-| API key rotation | Automated rotation via Vault | Documented |
-| mTLS for services | Certificate-based auth | Planned |
+| API key rotation | Automated rotation via Vault | Active |
+| Centralized SecretProvider | `butterfly-security-starter` + Vault | Active |
+| mTLS for services | PLATO↔CAPSULE client certificates | In Progress |
 
 ### 7.2 Input Validation
 
@@ -355,6 +356,7 @@ HORIZONBOX Fusion → QUANTUMROOM Fusion → Strategy Synthesis
 | TLS 1.3 | Load balancer termination | Planned |
 | HSTS headers | `Strict-Transport-Security` | Planned |
 | Certificate pinning | For inter-service calls | Planned |
+| PLATO↔CAPSULE mTLS | WebClient keystore + Vault secrets | Active |
 | Secure cookies | `HttpOnly`, `Secure`, `SameSite` | Planned |
 
 ### 7.5 Security Headers
@@ -402,7 +404,7 @@ HORIZONBOX Fusion → QUANTUMROOM Fusion → Strategy Synthesis
 | A02 Cryptographic Failures | TLS, secure secrets | Partial |
 | A03 Injection | Input validation, parameterized queries | Active |
 | A04 Insecure Design | Threat modeling, security reviews | Active |
-| A05 Security Misconfiguration | Secure defaults, hardening | Planned |
+| A05 Security Misconfiguration | Secure defaults, CI config lint (`security:check`) | Active |
 | A06 Vulnerable Components | OWASP dependency check | Active |
 | A07 Auth Failures | JWT validation, session management | Planned |
 | A08 Software/Data Integrity | Signed artifacts, SBOM | Planned |
@@ -432,4 +434,3 @@ HORIZONBOX Fusion → QUANTUMROOM Fusion → Strategy Synthesis
 
 **Document Maintained By:** BUTTERFLY Security Team, 254STUDIOZ  
 **Security Contact:** security@254studioz.com
-

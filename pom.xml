@@ -30,8 +30,9 @@
         <spring-boot.version>3.2.0</spring-boot.version>
         <spring-cloud.version>2023.0.0</spring-cloud.version>
 
-        <!-- Shared Library -->
+        <!-- Shared Libraries -->
         <butterfly-common.version>0.2.1</butterfly-common.version>
+        <butterfly-testing.version>0.1.0</butterfly-testing.version>
 
         <!-- Kafka & Messaging -->
         <kafka.version>3.6.0</kafka.version>
@@ -101,6 +102,14 @@
                 <version>${butterfly-common.version}</version>
             </dependency>
 
+            <!-- BUTTERFLY Testing Library -->
+            <dependency>
+                <groupId>com.z254.butterfly</groupId>
+                <artifactId>butterfly-testing</artifactId>
+                <version>${butterfly-testing.version}</version>
+                <scope>test</scope>
+            </dependency>
+
             <!-- Kafka -->
             <dependency>
                 <groupId>org.apache.kafka</groupId>
@@ -143,6 +152,11 @@
             <dependency>
                 <groupId>com.fasterxml.jackson.core</groupId>
                 <artifactId>jackson-databind</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-core</artifactId>
                 <version>${jackson.version}</version>
             </dependency>
             <dependency>
@@ -273,6 +287,7 @@
                     <configuration>
                         <source>${java.version}</source>
                         <target>${java.version}</target>
+                        <parameters>true</parameters>
                         <annotationProcessorPaths>
                             <path>
                                 <groupId>org.projectlombok</groupId>
@@ -462,4 +477,3 @@
         </profile>
     </profiles>
 </project>
-

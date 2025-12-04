@@ -1,0 +1,216 @@
+# Cross-ecosystem SLO recording rules and alerts packaged for the Helm chart.
+groups:
+  - name: butterfly_cross_service_recording_rules
+    interval: 30s
+    rules:
+      - record: butterfly:slo_target:availability_ratio
+        labels:
+          service: "perception"
+        expr: 0.999
+      - record: butterfly:slo_target:availability_ratio
+        labels:
+          service: "capsule"
+        expr: 0.999
+      - record: butterfly:slo_target:availability_ratio
+        labels:
+          service: "odyssey"
+        expr: 0.999
+      - record: butterfly:slo_target:availability_ratio
+        labels:
+          service: "plato"
+        expr: 0.995
+      - record: butterfly:slo_target:availability_ratio
+        labels:
+          service: "nexus"
+        expr: 0.9999
+      - record: butterfly:slo_target:availability_ratio
+        labels:
+          service: "synapse"
+        expr: 0.999
+
+      - record: butterfly:slo_latency_target:p95_seconds
+        labels:
+          service: "perception"
+        expr: 0.2
+      - record: butterfly:slo_latency_target:p95_seconds
+        labels:
+          service: "capsule"
+        expr: 0.1
+      - record: butterfly:slo_latency_target:p95_seconds
+        labels:
+          service: "odyssey"
+        expr: 0.5
+      - record: butterfly:slo_latency_target:p95_seconds
+        labels:
+          service: "plato"
+        expr: 5
+      - record: butterfly:slo_latency_target:p95_seconds
+        labels:
+          service: "nexus"
+        expr: 0.05
+      - record: butterfly:slo_latency_target:p95_seconds
+        labels:
+          service: "synapse"
+        expr: 0.2
+
+      - record: butterfly:slo_latency_target:p99_seconds
+        labels:
+          service: "perception"
+        expr: 0.5
+      - record: butterfly:slo_latency_target:p99_seconds
+        labels:
+          service: "capsule"
+        expr: 0.2
+      - record: butterfly:slo_latency_target:p99_seconds
+        labels:
+          service: "odyssey"
+        expr: 2
+      - record: butterfly:slo_latency_target:p99_seconds
+        labels:
+          service: "plato"
+        expr: 5
+      - record: butterfly:slo_latency_target:p99_seconds
+        labels:
+          service: "nexus"
+        expr: 0.1
+      - record: butterfly:slo_latency_target:p99_seconds
+        labels:
+          service: "synapse"
+        expr: 0.3
+
+      - record: butterfly:slo_requests_total:rate5m
+        expr: |
+          sum by (service) (
+            label_replace(rate(http_server_requests_seconds_count[5m]), "service", "$1", "application", "(.*)")
+          )
+
+      - record: butterfly:slo_error_ratio:rate5m
+        expr: |
+          sum by (service) (
+            label_replace(rate(http_server_requests_seconds_count{status=~"5.."}[5m]), "service", "$1", "application", "(.*)")
+          )
+          /
+          clamp_min(
+            sum by (service) (
+              label_replace(rate(http_server_requests_seconds_count[5m]), "service", "$1", "application", "(.*)")
+            ),
+            0.000001
+          )
+
+      - record: butterfly:slo_availability:ratio_rate5m
+        expr: |
+          clamp_max(
+            1 - butterfly:slo_error_ratio:rate5m,
+            1
+          )
+
+      - record: butterfly:http_server_requests_seconds_bucket:rate5m
+        expr: |
+          sum by (service, le) (
+            label_replace(rate(http_server_requests_seconds_bucket[5m]), "service", "$1", "application", "(.*)")
+          )
+      - record: butterfly:slo_latency:p95_seconds
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (service, le) (butterfly:http_server_requests_seconds_bucket:rate5m)
+          )
+      - record: butterfly:slo_latency:p99_seconds
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (service, le) (butterfly:http_server_requests_seconds_bucket:rate5m)
+          )
+
+      - record: butterfly:slo_saturation:cpu_ratio
+        expr: |
+          clamp_max(
+            avg by (service) (
+              label_replace(system_cpu_usage, "service", "$1", "application", "(.*)")
+            ),
+            1
+          )
+      - record: butterfly:slo_saturation:jvm_heap_ratio
+        expr: |
+          sum by (service) (
+            label_replace(jvm_memory_used_bytes{area="heap"}, "service", "$1", "application", "(.*)")
+          )
+          /
+          clamp_min(
+            sum by (service) (
+              label_replace(jvm_memory_max_bytes{area="heap"}, "service", "$1", "application", "(.*)")
+            ),
+            1
+          )
+
+      - record: butterfly:slo_error_budget_burn_rate:ratio
+        expr: |
+          clamp_min(
+            (
+              butterfly:slo_target:availability_ratio
+              - on(service) butterfly:slo_availability:ratio_rate5m
+            )
+            /
+            (1 - butterfly:slo_target:availability_ratio),
+            0
+          )
+
+      - record: butterfly:slo_error_budget_remaining:ratio
+        expr: |
+          clamp_max(
+            1 - clamp_min(butterfly:slo_error_budget_burn_rate:ratio, 1),
+            1
+          )
+
+  - name: butterfly_cross_service_slo_alerts
+    interval: 30s
+    rules:
+      - alert: ServiceSLOFastBurn
+        expr: butterfly:slo_error_budget_burn_rate:ratio > 14.4
+        for: 5m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "{{ $labels.service | toUpper }} is consuming error budget at >14.4x"
+          description: "Error budget for {{ $labels.service }} will be exhausted in ~2 hours (5m fast burn)."
+          runbook_url: "https://docs.butterfly.254carbon.com/operations/runbooks/slo-breach"
+
+      - alert: ServiceSLOSlowBurn
+        expr: butterfly:slo_error_budget_burn_rate:ratio > 3
+        for: 30m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "{{ $labels.service | toUpper }} error budget slow burn (>3x)"
+          description: "{{ $labels.service }} availability below target over the last 30m. Investigate sustained degradation."
+          runbook_url: "https://docs.butterfly.254carbon.com/operations/runbooks/slo-breach"
+
+      - alert: ServiceLatencySLOBreach
+        expr: |
+          butterfly:slo_latency:p95_seconds
+          >
+          on(service) butterfly:slo_latency_target:p95_seconds
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "{{ $labels.service | toUpper }} p95 latency above target"
+          description: "p95 latency is {{ $value | humanizeDuration }}, exceeding the documented target in butterfly:slo_latency_target:p95_seconds for {{ $labels.service }}."
+          runbook_url: "https://docs.butterfly.254carbon.com/operations/runbooks/common-issues#high-latency"
+
+      - alert: ServiceSLOSaturationHigh
+        expr: |
+          (butterfly:slo_saturation:cpu_ratio > 0.85)
+          or
+          (butterfly:slo_saturation:jvm_heap_ratio > 0.9)
+        for: 15m
+        labels:
+          severity: warning
+          slo: saturation
+        annotations:
+          summary: "{{ $labels.service | toUpper }} saturation approaching limits"
+          description: "CPU or heap usage exceeded safe thresholds. Consider scaling {{ $labels.service }} or investigating leaks."
+          runbook_url: "https://docs.butterfly.254carbon.com/operations/runbooks/common-issues#resource-exhaustion"

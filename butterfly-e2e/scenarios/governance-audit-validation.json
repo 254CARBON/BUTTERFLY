@@ -1,0 +1,375 @@
+{
+  "name": "governance-audit-validation",
+  "description": "End-to-end governance flow with comprehensive audit trail validation",
+  "version": "1.0.0",
+  "category": "governance",
+  "tags": ["governance", "audit", "plato", "synapse", "integration"],
+  "timeout_seconds": 120,
+  "prerequisites": {
+    "services": ["perception", "capsule", "odyssey", "nexus", "plato", "synapse"],
+    "topics": ["perception.signals", "plato.plan.events", "synapse.action.events"]
+  },
+  "variables": {
+    "entity_id": "rim:entity:test:governance-audit-${timestamp}",
+    "correlation_id": "audit-test-${uuid}",
+    "tenant_id": "test-tenant"
+  },
+  "steps": [
+    {
+      "name": "ingest-perception-signal",
+      "description": "Ingest a PERCEPTION signal to trigger the governance flow",
+      "action": {
+        "type": "http",
+        "method": "POST",
+        "url": "${PERCEPTION_URL}/api/v1/signals",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        },
+        "body": {
+          "entityId": "${entity_id}",
+          "signalType": "METRIC",
+          "source": "governance-audit-test",
+          "payload": {
+            "metric": "test.governance.trigger",
+            "value": 1.0,
+            "timestamp": "${timestamp_iso}"
+          }
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 201},
+        {"type": "jsonpath", "path": "$.status", "expected": "ACCEPTED"}
+      ],
+      "retry": {"max_attempts": 3, "delay_ms": 1000}
+    },
+    {
+      "name": "wait-capsule-persist",
+      "description": "Wait for CAPSULE to persist the historical record",
+      "action": {
+        "type": "wait",
+        "duration_ms": 2000
+      }
+    },
+    {
+      "name": "verify-capsule-record",
+      "description": "Verify CAPSULE has the historical record",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "${CAPSULE_URL}/api/v1/capsules/${entity_id}",
+        "headers": {
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 200},
+        {"type": "jsonpath", "path": "$.entityId", "expected": "${entity_id}"}
+      ],
+      "retry": {"max_attempts": 5, "delay_ms": 500}
+    },
+    {
+      "name": "request-nexus-slice",
+      "description": "Request a temporal slice from NEXUS with governance context",
+      "action": {
+        "type": "http",
+        "method": "POST",
+        "url": "${NEXUS_URL}/api/v1/temporal/slice",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        },
+        "body": {
+          "entityId": "${entity_id}",
+          "timeframe": {"lookback": "PT1H"},
+          "requireGovernanceView": true
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 200},
+        {"type": "jsonpath", "path": "$.metadata.coherenceScore", "operator": ">=", "expected": 0.5}
+      ],
+      "capture": {
+        "coherence_score": "$.metadata.coherenceScore"
+      },
+      "retry": {"max_attempts": 3, "delay_ms": 1000}
+    },
+    {
+      "name": "create-plato-policy",
+      "description": "Create a governance policy for the test entity",
+      "action": {
+        "type": "http",
+        "method": "POST",
+        "url": "${PLATO_URL}/api/v1/policies",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        },
+        "body": {
+          "name": "test-governance-policy-${timestamp}",
+          "entityPattern": "${entity_id}",
+          "rules": [
+            {
+              "condition": "signal.value >= 0",
+              "action": "ALLOW",
+              "priority": 100
+            }
+          ],
+          "enabled": true
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 201},
+        {"type": "jsonpath", "path": "$.id", "operator": "exists"}
+      ],
+      "capture": {
+        "policy_id": "$.id"
+      }
+    },
+    {
+      "name": "create-plato-spec",
+      "description": "Create a specification for the governance action",
+      "action": {
+        "type": "http",
+        "method": "POST",
+        "url": "${PLATO_URL}/api/v1/specs",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        },
+        "body": {
+          "name": "test-governance-spec-${timestamp}",
+          "type": "ACTION_SPEC",
+          "content": {
+            "actionType": "NOTIFY",
+            "targetTool": "echo",
+            "parameters": {
+              "message": "Governance validation test for ${entity_id}"
+            }
+          }
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 201}
+      ],
+      "capture": {
+        "spec_id": "$.id"
+      }
+    },
+    {
+      "name": "create-execute-plan",
+      "description": "Create and execute a governance plan",
+      "action": {
+        "type": "http",
+        "method": "POST",
+        "url": "${PLATO_URL}/api/v1/plans",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        },
+        "body": {
+          "name": "test-governance-plan-${timestamp}",
+          "policyId": "${policy_id}",
+          "specId": "${spec_id}",
+          "steps": [
+            {
+              "name": "notify-step",
+              "action": {
+                "toolId": "echo",
+                "input": {
+                  "message": "Governance audit validation for ${entity_id}"
+                }
+              },
+              "requiresApproval": false
+            }
+          ],
+          "executeImmediately": true
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 201},
+        {"type": "jsonpath", "path": "$.status", "operator": "in", "expected": ["PENDING", "EXECUTING", "COMPLETED"]}
+      ],
+      "capture": {
+        "plan_id": "$.id"
+      }
+    },
+    {
+      "name": "wait-plan-execution",
+      "description": "Wait for plan execution to complete",
+      "action": {
+        "type": "poll",
+        "url": "${PLATO_URL}/api/v1/plans/${plan_id}",
+        "headers": {
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        },
+        "condition": {
+          "jsonpath": "$.status",
+          "operator": "in",
+          "expected": ["COMPLETED", "FAILED"]
+        },
+        "max_attempts": 30,
+        "delay_ms": 1000
+      },
+      "assertions": [
+        {"type": "jsonpath", "path": "$.status", "expected": "COMPLETED"}
+      ]
+    },
+    {
+      "name": "verify-synapse-action",
+      "description": "Verify SYNAPSE executed the action",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/actions?platoPlanId=${plan_id}",
+        "headers": {
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 200},
+        {"type": "jsonpath", "path": "$[0].status", "expected": "COMPLETED"}
+      ],
+      "capture": {
+        "action_id": "$[0].id"
+      },
+      "retry": {"max_attempts": 5, "delay_ms": 1000}
+    },
+    {
+      "name": "validate-plato-audit",
+      "description": "Validate PLATO audit trail contains policy decision",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "${PLATO_URL}/api/v1/audit?correlationId=${correlation_id}&eventType=POLICY_DECISION",
+        "headers": {
+          "X-Tenant-ID": "${tenant_id}"
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 200},
+        {"type": "jsonpath", "path": "$.length()", "operator": ">=", "expected": 1},
+        {"type": "jsonpath", "path": "$[0].correlationId", "expected": "${correlation_id}"},
+        {"type": "jsonpath", "path": "$[0].policyId", "operator": "exists"}
+      ]
+    },
+    {
+      "name": "validate-plan-audit",
+      "description": "Validate PLATO audit trail contains plan execution",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "${PLATO_URL}/api/v1/audit?correlationId=${correlation_id}&eventType=PLAN_EXECUTION",
+        "headers": {
+          "X-Tenant-ID": "${tenant_id}"
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 200},
+        {"type": "jsonpath", "path": "$.length()", "operator": ">=", "expected": 1},
+        {"type": "jsonpath", "path": "$[0].planId", "expected": "${plan_id}"},
+        {"type": "jsonpath", "path": "$[0].status", "expected": "COMPLETED"}
+      ]
+    },
+    {
+      "name": "validate-synapse-audit",
+      "description": "Validate SYNAPSE audit trail contains action execution",
+      "action": {
+        "type": "http",
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/audit?correlationId=${correlation_id}&eventType=ACTION_EXECUTION",
+        "headers": {
+          "X-Tenant-ID": "${tenant_id}"
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 200},
+        {"type": "jsonpath", "path": "$.length()", "operator": ">=", "expected": 1},
+        {"type": "jsonpath", "path": "$[0].actionId", "expected": "${action_id}"},
+        {"type": "jsonpath", "path": "$[0].status", "expected": "COMPLETED"},
+        {"type": "jsonpath", "path": "$[0].toolId", "operator": "exists"},
+        {"type": "jsonpath", "path": "$[0].input", "operator": "exists"},
+        {"type": "jsonpath", "path": "$[0].output", "operator": "exists"}
+      ]
+    },
+    {
+      "name": "send-learning-signal",
+      "description": "Send learning signal back to NEXUS",
+      "action": {
+        "type": "http",
+        "method": "POST",
+        "url": "${NEXUS_URL}/api/v1/learning/signals",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "${correlation_id}",
+          "X-Tenant-ID": "${tenant_id}"
+        },
+        "body": {
+          "entityId": "${entity_id}",
+          "signalType": "GOVERNANCE_OUTCOME",
+          "source": "governance-audit-test",
+          "payload": {
+            "policyId": "${policy_id}",
+            "planId": "${plan_id}",
+            "actionId": "${action_id}",
+            "outcome": "SUCCESS",
+            "coherenceScore": "${coherence_score}"
+          }
+        }
+      },
+      "assertions": [
+        {"type": "status", "expected": 201}
+      ]
+    },
+    {
+      "name": "cleanup-policy",
+      "description": "Clean up test policy",
+      "action": {
+        "type": "http",
+        "method": "DELETE",
+        "url": "${PLATO_URL}/api/v1/policies/${policy_id}",
+        "headers": {
+          "X-Tenant-ID": "${tenant_id}"
+        }
+      },
+      "assertions": [
+        {"type": "status", "operator": "in", "expected": [200, 204, 404]}
+      ],
+      "continue_on_failure": true
+    }
+  ],
+  "cleanup": {
+    "on_failure": true,
+    "on_success": true,
+    "steps": [
+      {
+        "name": "cleanup-policy-on-fail",
+        "action": {
+          "type": "http",
+          "method": "DELETE",
+          "url": "${PLATO_URL}/api/v1/policies/${policy_id}",
+          "headers": {"X-Tenant-ID": "${tenant_id}"}
+        },
+        "ignore_errors": true
+      }
+    ]
+  },
+  "success_criteria": {
+    "all_assertions_pass": true,
+    "audit_trail_complete": true,
+    "required_audit_events": [
+      "POLICY_DECISION",
+      "PLAN_EXECUTION",
+      "ACTION_EXECUTION"
+    ]
+  }
+}
+

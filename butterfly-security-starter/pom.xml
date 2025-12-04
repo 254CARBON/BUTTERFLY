@@ -23,6 +23,7 @@
         <butterfly-common.version>0.2.1</butterfly-common.version>
         <lombok.version>1.18.30</lombok.version>
         <lettuce.version>6.3.0.RELEASE</lettuce.version>
+        <micrometer.version>1.12.0</micrometer.version>
     </properties>
 
     <dependencies>
@@ -100,6 +101,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Micrometer for SecretProvider metrics -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <version>${micrometer.version}</version>
+        </dependency>
+
         <!-- Lombok -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -149,4 +157,3 @@
         </plugins>
     </build>
 </project>
-

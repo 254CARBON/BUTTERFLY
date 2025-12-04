@@ -1,0 +1,360 @@
+# BUTTERFLY Alerting Rules
+# 
+# This file defines Prometheus alerting rules for the BUTTERFLY ecosystem.
+# Each alert includes runbook annotations pointing to documentation.
+# 
+# Runbook Base URL: https://docs.butterfly.example.com/runbooks/
+# 
+# Alert Severity Levels:
+# - critical: Immediate action required, potential service impact
+# - warning: Attention needed, degraded performance or approaching limits
+# - info: Informational, no immediate action required
+#
+# Alert-to-Runbook Mapping:
+# | Alert                      | Runbook                           |
+# |----------------------------|-----------------------------------|
+# | ServiceDown                | incident-response.md              |
+# | ServiceRestartLoop         | common-issues.md#restart-loop     |
+# | HighP99Latency             | common-issues.md#high-latency     |
+# | CriticalLatency            | incident-response.md              |
+# | HighErrorRate              | common-issues.md#error-rate       |
+# | CriticalErrorRate          | incident-response.md              |
+# | HighHeapUsage              | scaling.md#memory                 |
+# | CriticalHeapUsage          | scaling.md#memory                 |
+# | FrequentGC                 | scaling.md#memory                 |
+# | HighConsumerLag            | dlq-operations.md                 |
+# | CriticalConsumerLag        | dlq-operations.md                 |
+# | ProducerErrors             | common-issues.md#kafka            |
+# | CircuitBreakerOpen         | connector-failures.md             |
+# | HighCircuitBreakerFailures | connector-failures.md             |
+# | DatabaseConnectionExhausted| scaling.md#database               |
+# | CassandraHighLatency       | common-issues.md#cassandra        |
+# | SLOBudgetBurning           | incident-response.md              |
+
+groups:
+  # ===========================================================================
+  # Service Health Alerts
+  # ===========================================================================
+  - name: butterfly.service.health
+    interval: 30s
+    rules:
+      - alert: ServiceDown
+        expr: up{job=~"capsule|odyssey|perception|plato|nexus|synapse"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} on {{ $labels.instance }} has been down for more than 1 minute. Immediate investigation required."
+          runbook: "https://docs.butterfly.example.com/runbooks/incident-response"
+          dashboard: "/d/butterfly-{{ $labels.job }}"
+
+      - alert: ServiceRestartLoop
+        expr: changes(process_start_time_seconds{application=~"capsule|odyssey|perception|plato|nexus|synapse"}[15m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Service {{ $labels.application }} is restart looping"
+          description: "{{ $labels.application }} has restarted {{ $value }} times in the last 15 minutes. Check logs for crash causes."
+          runbook: "https://docs.butterfly.example.com/runbooks/common-issues#restart-loop"
+
+      - alert: HealthCheckFailing
+        expr: spring_boot_actuator_health{status!="UP"} == 1
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Health check failing for {{ $labels.application }}"
+          description: "{{ $labels.application }} health check is in {{ $labels.status }} state. Check dependent services and resources."
+          runbook: "https://docs.butterfly.example.com/runbooks/common-issues#health-check"
+
+  # ===========================================================================
+  # Latency Alerts
+  # ===========================================================================
+  - name: butterfly.latency
+    interval: 30s
+    rules:
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_server_requests_seconds_bucket{application=~"capsule|odyssey|perception|plato|nexus|synapse"}[5m])) by (le, application)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High P99 latency on {{ $labels.application }}"
+          description: "{{ $labels.application }} P99 latency is {{ $value | humanizeDuration }} (threshold: 1s). Check for resource contention or downstream issues."
+          runbook: "https://docs.butterfly.example.com/runbooks/common-issues#high-latency"
+          dashboard: "/d/butterfly-{{ $labels.application }}"
+
+      - alert: CriticalLatency
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_server_requests_seconds_bucket{application=~"capsule|odyssey|perception|plato|nexus|synapse"}[5m])) by (le, application)
+          ) > 5
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical latency on {{ $labels.application }}"
+          description: "{{ $labels.application }} P99 latency is {{ $value | humanizeDuration }} (threshold: 5s). Service is severely degraded."
+          runbook: "https://docs.butterfly.example.com/runbooks/incident-response"
+
+  # ===========================================================================
+  # Error Rate Alerts
+  # ===========================================================================
+  - name: butterfly.errors
+    interval: 30s
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application=~"capsule|odyssey|perception|plato|nexus|synapse",status=~"5.."}[5m])) by (application)
+          /
+          sum(rate(http_server_requests_seconds_count{application=~"capsule|odyssey|perception|plato|nexus|synapse"}[5m])) by (application)
+          > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High error rate on {{ $labels.application }}"
+          description: "{{ $labels.application }} error rate is {{ $value | humanizePercentage }} (threshold: 5%). Check logs for error patterns."
+          runbook: "https://docs.butterfly.example.com/runbooks/common-issues#error-rate"
+          dashboard: "/d/butterfly-{{ $labels.application }}"
+
+      - alert: CriticalErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{application=~"capsule|odyssey|perception|plato|nexus|synapse",status=~"5.."}[5m])) by (application)
+          /
+          sum(rate(http_server_requests_seconds_count{application=~"capsule|odyssey|perception|plato|nexus|synapse"}[5m])) by (application)
+          > 0.20
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical error rate on {{ $labels.application }}"
+          description: "{{ $labels.application }} error rate is {{ $value | humanizePercentage }} (threshold: 20%). Service is severely impacted."
+          runbook: "https://docs.butterfly.example.com/runbooks/incident-response"
+
+  # ===========================================================================
+  # JVM Alerts
+  # ===========================================================================
+  - name: butterfly.jvm
+    interval: 30s
+    rules:
+      - alert: HighHeapUsage
+        expr: |
+          jvm_memory_used_bytes{area="heap",application=~"capsule|odyssey|perception|plato|nexus|synapse"} 
+          / 
+          jvm_memory_max_bytes{area="heap",application=~"capsule|odyssey|perception|plato|nexus|synapse"} 
+          > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High heap usage on {{ $labels.application }}"
+          description: "{{ $labels.application }} heap usage is {{ $value | humanizePercentage }}. Consider scaling or investigating memory leaks."
+          runbook: "https://docs.butterfly.example.com/runbooks/scaling#memory"
+          dashboard: "/d/butterfly-jvm"
+
+      - alert: CriticalHeapUsage
+        expr: |
+          jvm_memory_used_bytes{area="heap",application=~"capsule|odyssey|perception|plato|nexus|synapse"} 
+          / 
+          jvm_memory_max_bytes{area="heap",application=~"capsule|odyssey|perception|plato|nexus|synapse"} 
+          > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical heap usage on {{ $labels.application }}"
+          description: "{{ $labels.application }} heap usage is {{ $value | humanizePercentage }}. OOM risk imminent!"
+          runbook: "https://docs.butterfly.example.com/runbooks/scaling#memory"
+
+      - alert: FrequentGC
+        expr: |
+          rate(jvm_gc_pause_seconds_sum{application=~"capsule|odyssey|perception|plato|nexus|synapse"}[5m]) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Frequent GC pauses on {{ $labels.application }}"
+          description: "{{ $labels.application }} is spending {{ $value | humanizePercentage }} of time in GC. Consider heap tuning."
+          runbook: "https://docs.butterfly.example.com/runbooks/scaling#memory"
+
+  # ===========================================================================
+  # Kafka Alerts
+  # ===========================================================================
+  - name: butterfly.kafka
+    interval: 30s
+    rules:
+      - alert: HighConsumerLag
+        expr: |
+          sum(kafka_consumer_records_lag{application=~"capsule|odyssey|perception|plato|nexus|synapse"}) by (application, topic) > 10000
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High consumer lag for {{ $labels.application }} on {{ $labels.topic }}"
+          description: "Consumer lag is {{ $value }} messages. Processing may be falling behind."
+          runbook: "https://docs.butterfly.example.com/runbooks/dlq-operations"
+          dashboard: "/d/butterfly-kafka"
+
+      - alert: CriticalConsumerLag
+        expr: |
+          sum(kafka_consumer_records_lag{application=~"capsule|odyssey|perception|plato|nexus|synapse"}) by (application, topic) > 100000
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Critical consumer lag for {{ $labels.application }} on {{ $labels.topic }}"
+          description: "Consumer lag is {{ $value }} messages. Immediate action required."
+          runbook: "https://docs.butterfly.example.com/runbooks/dlq-operations"
+
+      - alert: ProducerErrors
+        expr: |
+          sum(rate(kafka_producer_record_error_total{application=~"capsule|odyssey|perception|plato|nexus|synapse"}[5m])) by (application) > 0
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Kafka producer errors on {{ $labels.application }}"
+          description: "{{ $labels.application }} is experiencing producer errors. Check broker connectivity."
+          runbook: "https://docs.butterfly.example.com/runbooks/common-issues#kafka"
+
+      - alert: DLQMessagesAccumulating
+        expr: |
+          sum(increase(kafka_server_brokertopicmetrics_messagesin_total{topic=~".*-dlq"}[1h])) by (topic) > 100
+        for: 30m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "DLQ messages accumulating on {{ $labels.topic }}"
+          description: "{{ $value }} messages have been sent to {{ $labels.topic }} in the last hour. Review DLQ processing."
+          runbook: "https://docs.butterfly.example.com/runbooks/dlq-operations"
+
+  # ===========================================================================
+  # Circuit Breaker Alerts
+  # ===========================================================================
+  - name: butterfly.resilience
+    interval: 30s
+    rules:
+      - alert: CircuitBreakerOpen
+        expr: |
+          resilience4j_circuitbreaker_state{state="open",application=~"capsule|odyssey|perception|plato|nexus|synapse"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.name }} on {{ $labels.application }}"
+          description: "Circuit breaker {{ $labels.name }} is OPEN. External service may be unavailable."
+          runbook: "https://docs.butterfly.example.com/runbooks/connector-failures"
+          dashboard: "/d/butterfly-{{ $labels.application }}"
+
+      - alert: HighCircuitBreakerFailureRate
+        expr: |
+          sum(rate(resilience4j_circuitbreaker_calls_total{kind="failed"}[5m])) by (application, name)
+          /
+          sum(rate(resilience4j_circuitbreaker_calls_total[5m])) by (application, name)
+          > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High failure rate on circuit breaker {{ $labels.name }}"
+          description: "{{ $labels.application }} circuit breaker {{ $labels.name }} has {{ $value | humanizePercentage }} failure rate."
+          runbook: "https://docs.butterfly.example.com/runbooks/connector-failures"
+
+  # ===========================================================================
+  # Database Alerts
+  # ===========================================================================
+  - name: butterfly.database
+    interval: 30s
+    rules:
+      - alert: DatabaseConnectionPoolExhausted
+        expr: |
+          hikaricp_connections_active{application=~"odyssey|perception|nexus"} 
+          / 
+          hikaricp_connections_max{application=~"odyssey|perception|nexus"} 
+          > 0.90
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "Database connection pool exhausted on {{ $labels.application }}"
+          description: "{{ $labels.application }} is using {{ $value | humanizePercentage }} of its connection pool. New requests may fail."
+          runbook: "https://docs.butterfly.example.com/runbooks/scaling#database"
+
+      - alert: CassandraHighLatency
+        expr: |
+          histogram_quantile(0.99, sum(rate(cassandra_client_request_latency_bucket{application=~"capsule|plato"}[5m])) by (le, application)) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "High Cassandra latency on {{ $labels.application }}"
+          description: "{{ $labels.application }} Cassandra P99 latency is {{ $value | humanizeDuration }}. Check cluster health."
+          runbook: "https://docs.butterfly.example.com/runbooks/common-issues#cassandra"
+
+  # ===========================================================================
+  # SLO Alerts
+  # ===========================================================================
+  - name: butterfly.slo
+    interval: 1m
+    rules:
+      - alert: SLOBudgetBurning
+        expr: |
+          butterfly:slo_error_budget_remaining:ratio < 0.25
+        for: 10m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "SLO error budget burning for {{ $labels.service }}"
+          description: "{{ $labels.service }} has only {{ $value | humanizePercentage }} error budget remaining. Improve reliability to preserve budget."
+          runbook: "https://docs.butterfly.example.com/runbooks/incident-response"
+          dashboard: "/d/butterfly-ecosystem-slo"
+
+      - alert: SLOBudgetExhausted
+        expr: |
+          butterfly:slo_error_budget_remaining:ratio < 0.10
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "SLO error budget exhausted for {{ $labels.service }}"
+          description: "{{ $labels.service }} error budget is nearly exhausted ({{ $value | humanizePercentage }} remaining). Feature freeze recommended."
+          runbook: "https://docs.butterfly.example.com/runbooks/incident-response"
+
+      - alert: AvailabilityBelowTarget
+        expr: |
+          butterfly:slo_availability:ratio_rate5m < butterfly:slo_target:availability_ratio
+        for: 15m
+        labels:
+          severity: warning
+          team: platform
+        annotations:
+          summary: "Availability below target for {{ $labels.service }}"
+          description: "{{ $labels.service }} availability is {{ $value | humanizePercentage }}, below target of {{ printf \"%.2f%%\" (query \"butterfly:slo_target:availability_ratio{service='\" .Labels.service \"'}\") }}."
+          runbook: "https://docs.butterfly.example.com/runbooks/incident-response"
+

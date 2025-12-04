@@ -56,3 +56,13 @@ nexus:
     pdb:
       enabled: false
 
+observability:
+  enabled: true
+  prometheus:
+    labels:
+      release: prometheus-dev
+      role: slo-rules
+  grafana:
+    labels:
+      grafana_dashboard: "1"
+      env: dev

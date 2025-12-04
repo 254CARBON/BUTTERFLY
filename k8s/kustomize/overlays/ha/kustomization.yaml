@@ -1,0 +1,239 @@
+# =============================================================================
+# BUTTERFLY Platform - High Availability Overlay
+# =============================================================================
+# This overlay configures the BUTTERFLY platform for high availability deployments.
+# It sets appropriate replica counts, PodDisruptionBudgets, anti-affinity rules,
+# and resource configurations for production HA environments.
+#
+# Usage:
+#   kubectl apply -k k8s/kustomize/overlays/ha
+#
+# Or with Kustomize:
+#   kustomize build k8s/kustomize/overlays/ha | kubectl apply -f -
+#
+# HA Requirements (from docs/operations/README.md):
+#   - CAPSULE: 2+ replicas (behind load balancer)
+#   - ODYSSEY: 2+ replicas (behind load balancer)
+#   - PERCEPTION: 3+ replicas (stream processing HA)
+#   - PLATO: 2+ replicas (behind load balancer)
+#   - NEXUS: 3+ replicas (gateway HA)
+#   - SYNAPSE: 3+ replicas (action execution HA)
+#   - Kafka: 3+ nodes (clustered)
+#   - Cassandra: 3+ nodes (RF=3)
+#   - PostgreSQL: 2+ nodes (primary + replica)
+#   - Redis: 3+ nodes (sentinel or cluster)
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: butterfly-ha-overlay
+
+namespace: butterfly
+
+# Reference the base configuration
+resources:
+  - ../../base
+
+# Common labels for HA deployment
+commonLabels:
+  app.kubernetes.io/environment: ha
+  butterfly.io/ha-enabled: "true"
+
+# Common annotations
+commonAnnotations:
+  butterfly.io/ha-config-version: "v1.0.0"
+  butterfly.io/last-updated: "2025-12-04"
+
+# HA-specific patches
+patches:
+  # ==========================================================================
+  # CAPSULE HA Configuration
+  # ==========================================================================
+  - target:
+      kind: Deployment
+      name: capsule
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: capsule
+                  topologyKey: kubernetes.io/hostname
+              - weight: 50
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: capsule
+                  topologyKey: topology.kubernetes.io/zone
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: capsule
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: capsule
+
+  # ==========================================================================
+  # PERCEPTION HA Configuration
+  # ==========================================================================
+  - target:
+      kind: Deployment
+      name: perception-api
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: perception-api
+                  topologyKey: kubernetes.io/hostname
+
+  # ==========================================================================
+  # ODYSSEY HA Configuration
+  # ==========================================================================
+  - target:
+      kind: Deployment
+      name: odyssey
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: odyssey
+                  topologyKey: kubernetes.io/hostname
+
+  # ==========================================================================
+  # PLATO HA Configuration
+  # ==========================================================================
+  - target:
+      kind: Deployment
+      name: plato
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: plato
+                  topologyKey: kubernetes.io/hostname
+
+  # ==========================================================================
+  # NEXUS HA Configuration (Critical - Gateway)
+  # ==========================================================================
+  - target:
+      kind: Deployment
+      name: nexus
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 5
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchLabels:
+                    app: nexus
+                topologyKey: kubernetes.io/hostname
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: nexus
+                  topologyKey: topology.kubernetes.io/zone
+      - op: add
+        path: /spec/template/spec/topologySpreadConstraints
+        value:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app: nexus
+          - maxSkew: 2
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: nexus
+
+  # ==========================================================================
+  # SYNAPSE HA Configuration
+  # ==========================================================================
+  - target:
+      kind: Deployment
+      name: synapse
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          podAntiAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  labelSelector:
+                    matchLabels:
+                      app: synapse
+                  topologyKey: kubernetes.io/hostname
+
+# Additional HA resources
+# These create PodDisruptionBudgets for each service
+generatorOptions:
+  disableNameSuffixHash: true
+
+# Include additional HA resources
+# These are the PDB and HPA configurations for all services
+
+# Additional resources for HA
+patchesStrategicMerge: []
+
+# Include PDB and HPA resources
+resources:
+  - pdb-all.yaml
+  - hpa-all.yaml
+

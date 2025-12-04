@@ -1,2 +1,2 @@
 com.z254.butterfly.security.starter.ButterflySecurityAutoConfiguration
-
+com.z254.butterfly.security.secret.SecretProviderAutoConfiguration

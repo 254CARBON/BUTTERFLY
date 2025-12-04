@@ -35,6 +35,20 @@ This runbook provides procedures for responding to Service Level Objective (SLO)
 
 ## Diagnostic Steps
 
+### 0. Check Ecosystem Golden Signals
+
+```promql
+# Availability vs target
+butterfly:slo_availability:ratio_rate5m
+  < on(service) butterfly:slo_target:availability_ratio
+
+# Error budget trends
+butterfly:slo_error_budget_remaining:ratio
+
+# p95 latency (ms)
+butterfly:slo_latency:p95_seconds * 1000
+```
+
 ### 1. Identify Scope
 
 ```bash
@@ -137,10 +151,21 @@ If monthly error budget is fully consumed:
 ## Related Dashboards
 
 - [BUTTERFLY Ecosystem Overview](https://grafana/d/butterfly-ecosystem-overview)
+- [BUTTERFLY Ecosystem SLO](https://grafana/d/butterfly-ecosystem-slo)
 - [CAPSULE SLO Dashboard](https://grafana/d/capsule-slo)
 - [ODYSSEY SLO Dashboard](https://grafana/d/odyssey-slo)
 - [PLATO Governance](https://grafana/d/plato-governance)
 - [NEXUS Gateway](https://grafana/d/nexus-gateway)
+
+## Automated Guardrails
+
+- `butterfly-e2e/check-slo-compliance.sh` runs the golden-path scenarios followed by PromQL checks (`butterfly:slo_*`) and fails the pipeline when error budgets are in breach. To run locally:
+
+```bash
+PROMETHEUS_URL=http://prometheus:9090 ./butterfly-e2e/check-slo-compliance.sh
+```
+
+- GitHub Actions job `slo-auditor` executes nightly/when manually triggered. It runs the scenario harness and the script above against the `OBS_PROMETHEUS_URL` secret, publishing failures directly in the workflow summary.
 
 ## Escalation
 
@@ -157,4 +182,3 @@ If monthly error budget is fully consumed:
 - [High Latency](./common-issues.md#high-latency)
 - [Circuit Breaker](./common-issues.md#circuit-breaker-open)
 - [Incident Response](./incident-response.md)
-

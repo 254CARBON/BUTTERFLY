@@ -48,6 +48,7 @@ NEXUS operates as a **background service** with no dedicated UI. It is designed 
 │  │  │ • Causal chain discovery    │  │ • Autonomous hypothesis     │  │    │
 │  │  │ • Temporal anomaly detect   │  │   generation                │  │    │
 │  │  │ • Multi-service correlation │  │ • Belief reconciliation     │  │    │
+│  │  │ • Calibrated uncertainty    │  │ • ML-enhanced scoring       │  │    │
 │  │  │                             │  │                             │  │    │
 │  │  │ Target: <100ms latency      │  │ Target: <500ms inference    │  │    │
 │  │  └─────────────────────────────┘  └─────────────────────────────┘  │    │
@@ -97,6 +98,8 @@ List<Capsule> past = slice.getPast();           // From CAPSULE
 RimNode present = slice.getPresent();           // From PERCEPTION
 List<PathProjection> futures = slice.getFutures(); // From ODYSSEY
 ```
+
+New in Phase 5: every `TemporalSlice` now ships with an `uncertaintySummary` (calibrated confidence, uncertainty envelope, and contributing signals) computed by the TemporalUncertaintyService. Temporal anomalies inherit the same envelope so downstream planners can reason about severity and confidence together.
 
 ### Architecture
 
@@ -161,6 +164,15 @@ List<PathProjection> futures = slice.getFutures(); // From ODYSSEY
 ```bash
 curl "http://localhost:8084/api/v1/temporal/slice/rim:entity:finance:EURUSD?pastDays=30&futureDays=7"
 ```
+
+## Phase 5 Controls
+
+| Property | Purpose |
+|----------|---------|
+| `nexus.reasoning.ml.*` | Toggles MlEnhancedInferenceService, model type, calibrator, and LearningSignal lookback |
+| `nexus.reasoning.adaptive-rules.*` | Enables the LearningSignal-driven rule/priority adjustment loop |
+| `nexus.temporal.uncertainty.*` | Configures the TemporalUncertaintyService calibrator and lookback window |
+| `nexus.cache.adaptive.*` | Controls adaptive TTL multipliers derived from cache access tiers |
 
 **Response:**
 

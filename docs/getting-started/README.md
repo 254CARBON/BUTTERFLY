@@ -195,6 +195,38 @@ mvn clean install
 mvn clean install -DskipTests
 ```
 
+### Run the Governance + Decision Loop
+
+```bash
+# Start Kafka/mocks + drive PERCEPTION → CAPSULE → ODYSSEY → NEXUS → PLATO → SYNAPSE
+./scripts/run-governance-loop.sh
+
+# If your services are already running on custom ports:
+PERCEPTION_URL=http://localhost:8181 PLATO_URL=http://localhost:9084 ./scripts/run-governance-loop.sh --skip-stack
+
+# Allow partial runs (skips any service that is offline, e.g., during CI)
+./scripts/run-governance-loop.sh --allow-partial
+```
+
+- The helper replays the `governance-decision-loop` scenario (see `butterfly-e2e/scenarios/governance-decision-loop.json`) with real REST traffic, provisioning PLATO policies/specs/plans and verifying SYNAPSE/NEXUS feedback.
+- It prints the correlation id it used so you can trace logs across services. Pass `--golden-path` to prepend the strategic scenario or `--keep-stack` if you want to inspect the docker-compose stack after the run.
+- **Troubleshooting:** run the service-specific dev scripts (e.g., `./PLATO/scripts/dev-up.sh`, `mvn -f PERCEPTION/pom spring-boot:run`) when a health check fails; install `jq` and `curl` locally; override the `*_URL` environment variables if you expose services on non-default ports.
+
+### Inject Chaos Locally
+
+```bash
+# CAPSULE outage with DLQ verification
+kubectl apply -f chaos/experiments/capsule-outage.yaml
+
+# NEXUS partial degradation (latency + CPU)
+kubectl apply -f chaos/experiments/nexus-partial-degradation.yaml
+
+# PLATO governance latency spike
+kubectl apply -f chaos/experiments/plato-latency-spike.yaml
+```
+
+Cluster-scoped equivalents live under `k8s/chaos/experiments/`. Each experiment includes a ConfigMap describing pass/fail criteria and links to the remediation runbooks so you can measure resilience against SLOs.
+
 ---
 
 ## Next Steps
