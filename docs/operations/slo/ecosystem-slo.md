@@ -135,6 +135,35 @@ PLATO plan execution via SYNAPSE:
 | P95 Completion | ≤ 60s |
 | Success Rate | > 95% |
 
+### Golden Loop SLO (Phase 1)
+
+The Golden Loop represents the full cross-system flow: PERCEPTION → CAPSULE → ODYSSEY → PLATO → NEXUS → SYNAPSE.
+These SLOs validate Phase 1 integration completion criteria (see `butterfly-e2e/README.md`).
+
+| Metric | Target | Prometheus Query |
+|--------|--------|------------------|
+| Loop Completion P50 | ≤ 500ms | `nexus:golden_loop_latency_p50:rate5m` |
+| Loop Completion P95 | ≤ 2s | `nexus:golden_loop_latency_p95:rate5m` |
+| Loop Completion P99 | ≤ 5s | `nexus:golden_loop_latency_p99:rate5m` |
+| Loop Success Rate | > 99% | `nexus:golden_loop_success_rate:rate5m` |
+| Cross-System Coherence | > 0.7 | `nexus:golden_loop_coherence_avg:rate5m` |
+| Error Budget Remaining | > 20% | `nexus:golden_loop_error_budget_remaining:ratio` |
+
+**Temporal Slice SLOs (NEXUS):**
+
+| Metric | Target | Prometheus Query |
+|--------|--------|------------------|
+| Temporal Slice P50 | ≤ 50ms | `nexus:temporal_slice_latency_p50:rate5m` |
+| Temporal Slice P95 | ≤ 100ms | `nexus:temporal_slice_latency_p95:rate5m` |
+| Temporal Slice P99 | ≤ 200ms | `nexus:temporal_slice_latency_p99:rate5m` |
+| Temporal Error Rate | < 0.1% | `nexus:temporal_slice_error_rate:rate5m` |
+
+**Related Resources:**
+- Recording rules: `butterfly-nexus/config/prometheus-alerts.yml`
+- Grafana dashboard: `butterfly-nexus/config/grafana/temporal-slo-dashboard.json`
+- Phase 1 validation: `butterfly-e2e/validate-golden-loop-slo.sh`
+- Nightly CI: `.github/workflows/butterfly-e2e.yml` → `nightly-full-e2e` job
+
 ---
 
 ## Error Budget Calculation
@@ -254,6 +283,16 @@ histogram_quantile(0.95,
 
 ---
 
+## Automation & Tooling
+
+- **Recording rules**: `butterfly:slo_availability:ratio_rate5m`, `butterfly:slo_latency:p95_seconds`, `butterfly:slo_error_budget_remaining:ratio`, and `butterfly:slo_error_budget_burn_rate:ratio` are defined in `butterfly-nexus/config/prometheus-alerts.yml` and the Helm ConfigMap (`k8s/helm/butterfly-platform/config/prometheus/butterfly-slo-recording-rules.yaml`).
+- **Grafana dashboards**: `butterfly-ecosystem-slo` visualizes golden signals, burn-rate gauges, and latency vs. target slices. It is provisioned automatically from `k8s/helm/butterfly-platform/config/grafana/butterfly-ecosystem-slo-dashboard.json`.
+- **CI guardrail**: `butterfly-e2e/check-slo-compliance.sh` runs the golden-path scenarios and validates the `butterfly:slo_*` series. `slo-auditor` in `.github/workflows/butterfly-e2e.yml` invokes it nightly (requires the `OBS_PROMETHEUS_URL` secret).
+
+> Manual execution: `PROMETHEUS_URL=https://prom.dev ./butterfly-e2e/check-slo-compliance.sh --services perception,capsule,odyssey`.
+
+---
+
 ## Review Cadence
 
 | Review | Frequency | Participants |
@@ -262,4 +301,3 @@ histogram_quantile(0.95,
 | Error Budget Review | Weekly | Engineering Lead |
 | SLO Target Review | Quarterly | Platform Team |
 | Tenant SLA Review | Monthly | Account Team |
-

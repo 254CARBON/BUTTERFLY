@@ -18,6 +18,8 @@ This guide covers the standard Grafana dashboards for monitoring BUTTERFLY servi
 | Dashboard | ID | Purpose |
 |-----------|-----|---------|
 | BUTTERFLY Overview | `butterfly-overview` | Ecosystem health at a glance |
+| Ecosystem SLO | `butterfly-ecosystem-slo` | Shared golden signals + error budgets |
+| NEXUS Temporal SLO | `nexus-temporal-slo` | Temporal fabric + Golden Loop SLOs |
 | Service Details | `butterfly-service-{name}` | Per-service deep dive |
 | Kafka | `butterfly-kafka` | Messaging infrastructure |
 | Databases | `butterfly-databases` | Data layer health |
@@ -129,6 +131,124 @@ This guide covers the standard Grafana dashboards for monitoring BUTTERFLY servi
   }
 }
 ```
+
+## Ecosystem SLO Dashboard
+
+Purpose: present shared golden signals (`butterfly:slo_*` recording rules) together with error budgets so on-call engineers can immediately see which service is consuming budget.
+
+### Panels
+
+#### 1. Error Budget Remaining (Bar Gauge)
+
+```json
+{
+  "type": "bargauge",
+  "title": "Error Budget Remaining",
+  "targets": [
+    {
+      "expr": "butterfly:slo_error_budget_remaining:ratio",
+      "legendFormat": "{{service}}"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "percent",
+      "max": 1,
+      "min": 0,
+      "thresholds": {
+        "steps": [
+          {"color": "red", "value": null},
+          {"color": "yellow", "value": 0.2},
+          {"color": "green", "value": 0.5}
+        ]
+      }
+    }
+  }
+}
+```
+
+#### 2. Availability vs Target (Timeseries)
+
+```json
+{
+  "type": "timeseries",
+  "title": "Availability vs Target",
+  "targets": [
+    {
+      "expr": "butterfly:slo_availability:ratio_rate5m{service=~\"$service\"}",
+      "legendFormat": "{{service}} actual"
+    },
+    {
+      "expr": "butterfly:slo_target:availability_ratio{service=~\"$service\"}",
+      "legendFormat": "{{service}} target"
+    }
+  ],
+  "options": {
+    "legend": {"displayMode": "table", "placement": "right"},
+    "tooltip": {"mode": "multi"}
+  },
+  "fieldConfig": {
+    "defaults": {
+      "unit": "percent",
+      "custom": {"lineWidth": 2, "fillOpacity": 12}
+    }
+  }
+}
+```
+
+#### 3. p95 Latency vs Target
+
+```json
+{
+  "type": "timeseries",
+  "title": "p95 Latency vs Target",
+  "targets": [
+    {
+      "expr": "butterfly:slo_latency:p95_seconds{service=~\"$service\"} * 1000",
+      "legendFormat": "{{service}} p95"
+    },
+    {
+      "expr": "butterfly:slo_latency_target:p95_seconds{service=~\"$service\"} * 1000",
+      "legendFormat": "{{service}} target"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "ms",
+      "custom": {"lineWidth": 2}
+    }
+  }
+}
+```
+
+#### 4. Saturation
+
+```json
+{
+  "type": "bargauge",
+  "title": "CPU Saturation",
+  "targets": [
+    {
+      "expr": "butterfly:slo_saturation:cpu_ratio{service=~\"$service\"}",
+      "legendFormat": "{{service}}"
+    }
+  ],
+  "fieldConfig": {
+    "defaults": {
+      "unit": "percent",
+      "thresholds": {
+        "steps": [
+          {"color": "green", "value": null},
+          {"color": "yellow", "value": 0.8},
+          {"color": "red", "value": 0.9}
+        ]
+      }
+    }
+  }
+}
+```
+
+> Tip: enable exemplars so operators can jump from a red service entry directly to traces/logs carrying the same `service` and `tenantId` labels.
 
 ---
 
@@ -417,4 +537,3 @@ data:
 | [Monitoring Overview](README.md) | Monitoring strategy |
 | [Metrics Catalog](metrics-catalog.md) | Available metrics |
 | [Alerting](alerting.md) | Alert configuration |
-
