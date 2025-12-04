@@ -1,0 +1,143 @@
+package {{PACKAGE}}.route.processor;
+
+import {{PACKAGE}}.service.SourceSnapshotRegistry;
+import {{PACKAGE}}.model.SourceSnapshot;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.apache.camel.Exchange;
+import org.apache.camel.Message;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
+
+/**
+ * Unit tests for {{NAME}} connector processors.
+ */
+@ExtendWith(MockitoExtension.class)
+@DisplayName("{{NAME}} Connector Processors")
+class {{NAME}}ProcessorTest {
+
+    @Mock
+    private SourceSnapshotRegistry snapshotRegistry;
+
+    @Mock
+    private Exchange exchange;
+
+    @Mock
+    private Message message;
+
+    private SimpleMeterRegistry meterRegistry;
+
+    @BeforeEach
+    void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
+        when(exchange.getIn()).thenReturn(message);
+    }
+
+    @Nested
+    @DisplayName("{{NAME}}FetchProcessor")
+    class FetchProcessorTests {
+
+        private {{NAME}}FetchProcessor processor;
+
+        @BeforeEach
+        void setUp() {
+            processor = new {{NAME}}FetchProcessor(snapshotRegistry, meterRegistry);
+        }
+
+        @Test
+        @DisplayName("should throw exception when source snapshot not found")
+        void shouldThrowWhenSnapshotNotFound() {
+            when(message.getHeader("sourceId", String.class)).thenReturn("source-123");
+            when(message.getHeader("CamelRouteId", String.class)).thenReturn("route-123");
+            when(snapshotRegistry.get("source-123")).thenReturn(null);
+
+            assertThatThrownBy(() -> processor.process(exchange))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("No snapshot found");
+        }
+
+        @Test
+        @DisplayName("should process successfully with valid snapshot")
+        void shouldProcessSuccessfullyWithValidSnapshot() throws Exception {
+            when(message.getHeader("sourceId", String.class)).thenReturn("source-123");
+            when(message.getHeader("CamelRouteId", String.class)).thenReturn("route-123");
+
+            SourceSnapshot snapshot = createTestSnapshot("source-123");
+            when(snapshotRegistry.get("source-123")).thenReturn(snapshot);
+
+            processor.process(exchange);
+
+            // Verify metrics were recorded
+            assertThat(meterRegistry.counter("acquisition.{{NAME_LOWER}}.fetch.success").count())
+                    .isGreaterThan(0);
+        }
+    }
+
+    @Nested
+    @DisplayName("{{NAME}}PageProcessor")
+    class PageProcessorTests {
+
+        private {{NAME}}PageProcessor processor;
+
+        @BeforeEach
+        void setUp() {
+            processor = new {{NAME}}PageProcessor(meterRegistry);
+        }
+
+        @Test
+        @DisplayName("should skip empty records")
+        void shouldSkipEmptyRecords() throws Exception {
+            when(message.getHeader("sourceId", String.class)).thenReturn("source-123");
+            when(message.getHeader("sourceName", String.class)).thenReturn("Test Source");
+            when(message.getBody(Map.class)).thenReturn(null);
+
+            processor.process(exchange);
+
+            assertThat(meterRegistry.counter("acquisition.{{NAME_LOWER}}.page.skipped").count())
+                    .isGreaterThan(0);
+        }
+
+        @Test
+        @DisplayName("should convert valid record to Content")
+        void shouldConvertValidRecordToContent() throws Exception {
+            when(message.getHeader("sourceId", String.class)).thenReturn("source-123");
+            when(message.getHeader("sourceName", String.class)).thenReturn("Test Source");
+
+            Map<String, Object> record = Map.of(
+                    "title", "Test Title",
+                    "content", "Test body content",
+                    "url", "https://example.com/test"
+            );
+            when(message.getBody(Map.class)).thenReturn(record);
+
+            processor.process(exchange);
+
+            assertThat(meterRegistry.counter("acquisition.{{NAME_LOWER}}.page.processed").count())
+                    .isGreaterThan(0);
+        }
+    }
+
+    // ==========================================================================
+    // Helper Methods
+    // ==========================================================================
+
+    private SourceSnapshot createTestSnapshot(String sourceId) {
+        return SourceSnapshot.builder()
+                .sourceId(sourceId)
+                .name("Test Source")
+                .endpoint("https://example.com/api")
+                .config(Map.of())
+                .build();
+    }
+}

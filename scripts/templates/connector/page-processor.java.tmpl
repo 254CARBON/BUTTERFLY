@@ -1,0 +1,124 @@
+package {{PACKAGE}}.route.processor;
+
+import {{PACKAGE}}.model.Content;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.camel.Exchange;
+import org.apache.camel.Processor;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * Page processor for {{NAME}} connector.
+ * <p>
+ * Converts raw records from the {{NAME}}FetchProcessor into
+ * the canonical {@link Content} model for downstream processing.
+ * </p>
+ *
+ * @see {{NAME}}FetchProcessor
+ */
+@Component("{{NAME_CAMEL}}PageProcessor")
+@RequiredArgsConstructor
+@Slf4j
+public class {{NAME}}PageProcessor implements Processor {
+
+    private final MeterRegistry meterRegistry;
+
+    private Counter processedCounter;
+    private Counter skippedCounter;
+
+    @Override
+    public void process(Exchange exchange) throws Exception {
+        String sourceId = exchange.getIn().getHeader("sourceId", String.class);
+        String sourceName = exchange.getIn().getHeader("sourceName", String.class);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> record = exchange.getIn().getBody(Map.class);
+
+        if (record == null || record.isEmpty()) {
+            log.debug("Skipping empty record for source: {}", sourceId);
+            getSkippedCounter().increment();
+            exchange.getIn().setBody(null);
+            return;
+        }
+
+        try {
+            Content content = convertToContent(record, sourceId, sourceName);
+            exchange.getIn().setBody(content);
+            getProcessedCounter().increment();
+
+            log.debug("Processed {{NAME_LOWER}} record: {}", content.getContentId());
+
+        } catch (Exception e) {
+            log.error("Failed to process {{NAME_LOWER}} record for source {}: {}",
+                    sourceId, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * Convert a raw record to the Content model.
+     *
+     * @param record     the raw record from the fetch processor
+     * @param sourceId   the source identifier
+     * @param sourceName the source display name
+     * @return the converted Content object
+     */
+    private Content convertToContent(Map<String, Object> record, String sourceId, String sourceName) {
+        // TODO: Implement your conversion logic here
+        // Extract fields from the record and map to Content
+
+        String title = getStringField(record, "title", "Untitled");
+        String body = getStringField(record, "content", "");
+        String url = getStringField(record, "url", "");
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("sourceType", "{{TYPE}}");
+        metadata.put("sourceName", sourceName);
+        metadata.put("fetchedAt", Instant.now().toString());
+
+        return Content.builder()
+                .contentId(UUID.randomUUID().toString())
+                .sourceId(sourceId)
+                .title(title)
+                .body(body)
+                .url(url)
+                .publishedAt(Instant.now())
+                .fetchedAt(Instant.now())
+                .metadata(metadata)
+                .build();
+    }
+
+    private String getStringField(Map<String, Object> record, String key, String defaultValue) {
+        Object value = record.get(key);
+        return value != null ? value.toString() : defaultValue;
+    }
+
+    // ==========================================================================
+    // Metrics
+    // ==========================================================================
+
+    private Counter getProcessedCounter() {
+        if (processedCounter == null) {
+            processedCounter = Counter.builder("acquisition.{{NAME_LOWER}}.page.processed")
+                    .description("Successfully processed {{NAME_LOWER}} records")
+                    .register(meterRegistry);
+        }
+        return processedCounter;
+    }
+
+    private Counter getSkippedCounter() {
+        if (skippedCounter == null) {
+            skippedCounter = Counter.builder("acquisition.{{NAME_LOWER}}.page.skipped")
+                    .description("Skipped {{NAME_LOWER}} records")
+                    .register(meterRegistry);
+        }
+        return skippedCounter;
+    }
+}

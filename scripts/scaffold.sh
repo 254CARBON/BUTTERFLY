@@ -8,17 +8,23 @@
 # Usage: ./scripts/scaffold.sh <command> [options]
 #
 # Commands:
-#   service       Create a new microservice skeleton
-#   controller    Add a REST controller to an existing service
-#   entity        Add a JPA entity with repository
-#   kafka-handler Add a Kafka consumer/producer handler
-#   migration     Add a Flyway migration
-#   test          Add test scaffolding (unit, integration, chaos)
+#   service         Create a new microservice skeleton
+#   controller      Add a REST controller to an existing service
+#   entity          Add a JPA entity with repository
+#   kafka-handler   Add a Kafka consumer/producer handler
+#   migration       Add a Flyway migration
+#   test            Add test scaffolding (unit, integration, chaos)
+#   connector       [PERCEPTION] Add acquisition connector (route, processors, config)
+#   signal-detector [PERCEPTION] Add signal detector implementation
+#   scenario        [PERCEPTION] Add scenario generation school
 #
 # Examples:
 #   ./scripts/scaffold.sh service --name market-data --port 8090
 #   ./scripts/scaffold.sh controller --service PERCEPTION --name SignalController
 #   ./scripts/scaffold.sh entity --service ODYSSEY --name Actor --table actors
+#   ./scripts/scaffold.sh connector --name WebScraper --type WEB_CRAWL
+#   ./scripts/scaffold.sh signal-detector --name Anomaly
+#   ./scripts/scaffold.sh scenario --name EmergingThreat --school PATTERN_MATCHING
 #
 # Related Epic: .github/dx-issues/epic-scaffolding-cli.md
 # =============================================================================
@@ -94,6 +100,9 @@ COMMANDS:
     migration       Add a Flyway migration file
     test            Add test scaffolding
     docs            Generate documentation from templates
+    connector       [PERCEPTION] Add acquisition connector
+    signal-detector [PERCEPTION] Add signal detector
+    scenario        [PERCEPTION] Add scenario generation school
     help            Show this help message
 
 OPTIONS:
@@ -1299,6 +1308,626 @@ cmd_docs_api_guide() {
 }
 
 # -----------------------------------------------------------------------------
+# Command: connector (PERCEPTION-specific)
+# -----------------------------------------------------------------------------
+
+cmd_connector() {
+    local name=""
+    local type=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            -t|--type) type="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$name" ]]; then
+        log_error "Connector name is required (--name)"
+        exit 1
+    fi
+    
+    if [[ -z "$type" ]]; then
+        type=$(echo "$name" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+        log_info "Using default type: $type"
+    fi
+    
+    local pascal_name=$(to_pascal_case "$name")
+    local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+    local name_camel=$(to_camel_case "$name")
+    local type_lower=$(echo "$type" | tr '[:upper:]' '[:lower:]')
+    
+    local base_package="com.z254.butterfly.perception.acquisition"
+    local base_path="${PROJECT_ROOT}/PERCEPTION/perception-acquisition/src/main/java/com/z254/butterfly/perception/acquisition"
+    local test_path="${PROJECT_ROOT}/PERCEPTION/perception-acquisition/src/test/java/com/z254/butterfly/perception/acquisition"
+    
+    local fetch_processor="${base_path}/route/processor/${pascal_name}FetchProcessor.java"
+    local page_processor="${base_path}/route/processor/${pascal_name}PageProcessor.java"
+    local config_file="${base_path}/config/${pascal_name}ConnectorConfig.java"
+    local test_file="${test_path}/route/processor/${pascal_name}ProcessorTest.java"
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create:"
+        echo "  - $fetch_processor"
+        echo "  - $page_processor"
+        echo "  - $config_file"
+        echo "  - $test_file"
+        return
+    fi
+    
+    # Check templates exist
+    local templates_dir="${PROJECT_ROOT}/scripts/templates/connector"
+    if [[ ! -d "$templates_dir" ]]; then
+        log_error "Connector templates not found at: $templates_dir"
+        log_info "Run scaffold.sh to initialize templates first"
+        exit 1
+    fi
+    
+    mkdir -p "${base_path}/route/processor"
+    mkdir -p "${base_path}/config"
+    mkdir -p "${test_path}/route/processor"
+    
+    # Generate files from templates
+    log_info "Generating ${pascal_name} connector..."
+    
+    sed -e "s/{{PACKAGE}}/${base_package}/g" \
+        -e "s/{{NAME}}/${pascal_name}/g" \
+        -e "s/{{NAME_LOWER}}/${name_lower}/g" \
+        -e "s/{{NAME_CAMEL}}/${name_camel}/g" \
+        -e "s/{{TYPE}}/${type}/g" \
+        -e "s/{{TYPE_LOWER}}/${type_lower}/g" \
+        "${templates_dir}/fetch-processor.java.tmpl" > "$fetch_processor"
+    log_success "Created: $fetch_processor"
+    
+    sed -e "s/{{PACKAGE}}/${base_package}/g" \
+        -e "s/{{NAME}}/${pascal_name}/g" \
+        -e "s/{{NAME_LOWER}}/${name_lower}/g" \
+        -e "s/{{NAME_CAMEL}}/${name_camel}/g" \
+        -e "s/{{TYPE}}/${type}/g" \
+        -e "s/{{TYPE_LOWER}}/${type_lower}/g" \
+        "${templates_dir}/page-processor.java.tmpl" > "$page_processor"
+    log_success "Created: $page_processor"
+    
+    sed -e "s/{{PACKAGE}}/${base_package}/g" \
+        -e "s/{{NAME}}/${pascal_name}/g" \
+        -e "s/{{NAME_LOWER}}/${name_lower}/g" \
+        -e "s/{{NAME_CAMEL}}/${name_camel}/g" \
+        -e "s/{{TYPE}}/${type}/g" \
+        -e "s/{{TYPE_LOWER}}/${type_lower}/g" \
+        "${templates_dir}/config.java.tmpl" > "$config_file"
+    log_success "Created: $config_file"
+    
+    sed -e "s/{{PACKAGE}}/${base_package}/g" \
+        -e "s/{{NAME}}/${pascal_name}/g" \
+        -e "s/{{NAME_LOWER}}/${name_lower}/g" \
+        -e "s/{{NAME_CAMEL}}/${name_camel}/g" \
+        -e "s/{{TYPE}}/${type}/g" \
+        -e "s/{{TYPE_LOWER}}/${type_lower}/g" \
+        "${templates_dir}/processor-test.java.tmpl" > "$test_file"
+    log_success "Created: $test_file"
+    
+    log_success "Connector ${pascal_name} scaffolded successfully!"
+    log_info "Next steps:"
+    echo "  1. Add source type '${type}' to Source.SourceType enum"
+    echo "  2. Implement fetch logic in ${pascal_name}FetchProcessor"
+    echo "  3. Implement conversion logic in ${pascal_name}PageProcessor"
+    echo "  4. Create Camel route template for the connector"
+    echo "  5. Register the route in RouteManager"
+    echo "  6. Document in ACQUISITION_CONNECTORS.md"
+}
+
+# -----------------------------------------------------------------------------
+# Command: signal-detector (PERCEPTION-specific)
+# -----------------------------------------------------------------------------
+
+cmd_signal_detector() {
+    local name=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$name" ]]; then
+        log_error "Detector name is required (--name)"
+        exit 1
+    fi
+    
+    local pascal_name=$(to_pascal_case "$name")
+    local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+    local name_camel=$(to_camel_case "$name")
+    
+    local base_package="com.z254.butterfly.perception.signals"
+    local base_path="${PROJECT_ROOT}/PERCEPTION/perception-signals/src/main/java/com/z254/butterfly/perception/signals"
+    local test_path="${PROJECT_ROOT}/PERCEPTION/perception-signals/src/test/java/com/z254/butterfly/perception/signals"
+    
+    local detector_file="${base_path}/detector/impl/${pascal_name}Detector.java"
+    local config_file="${base_path}/detector/impl/${pascal_name}DetectorConfig.java"
+    local result_file="${base_path}/detector/impl/${pascal_name}DetectionResult.java"
+    local test_file="${test_path}/detector/impl/${pascal_name}DetectorTest.java"
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create:"
+        echo "  - $detector_file"
+        echo "  - $config_file"
+        echo "  - $result_file"
+        echo "  - $test_file"
+        return
+    fi
+    
+    mkdir -p "${base_path}/detector/impl"
+    mkdir -p "${test_path}/detector/impl"
+    
+    log_info "Generating ${pascal_name}Detector..."
+    
+    # Generate detector
+    cat > "$detector_file" << EOF
+package ${base_package}.detector.impl;
+
+import ${base_package}.detector.DetectionContext;
+import ${base_package}.detector.SignalDetector;
+import ${base_package}.store.SignalsStateStore;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+/**
+ * ${pascal_name} signal detector.
+ * <p>
+ * TODO: Describe what this detector identifies and when it triggers alerts.
+ * </p>
+ *
+ * @see ${pascal_name}DetectorConfig
+ * @see ${pascal_name}DetectionResult
+ */
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class ${pascal_name}Detector implements SignalDetector<${pascal_name}DetectorConfig, ${pascal_name}DetectionResult> {
+
+    private final SignalsStateStore stateStore;
+    private final MeterRegistry meterRegistry;
+
+    @Getter
+    @Setter
+    private boolean enabled = true;
+
+    @Override
+    public String getName() {
+        return "${name_lower}";
+    }
+
+    @Override
+    public ${pascal_name}DetectorConfig getDefaultConfig() {
+        return new ${pascal_name}DetectorConfig();
+    }
+
+    @Override
+    public ${pascal_name}DetectionResult detect(DetectionContext context) {
+        if (!enabled) {
+            return ${pascal_name}DetectionResult.empty();
+        }
+
+        log.debug("Running ${name_lower} detection for context: {}", context);
+
+        // TODO: Implement detection logic
+        // 1. Query state store for relevant data
+        // 2. Apply detection algorithm
+        // 3. Build and return result
+
+        return ${pascal_name}DetectionResult.builder()
+                .hasSignals(false)
+                .build();
+    }
+
+    @Override
+    public Class<${pascal_name}DetectorConfig> getConfigClass() {
+        return ${pascal_name}DetectorConfig.class;
+    }
+}
+EOF
+    log_success "Created: $detector_file"
+    
+    # Generate config
+    cat > "$config_file" << EOF
+package ${base_package}.detector.impl;
+
+import ${base_package}.detector.BaseDetectorConfig;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+/**
+ * Configuration for ${pascal_name}Detector.
+ */
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class ${pascal_name}DetectorConfig extends BaseDetectorConfig {
+
+    /**
+     * Detection threshold (0.0 - 1.0).
+     */
+    private double threshold = 0.5;
+
+    /**
+     * Minimum samples required before detection.
+     */
+    private int minSamples = 10;
+
+    /**
+     * Time window for detection in hours.
+     */
+    private int windowHours = 24;
+}
+EOF
+    log_success "Created: $config_file"
+    
+    # Generate result
+    cat > "$result_file" << EOF
+package ${base_package}.detector.impl;
+
+import ${base_package}.detector.BaseDetectionResult;
+import lombok.Builder;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Detection result from ${pascal_name}Detector.
+ */
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class ${pascal_name}DetectionResult extends BaseDetectionResult {
+
+    private double score;
+    private List<String> affectedSources;
+    private Map<String, Object> details;
+
+    @Builder
+    public ${pascal_name}DetectionResult(boolean hasSignals, double score,
+                                         List<String> affectedSources,
+                                         Map<String, Object> details) {
+        super(hasSignals);
+        this.score = score;
+        this.affectedSources = affectedSources != null ? affectedSources : List.of();
+        this.details = details != null ? details : Map.of();
+    }
+
+    public static ${pascal_name}DetectionResult empty() {
+        return ${pascal_name}DetectionResult.builder()
+                .hasSignals(false)
+                .score(0.0)
+                .build();
+    }
+}
+EOF
+    log_success "Created: $result_file"
+    
+    # Generate test
+    cat > "$test_file" << EOF
+package ${base_package}.detector.impl;
+
+import ${base_package}.detector.DetectionContext;
+import ${base_package}.store.SignalsStateStore;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("${pascal_name}Detector")
+class ${pascal_name}DetectorTest {
+
+    @Mock
+    private SignalsStateStore stateStore;
+
+    private SimpleMeterRegistry meterRegistry;
+    private ${pascal_name}Detector detector;
+
+    @BeforeEach
+    void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
+        detector = new ${pascal_name}Detector(stateStore, meterRegistry);
+    }
+
+    @Test
+    @DisplayName("should return empty result when disabled")
+    void shouldReturnEmptyWhenDisabled() {
+        detector.setEnabled(false);
+
+        var result = detector.detect(DetectionContext.forLastHours(24));
+
+        assertThat(result.hasSignals()).isFalse();
+    }
+
+    @Test
+    @DisplayName("should return detector name")
+    void shouldReturnDetectorName() {
+        assertThat(detector.getName()).isEqualTo("${name_lower}");
+    }
+
+    @Test
+    @DisplayName("should return default config")
+    void shouldReturnDefaultConfig() {
+        var config = detector.getDefaultConfig();
+
+        assertThat(config).isNotNull();
+        assertThat(config.getThreshold()).isEqualTo(0.5);
+    }
+
+    // TODO: Add more tests for detection logic
+}
+EOF
+    log_success "Created: $test_file"
+    
+    log_success "Signal detector ${pascal_name} scaffolded successfully!"
+    log_info "Next steps:"
+    echo "  1. Implement detection logic in ${pascal_name}Detector.detect()"
+    echo "  2. Add configuration properties to SignalsProperties"
+    echo "  3. Write tests for your detection algorithm"
+    echo "  4. Document in PERCEPTION/docs/guides/ADDING_A_SIGNAL_DETECTOR.md"
+}
+
+# -----------------------------------------------------------------------------
+# Command: scenario (PERCEPTION-specific)
+# -----------------------------------------------------------------------------
+
+cmd_scenario() {
+    local name=""
+    local school=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            -s|--school) school="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$name" ]]; then
+        log_error "Scenario name is required (--name)"
+        exit 1
+    fi
+    
+    if [[ -z "$school" ]]; then
+        school="CUSTOM"
+        log_info "Using default school: $school"
+    fi
+    
+    local pascal_name=$(to_pascal_case "$name")
+    local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+    local name_camel=$(to_camel_case "$name")
+    
+    local base_package="com.z254.butterfly.perception.scenarios"
+    local base_path="${PROJECT_ROOT}/PERCEPTION/perception-scenarios/src/main/java/com/z254/butterfly/perception/scenarios"
+    local test_path="${PROJECT_ROOT}/PERCEPTION/perception-scenarios/src/test/java/com/z254/butterfly/perception/scenarios"
+    
+    local school_file="${base_path}/pluralism/impl/${pascal_name}School.java"
+    local service_file="${base_path}/service/impl/${pascal_name}ScenarioService.java"
+    local test_file="${test_path}/service/impl/${pascal_name}ScenarioServiceTest.java"
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create:"
+        echo "  - $school_file"
+        echo "  - $service_file"
+        echo "  - $test_file"
+        return
+    fi
+    
+    mkdir -p "${base_path}/pluralism/impl"
+    mkdir -p "${base_path}/service/impl"
+    mkdir -p "${test_path}/service/impl"
+    
+    log_info "Generating ${pascal_name} scenario components..."
+    
+    # Generate school
+    cat > "$school_file" << EOF
+package ${base_package}.pluralism.impl;
+
+import ${base_package}.model.StackableScenario;
+import ${base_package}.pluralism.ScenarioGenerationSchool;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * ${pascal_name} scenario generation school.
+ * <p>
+ * Implements the ${school} approach to scenario generation.
+ * </p>
+ *
+ * @see ScenarioGenerationSchool
+ */
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class ${pascal_name}School implements ScenarioGenerationSchool {
+
+    @Override
+    public String getName() {
+        return "${name_lower}";
+    }
+
+    @Override
+    public String getDescription() {
+        return "${pascal_name} scenario generation using ${school} methodology";
+    }
+
+    @Override
+    public List<StackableScenario> generateScenarios(Map<String, Object> context) {
+        log.debug("Generating scenarios with ${pascal_name} school for context: {}", context);
+
+        // TODO: Implement scenario generation logic
+        // 1. Extract relevant context parameters
+        // 2. Apply generation algorithm
+        // 3. Return list of generated scenarios
+
+        return List.of();
+    }
+
+    @Override
+    public double getDefaultWeight() {
+        return 1.0;
+    }
+
+    @Override
+    public boolean supports(Map<String, Object> context) {
+        // TODO: Implement support check based on context
+        return true;
+    }
+}
+EOF
+    log_success "Created: $school_file"
+    
+    # Generate service
+    cat > "$service_file" << EOF
+package ${base_package}.service.impl;
+
+import ${base_package}.model.StackableScenario;
+import ${base_package}.pluralism.impl.${pascal_name}School;
+import ${base_package}.repository.ScenarioRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Service for ${pascal_name} scenario management.
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class ${pascal_name}ScenarioService {
+
+    private final ${pascal_name}School school;
+    private final ScenarioRepository repository;
+    private final MeterRegistry meterRegistry;
+
+    /**
+     * Generate scenarios using the ${pascal_name} school.
+     *
+     * @param context generation context parameters
+     * @return list of generated scenarios
+     */
+    public List<StackableScenario> generate(Map<String, Object> context) {
+        log.info("Generating ${name_lower} scenarios with context: {}", context);
+
+        List<StackableScenario> scenarios = school.generateScenarios(context);
+
+        meterRegistry.counter("scenarios.${name_lower}.generated")
+                .increment(scenarios.size());
+
+        return scenarios;
+    }
+
+    /**
+     * Check if the school supports the given context.
+     *
+     * @param context the context to check
+     * @return true if supported
+     */
+    public boolean supports(Map<String, Object> context) {
+        return school.supports(context);
+    }
+}
+EOF
+    log_success "Created: $service_file"
+    
+    # Generate test
+    cat > "$test_file" << EOF
+package ${base_package}.service.impl;
+
+import ${base_package}.pluralism.impl.${pascal_name}School;
+import ${base_package}.repository.ScenarioRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@ExtendWith(MockitoExtension.class)
+@DisplayName("${pascal_name}ScenarioService")
+class ${pascal_name}ScenarioServiceTest {
+
+    @Mock
+    private ScenarioRepository repository;
+
+    private ${pascal_name}School school;
+    private SimpleMeterRegistry meterRegistry;
+    private ${pascal_name}ScenarioService service;
+
+    @BeforeEach
+    void setUp() {
+        school = new ${pascal_name}School();
+        meterRegistry = new SimpleMeterRegistry();
+        service = new ${pascal_name}ScenarioService(school, repository, meterRegistry);
+    }
+
+    @Test
+    @DisplayName("should check support for context")
+    void shouldCheckSupportForContext() {
+        var context = Map.<String, Object>of("key", "value");
+
+        boolean supported = service.supports(context);
+
+        assertThat(supported).isTrue();
+    }
+
+    @Test
+    @DisplayName("should generate scenarios")
+    void shouldGenerateScenarios() {
+        var context = Map.<String, Object>of("key", "value");
+
+        var scenarios = service.generate(context);
+
+        assertThat(scenarios).isNotNull();
+    }
+
+    // TODO: Add more tests for scenario generation logic
+}
+EOF
+    log_success "Created: $test_file"
+    
+    log_success "Scenario ${pascal_name} scaffolded successfully!"
+    log_info "Next steps:"
+    echo "  1. Implement generation logic in ${pascal_name}School.generateScenarios()"
+    echo "  2. Define support criteria in ${pascal_name}School.supports()"
+    echo "  3. Register the school with MultiModelScenarioService"
+    echo "  4. Write tests for your generation algorithm"
+    echo "  5. Document in PERCEPTION/docs/guides/ADDING_A_SCENARIO_SCHOOL.md"
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -1312,14 +1941,17 @@ main() {
     shift
     
     case "$command" in
-        service)       cmd_service "$@" ;;
-        controller)    cmd_controller "$@" ;;
-        entity)        cmd_entity "$@" ;;
-        kafka-handler) cmd_kafka_handler "$@" ;;
-        migration)     cmd_migration "$@" ;;
-        test)          cmd_test "$@" ;;
-        docs)          cmd_docs "$@" ;;
-        help|--help|-h) show_help ;;
+        service)         cmd_service "$@" ;;
+        controller)      cmd_controller "$@" ;;
+        entity)          cmd_entity "$@" ;;
+        kafka-handler)   cmd_kafka_handler "$@" ;;
+        migration)       cmd_migration "$@" ;;
+        test)            cmd_test "$@" ;;
+        docs)            cmd_docs "$@" ;;
+        connector)       cmd_connector "$@" ;;
+        signal-detector) cmd_signal_detector "$@" ;;
+        scenario)        cmd_scenario "$@" ;;
+        help|--help|-h)  show_help ;;
         *)
             log_error "Unknown command: $command"
             show_help

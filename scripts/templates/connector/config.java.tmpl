@@ -1,0 +1,60 @@
+package {{PACKAGE}}.config;
+
+import lombok.Data;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * Configuration properties for the {{NAME}} connector.
+ * <p>
+ * Configure in application.yml:
+ * <pre>
+ * perception:
+ *   acquisition:
+ *     {{NAME_LOWER}}:
+ *       enabled: true
+ *       default-timeout-ms: 30000
+ *       max-retries: 3
+ * </pre>
+ * </p>
+ */
+@Configuration
+@ConfigurationProperties(prefix = "perception.acquisition.{{NAME_LOWER}}")
+@Data
+public class {{NAME}}ConnectorConfig {
+
+    /**
+     * Whether the {{NAME_LOWER}} connector is enabled.
+     */
+    private boolean enabled = true;
+
+    /**
+     * Default timeout for {{NAME_LOWER}} operations in milliseconds.
+     */
+    private int defaultTimeoutMs = 30000;
+
+    /**
+     * Maximum number of retries for failed operations.
+     */
+    private int maxRetries = 3;
+
+    /**
+     * Delay between retries in milliseconds.
+     */
+    private int retryDelayMs = 1000;
+
+    /**
+     * Maximum number of concurrent connections.
+     */
+    private int maxConcurrentConnections = 5;
+
+    /**
+     * User agent string for HTTP requests (if applicable).
+     */
+    private String userAgent = "PERCEPTION/{{NAME}}Connector";
+
+    /**
+     * Rate limit: maximum requests per second (0 = unlimited).
+     */
+    private int rateLimitPerSecond = 0;
+}

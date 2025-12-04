@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  BUTTERFLY Live Templates for IntelliJ IDEA
+  
+  Installation:
+    1. Open Settings → Editor → Live Templates
+    2. Click the gear icon → Import
+    3. Select this file
+    
+  Or copy to: ~/.config/JetBrains/IntelliJIdea<version>/templates/
+-->
+<templateSet group="BUTTERFLY">
+  <!-- =================================================================== -->
+  <!-- Identity Patterns -->
+  <!-- =================================================================== -->
+  
+  <template name="rimnode" value="RimNodeId nodeId = RimNodeId.parse(&quot;$RIM_ID$&quot;);&#10;String namespace = nodeId.getNamespace();&#10;String entityType = nodeId.getEntityType();&#10;String localId = nodeId.getLocalId();" description="Parse RimNodeId" toReformat="true" toShortenFQNames="true">
+    <variable name="RIM_ID" expression="" defaultValue="&quot;rim:entity:namespace:localId&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="rimnew" value="RimNodeId nodeId = RimNodeId.of(&quot;$NAMESPACE$&quot;, &quot;$ENTITY_TYPE$&quot;, &quot;$LOCAL_ID$&quot;);" description="Create new RimNodeId" toReformat="true" toShortenFQNames="true">
+    <variable name="NAMESPACE" expression="" defaultValue="&quot;finance&quot;" alwaysStopAt="true"/>
+    <variable name="ENTITY_TYPE" expression="" defaultValue="&quot;entity&quot;" alwaysStopAt="true"/>
+    <variable name="LOCAL_ID" expression="" defaultValue="&quot;id&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="tenantctx" value="TenantContext.setCurrentTenant(&quot;$TENANT_ID$&quot;);&#10;try {&#10;    $END$&#10;} finally {&#10;    TenantContext.clear();&#10;}" description="Tenant context block" toReformat="true" toShortenFQNames="true">
+    <variable name="TENANT_ID" expression="" defaultValue="&quot;tenant-1&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <!-- =================================================================== -->
+  <!-- Kafka Patterns -->
+  <!-- =================================================================== -->
+  
+  <template name="kafkalistener" value="@KafkaListener(&#10;    topics = &quot;$TOPIC$&quot;,&#10;    groupId = &quot;$GROUP_ID$&quot;,&#10;    containerFactory = &quot;avroKafkaListenerContainerFactory&quot;&#10;)&#10;public void handle$NAME$(@Payload $PAYLOAD_TYPE$ payload,&#10;                         @Header(KafkaHeaders.RECEIVED_KEY) String key,&#10;                         @Header(KafkaHeaders.RECEIVED_TIMESTAMP) long timestamp,&#10;                         Acknowledgment ack) {&#10;    log.debug(&quot;Received {} with key: {}&quot;, payload, key);&#10;    try {&#10;        $END$&#10;        ack.acknowledge();&#10;    } catch (Exception e) {&#10;        log.error(&quot;Failed to process message: {}&quot;, e.getMessage(), e);&#10;        // Will be sent to DLQ via error handler&#10;        throw e;&#10;    }&#10;}" description="Kafka listener with DLQ support" toReformat="true" toShortenFQNames="true">
+    <variable name="TOPIC" expression="" defaultValue="&quot;perception.signals&quot;" alwaysStopAt="true"/>
+    <variable name="GROUP_ID" expression="" defaultValue="&quot;perception-signals-group&quot;" alwaysStopAt="true"/>
+    <variable name="NAME" expression="capitalize(TOPIC)" defaultValue="Signal" alwaysStopAt="true"/>
+    <variable name="PAYLOAD_TYPE" expression="" defaultValue="GenericRecord" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="kafkasend" value="kafkaTemplate.send(&quot;$TOPIC$&quot;, $KEY$, $VALUE$)&#10;    .whenComplete((result, ex) -> {&#10;        if (ex != null) {&#10;            log.error(&quot;Failed to send message to {}: {}&quot;, &quot;$TOPIC$&quot;, ex.getMessage());&#10;        } else {&#10;            log.debug(&quot;Sent message to {} partition {}&quot;, &#10;                result.getRecordMetadata().topic(),&#10;                result.getRecordMetadata().partition());&#10;        }&#10;    });" description="Kafka send with error handling" toReformat="true" toShortenFQNames="true">
+    <variable name="TOPIC" expression="" defaultValue="&quot;topic-name&quot;" alwaysStopAt="true"/>
+    <variable name="KEY" expression="" defaultValue="key" alwaysStopAt="true"/>
+    <variable name="VALUE" expression="" defaultValue="value" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <!-- =================================================================== -->
+  <!-- Signal Detection Patterns -->
+  <!-- =================================================================== -->
+  
+  <template name="detector" value="@Component&#10;@RequiredArgsConstructor&#10;@Slf4j&#10;public class $NAME$Detector implements SignalDetector&lt;$NAME$DetectorConfig, $NAME$DetectionResult&gt; {&#10;&#10;    private final SignalsStateStore stateStore;&#10;    private final MeterRegistry meterRegistry;&#10;&#10;    @Getter&#10;    @Setter&#10;    private boolean enabled = true;&#10;&#10;    @Override&#10;    public String getName() {&#10;        return &quot;$NAME_LOWER$&quot;;&#10;    }&#10;&#10;    @Override&#10;    public $NAME$DetectorConfig getDefaultConfig() {&#10;        return new $NAME$DetectorConfig();&#10;    }&#10;&#10;    @Override&#10;    public $NAME$DetectionResult detect(DetectionContext context) {&#10;        if (!enabled) {&#10;            return $NAME$DetectionResult.empty();&#10;        }&#10;        $END$&#10;        return $NAME$DetectionResult.builder().hasSignals(false).build();&#10;    }&#10;&#10;    @Override&#10;    public Class&lt;$NAME$DetectorConfig&gt; getConfigClass() {&#10;        return $NAME$DetectorConfig.class;&#10;    }&#10;}" description="Signal detector implementation" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="Custom" alwaysStopAt="true"/>
+    <variable name="NAME_LOWER" expression="lowercaseAndDash(NAME)" defaultValue="custom" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="detectionctx" value="DetectionContext context = DetectionContext.builder()&#10;    .tenantId(&quot;$TENANT$&quot;)&#10;    .timeWindowHours($HOURS$)&#10;    .sourceFilter($SOURCE$)&#10;    .build();" description="Create DetectionContext" toReformat="true" toShortenFQNames="true">
+    <variable name="TENANT" expression="" defaultValue="&quot;tenant-1&quot;" alwaysStopAt="true"/>
+    <variable name="HOURS" expression="" defaultValue="24" alwaysStopAt="true"/>
+    <variable name="SOURCE" expression="" defaultValue="null" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <!-- =================================================================== -->
+  <!-- Camel Route Patterns -->
+  <!-- =================================================================== -->
+  
+  <template name="camelroute" value="from(&quot;$FROM$&quot;)&#10;    .routeId(&quot;$ROUTE_ID$&quot;)&#10;    .log(&quot;Processing ${body}&quot;)&#10;    .process(exchange -> {&#10;        $END$&#10;    })&#10;    .to(&quot;$TO$&quot;);" description="Camel route definition" toReformat="true" toShortenFQNames="true">
+    <variable name="FROM" expression="" defaultValue="&quot;direct:start&quot;" alwaysStopAt="true"/>
+    <variable name="ROUTE_ID" expression="" defaultValue="&quot;my-route&quot;" alwaysStopAt="true"/>
+    <variable name="TO" expression="" defaultValue="&quot;kafka:topic&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="camelonexception" value=".onException($EXCEPTION$.class)&#10;    .maximumRedeliveries($RETRIES$)&#10;    .redeliveryDelay($DELAY$)&#10;    .handled(true)&#10;    .to(&quot;$DLQ_TOPIC$&quot;)&#10;.end()" description="Camel onException with DLQ" toReformat="true" toShortenFQNames="true">
+    <variable name="EXCEPTION" expression="" defaultValue="Exception" alwaysStopAt="true"/>
+    <variable name="RETRIES" expression="" defaultValue="3" alwaysStopAt="true"/>
+    <variable name="DELAY" expression="" defaultValue="1000" alwaysStopAt="true"/>
+    <variable name="DLQ_TOPIC" expression="" defaultValue="&quot;kafka:acquisition.errors&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <!-- =================================================================== -->
+  <!-- Spring Patterns -->
+  <!-- =================================================================== -->
+  
+  <template name="springrest" value="@RestController&#10;@RequestMapping(&quot;$BASE_PATH$&quot;)&#10;@RequiredArgsConstructor&#10;@Slf4j&#10;@Tag(name = &quot;$TAG_NAME$&quot;, description = &quot;$TAG_DESC$&quot;)&#10;public class $NAME$Controller {&#10;&#10;    private final $SERVICE$ service;&#10;&#10;    @GetMapping&#10;    @Operation(summary = &quot;List all $RESOURCE_PLURAL$&quot;)&#10;    public ResponseEntity&lt;ApiResponse&lt;List&lt;$DTO$&gt;&gt;&gt; list() {&#10;        $END$&#10;        return ResponseEntity.ok(ApiResponse.success(List.of()));&#10;    }&#10;}" description="Spring REST controller with OpenAPI" toReformat="true" toShortenFQNames="true">
+    <variable name="BASE_PATH" expression="" defaultValue="&quot;/api/v1/resources&quot;" alwaysStopAt="true"/>
+    <variable name="NAME" expression="" defaultValue="Resource" alwaysStopAt="true"/>
+    <variable name="TAG_NAME" expression="NAME" defaultValue="Resource" alwaysStopAt="false"/>
+    <variable name="TAG_DESC" expression="" defaultValue="&quot;Resource management operations&quot;" alwaysStopAt="true"/>
+    <variable name="SERVICE" expression="concat(NAME, 'Service')" defaultValue="ResourceService" alwaysStopAt="true"/>
+    <variable name="RESOURCE_PLURAL" expression="" defaultValue="&quot;resources&quot;" alwaysStopAt="true"/>
+    <variable name="DTO" expression="concat(NAME, 'Dto')" defaultValue="ResourceDto" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="springservice" value="@Service&#10;@RequiredArgsConstructor&#10;@Slf4j&#10;public class $NAME$ServiceImpl implements $NAME$Service {&#10;&#10;    private final $REPOSITORY$ repository;&#10;    private final MeterRegistry meterRegistry;&#10;&#10;    @Override&#10;    @Transactional(readOnly = true)&#10;    public Optional&lt;$ENTITY$&gt; findById(String id) {&#10;        return repository.findById(id);&#10;    }&#10;&#10;    @Override&#10;    @Transactional&#10;    public $ENTITY$ save($ENTITY$ entity) {&#10;        $END$&#10;        return repository.save(entity);&#10;    }&#10;}" description="Spring service implementation" toReformat="true" toShortenFQNames="true">
+    <variable name="NAME" expression="" defaultValue="Resource" alwaysStopAt="true"/>
+    <variable name="REPOSITORY" expression="concat(NAME, 'Repository')" defaultValue="ResourceRepository" alwaysStopAt="true"/>
+    <variable name="ENTITY" expression="NAME" defaultValue="Resource" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <!-- =================================================================== -->
+  <!-- Testing Patterns -->
+  <!-- =================================================================== -->
+  
+  <template name="testcontainers" value="static {&#10;    ButterflyTestContainers.startCoreContainers();&#10;}&#10;&#10;@DynamicPropertySource&#10;static void configureProperties(DynamicPropertyRegistry registry) {&#10;    ButterflyTestContainers.configureCoreProperties(registry);&#10;}" description="Testcontainers setup block" toReformat="true" toShortenFQNames="true">
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="mocktest" value="@ExtendWith(MockitoExtension.class)&#10;@DisplayName(&quot;$CLASS_NAME$&quot;)&#10;class $CLASS_NAME$Test {&#10;&#10;    @Mock&#10;    private $DEPENDENCY$ $DEPENDENCY_VAR$;&#10;&#10;    @InjectMocks&#10;    private $CLASS_NAME$ $INSTANCE_VAR$;&#10;&#10;    @BeforeEach&#10;    void setUp() {&#10;        $END$&#10;    }&#10;&#10;    @Test&#10;    @DisplayName(&quot;should $TEST_DESC$&quot;)&#10;    void should$TEST_NAME$() {&#10;        // Given&#10;&#10;        // When&#10;&#10;        // Then&#10;    }&#10;}" description="Mockito test class" toReformat="true" toShortenFQNames="true">
+    <variable name="CLASS_NAME" expression="" defaultValue="MyService" alwaysStopAt="true"/>
+    <variable name="DEPENDENCY" expression="" defaultValue="Repository" alwaysStopAt="true"/>
+    <variable name="DEPENDENCY_VAR" expression="decapitalize(DEPENDENCY)" defaultValue="repository" alwaysStopAt="false"/>
+    <variable name="INSTANCE_VAR" expression="decapitalize(CLASS_NAME)" defaultValue="myService" alwaysStopAt="false"/>
+    <variable name="TEST_DESC" expression="" defaultValue="&quot;do something&quot;" alwaysStopAt="true"/>
+    <variable name="TEST_NAME" expression="capitalize(camelCase(TEST_DESC))" defaultValue="DoSomething" alwaysStopAt="false"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <template name="apitest" value="@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)&#10;@ActiveProfiles(&quot;test&quot;)&#10;@DisplayName(&quot;$CONTROLLER$ API&quot;)&#10;class $CONTROLLER$IT extends AbstractApiIntegrationTest {&#10;&#10;    @Test&#10;    @DisplayName(&quot;should $TEST_DESC$&quot;)&#10;    void should$TEST_NAME$() throws Exception {&#10;        mockMvc.perform(get(&quot;$PATH$&quot;))&#10;            .andExpect(status().isOk())&#10;            .andExpect(jsonPath(&quot;$.status&quot;, is(&quot;SUCCESS&quot;)));&#10;    }&#10;}" description="API integration test" toReformat="true" toShortenFQNames="true">
+    <variable name="CONTROLLER" expression="" defaultValue="Resource" alwaysStopAt="true"/>
+    <variable name="TEST_DESC" expression="" defaultValue="&quot;return resources&quot;" alwaysStopAt="true"/>
+    <variable name="TEST_NAME" expression="capitalize(camelCase(TEST_DESC))" defaultValue="ReturnResources" alwaysStopAt="false"/>
+    <variable name="PATH" expression="" defaultValue="&quot;/api/v1/resources&quot;" alwaysStopAt="true"/>
+    <context>
+      <option name="JAVA_CODE" value="true"/>
+    </context>
+  </template>
+  
+  <!-- =================================================================== -->
+  <!-- Avro Patterns -->
+  <!-- =================================================================== -->
+  
+  <template name="avroschema" value="{&#10;  &quot;type&quot;: &quot;record&quot;,&#10;  &quot;name&quot;: &quot;$NAME$&quot;,&#10;  &quot;namespace&quot;: &quot;$NAMESPACE$&quot;,&#10;  &quot;fields&quot;: [&#10;    { &quot;name&quot;: &quot;id&quot;, &quot;type&quot;: &quot;string&quot; },&#10;    { &quot;name&quot;: &quot;timestamp&quot;, &quot;type&quot;: { &quot;type&quot;: &quot;long&quot;, &quot;logicalType&quot;: &quot;timestamp-millis&quot; } },&#10;    $END$&#10;  ]&#10;}" description="Avro schema definition" toReformat="true" toShortenFQNames="false">
+    <variable name="NAME" expression="" defaultValue="MyEvent" alwaysStopAt="true"/>
+    <variable name="NAMESPACE" expression="" defaultValue="com.z254.butterfly.perception.events" alwaysStopAt="true"/>
+    <context>
+      <option name="JSON" value="true"/>
+    </context>
+  </template>
+</templateSet>

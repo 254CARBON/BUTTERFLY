@@ -1,0 +1,105 @@
+package {{PACKAGE}}.route.processor;
+
+import {{PACKAGE}}.service.SourceSnapshotRegistry;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.camel.Exchange;
+import org.apache.camel.Processor;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Fetch processor for {{NAME}} connector.
+ * <p>
+ * Responsible for fetching data from the {{TYPE_LOWER}} source and
+ * converting it into a list of raw records for downstream processing.
+ * </p>
+ *
+ * @see {{NAME}}PageProcessor
+ */
+@Component("{{NAME_CAMEL}}FetchProcessor")
+@RequiredArgsConstructor
+@Slf4j
+public class {{NAME}}FetchProcessor implements Processor {
+
+    private final SourceSnapshotRegistry snapshotRegistry;
+    private final MeterRegistry meterRegistry;
+
+    private Counter fetchSuccessCounter;
+    private Counter fetchErrorCounter;
+    private Timer fetchLatencyTimer;
+
+    @Override
+    public void process(Exchange exchange) throws Exception {
+        String sourceId = exchange.getIn().getHeader("sourceId", String.class);
+        String routeId = exchange.getIn().getHeader("CamelRouteId", String.class);
+
+        log.debug("{{NAME}} fetch starting for source: {}", sourceId);
+        Instant start = Instant.now();
+
+        try {
+            // Get source configuration from registry
+            var snapshot = snapshotRegistry.get(sourceId);
+            if (snapshot == null) {
+                throw new IllegalStateException("No snapshot found for source: " + sourceId);
+            }
+
+            // TODO: Implement your fetch logic here
+            // Example:
+            // List<Map<String, Object>> records = fetchFromSource(snapshot);
+            List<Map<String, Object>> records = List.of();
+
+            // Set the fetched records as the message body
+            exchange.getIn().setBody(records);
+
+            // Record metrics
+            getSuccessCounter().increment();
+            getLatencyTimer().record(Duration.between(start, Instant.now()));
+
+            log.info("{{NAME}} fetch completed for source {}: {} records", sourceId, records.size());
+
+        } catch (Exception e) {
+            getErrorCounter().increment();
+            log.error("{{NAME}} fetch failed for source {}: {}", sourceId, e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    // ==========================================================================
+    // Metrics
+    // ==========================================================================
+
+    private Counter getSuccessCounter() {
+        if (fetchSuccessCounter == null) {
+            fetchSuccessCounter = Counter.builder("acquisition.{{NAME_LOWER}}.fetch.success")
+                    .description("Successful {{NAME_LOWER}} fetch operations")
+                    .register(meterRegistry);
+        }
+        return fetchSuccessCounter;
+    }
+
+    private Counter getErrorCounter() {
+        if (fetchErrorCounter == null) {
+            fetchErrorCounter = Counter.builder("acquisition.{{NAME_LOWER}}.fetch.error")
+                    .description("Failed {{NAME_LOWER}} fetch operations")
+                    .register(meterRegistry);
+        }
+        return fetchErrorCounter;
+    }
+
+    private Timer getLatencyTimer() {
+        if (fetchLatencyTimer == null) {
+            fetchLatencyTimer = Timer.builder("acquisition.{{NAME_LOWER}}.fetch.latency")
+                    .description("{{NAME}} fetch latency")
+                    .register(meterRegistry);
+        }
+        return fetchLatencyTimer;
+    }
+}
