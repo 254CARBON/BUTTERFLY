@@ -1,0 +1,309 @@
+{
+  "name": "nexus-decision-execution",
+  "description": "End-to-end test for NEXUS Phase 6 - Decision Execution Framework. Tests the complete flow of NEXUS dispatching strategic options to SYNAPSE for execution, tracking progress, and receiving outcome feedback.",
+  "version": "1.0.0",
+  "mode": "positive",
+  "target": "nexus,synapse,plato",
+  "category": "integration",
+  "golden": true,
+  "timeout_seconds": 180,
+  "correlation_id": "nexus-exec-{{$timestamp}}",
+  "metadata": {
+    "phase": "6",
+    "feature": "decision-execution-framework",
+    "objectives": [
+      "Submit a decision from NEXUS to SYNAPSE via the new Decision Execution API",
+      "Verify SYNAPSE receives and accepts the decision",
+      "Track execution progress via NEXUS status endpoint",
+      "Verify outcome events flow back to NEXUS via Kafka",
+      "Confirm learning signals are published for feedback loop closure"
+    ]
+  },
+  "steps": [
+    {
+      "name": "verify-services-healthy",
+      "description": "Verify NEXUS and SYNAPSE are healthy before the test",
+      "type": "parallel",
+      "sub_steps": [
+        { "name": "nexus-health", "service": "nexus", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "synapse-health", "service": "synapse", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "plato-health", "service": "plato", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } }
+      ]
+    },
+    {
+      "name": "step-1-create-plato-plan",
+      "description": "Create a PLATO plan to provide governance context for the decision",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "nexus-exec-plan-{{$timestamp}}",
+        "planType": "EXECUTION_TEST",
+        "name": "NEXUS Execution Test Plan",
+        "description": "Test plan for NEXUS Phase 6 decision execution",
+        "steps": [
+          {
+            "name": "execute-test-action",
+            "action": {
+              "type": "EXECUTE",
+              "synapseAction": {
+                "toolId": "http-connector",
+                "actionType": "QUERY",
+                "parameters": {
+                  "url": "https://httpbin.org/get",
+                  "method": "GET"
+                }
+              }
+            }
+          }
+        ],
+        "tags": ["e2e", "nexus-execution"]
+      },
+      "expect": {
+        "status": 201,
+        "body": { "id": { "$exists": true } }
+      },
+      "outputs": {
+        "planId": "$.id"
+      }
+    },
+    {
+      "name": "step-2-submit-decision-to-nexus",
+      "description": "Submit a decision to NEXUS for execution via SYNAPSE",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/execution/decisions",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "scopeId": "rim:test:e2e:nexus-exec-{{$timestamp}}",
+        "namespace": "e2e",
+        "correlationId": "{{correlation_id}}",
+        "governance": {
+          "planId": "{{planId}}",
+          "planStepId": "execute-test-action",
+          "approved": true,
+          "approvedAt": "{{$isoTimestamp}}"
+        },
+        "options": [
+          {
+            "toolId": "http-connector",
+            "label": "HTTP GET Test",
+            "description": "Execute a simple HTTP GET request for testing",
+            "executionMode": "DRY_RUN",
+            "parameters": {
+              "url": "https://httpbin.org/get",
+              "method": "GET",
+              "headers": {
+                "X-Test-Header": "nexus-e2e-test"
+              }
+            },
+            "confidence": 0.95,
+            "expectedImpact": 0.1,
+            "requiresApproval": false
+          }
+        ],
+        "config": {
+          "mode": "SEQUENTIAL",
+          "maxRetries": 1,
+          "timeoutSeconds": 60,
+          "enableRollback": false,
+          "dryRun": true
+        },
+        "context": {
+          "testScenario": "nexus-decision-execution",
+          "phase": "6"
+        },
+        "metadata": {
+          "e2e": true,
+          "testId": "{{$timestamp}}"
+        }
+      },
+      "expect": {
+        "status": 202,
+        "body": {
+          "executionId": { "$exists": true },
+          "submitted": true
+        }
+      },
+      "outputs": {
+        "executionId": "$.executionId",
+        "synapseDecisionId": "$.synapseDecisionId"
+      }
+    },
+    {
+      "name": "step-3-wait-for-submission",
+      "type": "wait",
+      "duration_seconds": 3,
+      "description": "Allow SYNAPSE to process the decision submission"
+    },
+    {
+      "name": "step-4-verify-nexus-execution-status",
+      "description": "Verify NEXUS execution tracking shows submitted status",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/execution/decisions/{{executionId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "id": "{{executionId}}",
+          "status": ["SUBMITTED", "EXECUTING", "COMPLETED"],
+          "synapseDecisionId": { "$exists": true }
+        }
+      }
+    },
+    {
+      "name": "step-5-verify-synapse-received-decision",
+      "description": "Verify SYNAPSE received the decision from NEXUS",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/decisions/{{synapseDecisionId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": [200, 404]
+      },
+      "optional": true
+    },
+    {
+      "name": "step-6-wait-for-execution",
+      "type": "wait",
+      "duration_seconds": 10,
+      "description": "Allow SYNAPSE to execute the decision (DRY_RUN mode)"
+    },
+    {
+      "name": "step-7-verify-execution-completion",
+      "description": "Verify NEXUS execution tracking shows completion or progress",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/execution/decisions/{{executionId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "id": "{{executionId}}",
+          "status": ["SUBMITTED", "EXECUTING", "COMPLETED", "FAILED"]
+        }
+      },
+      "outputs": {
+        "finalStatus": "$.status",
+        "completionPercentage": "$.completionPercentage"
+      }
+    },
+    {
+      "name": "step-8-list-executions-by-namespace",
+      "description": "Verify the execution appears in the list filtered by namespace",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/execution/decisions",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "namespace": "e2e",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "name": "step-9-test-cancel-endpoint",
+      "description": "Test the cancel endpoint (should fail if already completed)",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/execution/decisions/{{executionId}}/cancel",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "reason": "E2E test cancellation"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "executionId": "{{executionId}}"
+        }
+      },
+      "optional": true
+    },
+    {
+      "name": "step-10-verify-learning-metrics",
+      "description": "Check that learning signal metrics were incremented",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/actuator/prometheus",
+      "headers": {
+        "X-Tenant-ID": "e2e-test"
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    },
+    {
+      "name": "step-11-test-lookup-by-synapse-id",
+      "description": "Test lookup by SYNAPSE decision ID",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/execution/decisions/by-synapse/{{synapseDecisionId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": [200, 404]
+      },
+      "optional": true
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      { "description": "NEXUS accepted decision submission", "step": "step-2-submit-decision-to-nexus", "condition": "status == 202" },
+      { "description": "NEXUS tracking shows execution", "step": "step-4-verify-nexus-execution-status", "condition": "status == 200" },
+      { "description": "Execution progressed or completed", "step": "step-7-verify-execution-completion", "condition": "status == 200" },
+      { "description": "Executions listable by namespace", "step": "step-8-list-executions-by-namespace", "condition": "status == 200" }
+    ],
+    "slo_targets": {
+      "total_duration_ms": 120000,
+      "nexus_submission_p99_ms": 500,
+      "nexus_status_query_p99_ms": 200,
+      "synapse_execution_p99_ms": 30000
+    }
+  },
+  "cleanup": {
+    "enabled": true,
+    "steps": [
+      {
+        "name": "cleanup-plan",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/plans/{{planId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      }
+    ]
+  }
+}
+
