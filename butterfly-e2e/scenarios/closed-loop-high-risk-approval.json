@@ -1,0 +1,139 @@
+{
+  "name": "closed-loop-high-risk-approval",
+  "description": "Tests approval workflow for high-risk SYNAPSE actions via PLATO governance",
+  "correlationId": "e2e-high-risk-approval-{{timestamp}}",
+  "steps": [
+    {
+      "name": "submit-high-risk-action",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/actions/async",
+      "payload": {
+        "toolId": "http-webhook",
+        "parameters": {
+          "url": "https://critical-system.butterfly.local/api/execute",
+          "method": "POST",
+          "body": {
+            "operation": "high-risk-operation",
+            "impact": "critical-system-modification"
+          }
+        },
+        "executionMode": "PRODUCTION",
+        "namespace": "critical-operations",
+        "metadata": {
+          "riskCategory": "high",
+          "impactScope": "production-system",
+          "requiresApproval": true
+        }
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 202,
+      "expectBodyContains": ["id", "status"],
+      "description": "Submit high-risk action for async execution"
+    },
+    {
+      "name": "verify-pending-status",
+      "target": "synapse",
+      "action": "http-get",
+      "endpoint": "/api/v1/actions/{{extract:submit-high-risk-action:$.id}}",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBody": {
+        "status": "PENDING"
+      },
+      "description": "Verify action is pending approval"
+    },
+    {
+      "name": "plato-check-pending-approval",
+      "target": "plato",
+      "action": "http-get",
+      "endpoint": "/api/v1/governance/approvals/pending",
+      "queryParams": {
+        "namespace": "critical-operations"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["approvals"],
+      "description": "Verify PLATO received approval request"
+    },
+    {
+      "name": "plato-approve-action",
+      "target": "plato",
+      "action": "http-post",
+      "endpoint": "/api/v1/governance/approvals/approve",
+      "payload": {
+        "approvalId": "{{extract:plato-check-pending-approval:$.approvals[0].id}}",
+        "approverId": "e2e-test-approver",
+        "approvalNote": "E2E test - approved for testing",
+        "conditions": []
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "skipIfMissing": true,
+      "description": "Approve the high-risk action"
+    },
+    {
+      "name": "wait-for-execution",
+      "action": "wait",
+      "durationMs": 3000,
+      "description": "Wait for SYNAPSE to process approval and execute"
+    },
+    {
+      "name": "verify-execution-status",
+      "target": "synapse",
+      "action": "http-get",
+      "endpoint": "/api/v1/actions/{{extract:submit-high-risk-action:$.id}}",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "description": "Verify action status after approval"
+    },
+    {
+      "name": "verify-audit-trail",
+      "target": "plato",
+      "action": "http-get",
+      "endpoint": "/api/v1/governance/approvals/{{extract:plato-check-pending-approval:$.approvals[0].id}}/audit",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["auditEvents"],
+      "skipIfMissing": true,
+      "description": "Verify complete audit trail in PLATO"
+    }
+  ],
+  "assertions": [
+    {
+      "name": "action-requires-approval",
+      "description": "High-risk action should initially be pending approval",
+      "type": "response-check",
+      "step": "verify-pending-status",
+      "jsonPath": "$.status",
+      "expectValue": "PENDING"
+    },
+    {
+      "name": "approval-propagated",
+      "description": "Approval should be visible in PLATO",
+      "type": "response-check",
+      "step": "plato-check-pending-approval",
+      "jsonPath": "$.approvals",
+      "expectNotEmpty": true
+    }
+  ],
+  "cleanup": {
+    "action": "cancel-if-pending",
+    "target": "synapse",
+    "endpoint": "/api/v1/actions/{{extract:submit-high-risk-action:$.id}}/cancel",
+    "description": "Cancel action if still pending to clean up state"
+  }
+}
+

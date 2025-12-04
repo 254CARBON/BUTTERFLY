@@ -1,0 +1,42 @@
+{
+  "scenario_id": "nexus-cross-inference",
+  "description": "Cross-system inference spanning CAPSULE historical data and ODYSSEY projections",
+  "nexus_endpoint": "/api/v1/reasoning/infer",
+  "request": {
+    "rim_node_id": "rim:entity:finance:BTCUSD",
+    "inference_context": {
+      "include_counterfactuals": true,
+      "include_future_paths": true,
+      "max_depth": 3,
+      "min_confidence": 0.5,
+      "include_systems": ["CAPSULE", "PERCEPTION", "ODYSSEY"]
+    }
+  },
+  "expected_response": {
+    "min_inferences": 1,
+    "inference_systems_used": ["CAPSULE", "ODYSSEY"],
+    "min_confidence": 0.5,
+    "max_latency_ms": 3000
+  },
+  "test_assertions": [
+    {
+      "type": "inference_generated",
+      "description": "At least one inference should be generated from cross-system facts"
+    },
+    {
+      "type": "systems_consulted",
+      "description": "Both CAPSULE and ODYSSEY should contribute facts"
+    },
+    {
+      "type": "confidence_threshold",
+      "description": "Generated inferences should meet minimum confidence"
+    }
+  ],
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "nexus-cross-inference",
+    "created": "2025-12-02"
+  }
+}
+
+

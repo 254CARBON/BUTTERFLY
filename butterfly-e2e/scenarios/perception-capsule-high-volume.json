@@ -1,0 +1,225 @@
+{
+  "name": "perception-capsule-high-volume",
+  "description": "PERCEPTION → CAPSULE high-volume load test validating performance SLOs under 1000+ events/sec",
+  "version": "1.0.0",
+  "category": "perception-capsule",
+  "tags": ["load-test", "performance", "slo"],
+
+  "setup": {
+    "services": ["perception-signals", "butterfly-nexus", "capsule"],
+    "kafka_topics": [
+      "perception.signals",
+      "perception.events",
+      "perception.signals.dlq",
+      "perception.events.dlq",
+      "capsule.detections"
+    ],
+    "warmup": {
+      "enabled": true,
+      "duration_seconds": 10,
+      "events_per_second": 100
+    }
+  },
+
+  "load_profile": {
+    "type": "constant",
+    "events_per_second": 1000,
+    "duration_seconds": 60,
+    "ramp_up_seconds": 10,
+    "ramp_down_seconds": 5,
+    "concurrency": 10
+  },
+
+  "event_generators": [
+    {
+      "name": "volatility_detector",
+      "weight": 40,
+      "template": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-signals",
+          "correlationId": "{{uuid}}"
+        },
+        "signalId": "{{uuid}}",
+        "signalType": "VOLATILITY",
+        "sourceSystem": "PERCEPTION",
+        "targetSystem": "CAPSULE",
+        "confidence": "{{random_double:0.5:1.0}}",
+        "timestamp": "{{now}}",
+        "payload": {
+          "volatility": "{{random_choice:low:medium:high}}",
+          "changeRate": "{{random_double:0.01:0.5}}",
+          "instrument": "{{random_choice:EURUSD:GBPUSD:USDJPY:BTCUSD}}"
+        },
+        "metadata": {
+          "detectorVersion": "1.0.0"
+        },
+        "schema_version": "1.0.0"
+      }
+    },
+    {
+      "name": "emergent_pattern_detector",
+      "weight": 30,
+      "template": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-signals",
+          "correlationId": "{{uuid}}"
+        },
+        "signalId": "{{uuid}}",
+        "signalType": "EMERGENT_PATTERN",
+        "sourceSystem": "PERCEPTION",
+        "targetSystem": "CAPSULE",
+        "confidence": "{{random_double:0.6:0.95}}",
+        "timestamp": "{{now}}",
+        "payload": {
+          "patternType": "{{random_choice:CORRELATION:SEQUENCE:TREND}}",
+          "entities": ["{{uuid}}", "{{uuid}}"]
+        },
+        "metadata": {},
+        "schema_version": "1.0.0"
+      }
+    },
+    {
+      "name": "co_occurrence_detector",
+      "weight": 30,
+      "template": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-signals",
+          "correlationId": "{{uuid}}"
+        },
+        "signalId": "{{uuid}}",
+        "signalType": "CO_OCCURRENCE",
+        "sourceSystem": "PERCEPTION",
+        "targetSystem": "CAPSULE",
+        "confidence": "{{random_double:0.7:0.99}}",
+        "timestamp": "{{now}}",
+        "payload": {
+          "topics": ["{{random_word}}", "{{random_word}}"],
+          "correlation_strength": "{{random_double:0.5:1.0}}"
+        },
+        "metadata": {},
+        "schema_version": "1.0.0"
+      }
+    }
+  ],
+
+  "steps": [
+    {
+      "name": "execute_load_test",
+      "action": "load_generator",
+      "profile": "load_profile",
+      "generators": ["volatility_detector", "emergent_pattern_detector", "co_occurrence_detector"],
+      "target_topic": "perception.signals",
+      "collect_metrics": true
+    },
+    {
+      "name": "wait_for_processing",
+      "action": "wait",
+      "duration_ms": 5000
+    },
+    {
+      "name": "collect_kafka_metrics",
+      "action": "collect_metrics",
+      "sources": [
+        {
+          "type": "kafka",
+          "topics": ["perception.signals", "perception.events", "capsule.detections"],
+          "metrics": ["lag", "throughput", "latency_p50", "latency_p95", "latency_p99"]
+        }
+      ]
+    },
+    {
+      "name": "collect_service_metrics",
+      "action": "collect_metrics",
+      "sources": [
+        {
+          "type": "prometheus",
+          "service": "perception-signals",
+          "metrics": [
+            "perception_signals_events_published_total",
+            "perception_signals_events_publish_duration_seconds"
+          ]
+        },
+        {
+          "type": "prometheus",
+          "service": "butterfly-nexus",
+          "metrics": [
+            "nexus_adapter_events_processed_total",
+            "nexus_adapter_detection_latency_seconds",
+            "nexus_adapter_patterns_detected_total",
+            "nexus_adapter_anomalies_detected_total"
+          ]
+        },
+        {
+          "type": "prometheus",
+          "service": "capsule",
+          "metrics": [
+            "capsule_detection_requests_total",
+            "capsule_detection_latency_seconds"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "verify_dlq_empty",
+      "action": "kafka_consume",
+      "topic": "perception.events.dlq",
+      "timeout_ms": 5000,
+      "max_messages": 100,
+      "assertions": [
+        {
+          "path": "$.count",
+          "operator": "lte",
+          "value": 10,
+          "description": "DLQ should have < 1% of total messages (10 out of 1000/s * 60s)"
+        }
+      ]
+    }
+  ],
+
+  "success_criteria": {
+    "events_published": {
+      "operator": "gte",
+      "value": 55000,
+      "description": "At least 55k events published (accounting for ramp)"
+    },
+    "events_processed": {
+      "operator": "gte",
+      "value": 54000,
+      "description": "At least 98% of events processed"
+    },
+    "dlq_rate": {
+      "operator": "lte",
+      "value": 0.01,
+      "description": "DLQ rate < 1%"
+    },
+    "max_duration_ms": 120000
+  },
+
+  "slo": {
+    "perception_publish_latency_p95_ms": 50,
+    "nexus_adapter_latency_p95_ms": 200,
+    "capsule_read_latency_p95_ms": 100,
+    "capsule_write_latency_p95_ms": 500,
+    "capsule_detection_latency_p95_ms": 200,
+    "end_to_end_throughput_min_eps": 900
+  },
+
+  "reporting": {
+    "generate_report": true,
+    "format": ["json", "html"],
+    "include_charts": true,
+    "metrics_to_plot": [
+      "throughput_over_time",
+      "latency_percentiles_over_time",
+      "error_rate_over_time",
+      "dlq_depth_over_time"
+    ]
+  }
+}
+

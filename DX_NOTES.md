@@ -118,6 +118,38 @@ Based on Sprint 5 alignment work, these improvements are tracked as GitHub issue
 - Each YAML ships with success/failure ConfigMaps and links to the relevant remediation runbooks so platform engineers can tie failures back to docs quickly.
 - The chaos runner (`butterfly-e2e/run-chaos-scenarios.sh`) automatically sweeps the new definitions because they are categorized as `chaos`, and the nightly GitHub Action already executes the suite instead of every PR.
 
+### Resilience CI Stage
+
+A comprehensive resilience validation pipeline has been implemented:
+
+- **Orchestration**: `butterfly-e2e/resilience-ci-stage.sh` coordinates all resilience tests
+- **Automated DLQ Replay**: `butterfly-e2e/scripts/auto-dlq-replay.sh` triggers DLQ replay post-chaos
+- **Scaling Validation**: `butterfly-e2e/scripts/validate-scaling-reactions.sh` validates scaling reactions using PERCEPTION runbook metrics
+- **Report Generation**: `butterfly-e2e/scripts/generate-resilience-report.py` produces JUnit XML and Markdown reports
+
+**CI Integration:**
+- Dedicated workflow: `.github/workflows/resilience-ci.yml`
+- Triggers: PRs to core services, Tuesday/Friday at 3 AM UTC, manual dispatch
+- Configurable chaos experiments (capsule, nexus, plato, or all)
+
+**SLO Targets:**
+- Chaos recovery time: < 60s
+- DLQ replay success rate: ≥ 93%
+- Message loss rate: < 1%
+- Scaling reaction time: < 2 min
+
+**Usage:**
+```bash
+# Full resilience suite (requires Kubernetes cluster with Chaos Mesh)
+./butterfly-e2e/resilience-ci-stage.sh --experiments all
+
+# Skip chaos (for local testing without k8s)
+./butterfly-e2e/resilience-ci-stage.sh --skip-chaos
+
+# Dry run (validate config without execution)
+./butterfly-e2e/resilience-ci-stage.sh --dry-run
+```
+
 ---
 
 ## Related Documentation

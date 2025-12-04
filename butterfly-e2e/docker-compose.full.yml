@@ -1,0 +1,108 @@
+version: "3.9"
+
+services:
+  # === Core Infrastructure ===
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: butterfly-e2e-kafka
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    networks:
+      - butterfly-e2e
+
+  redis:
+    image: redis:7-alpine
+    container_name: butterfly-e2e-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - butterfly-e2e
+
+  # === BUTTERFLY Services ===
+  odyssey-app:
+    image: eclipse-temurin:17-jdk
+    container_name: butterfly-e2e-odyssey
+    profiles: ["odyssey"]
+    working_dir: /workspace/ODYSSEY
+    command: >
+      bash -c "mvn -q -f /workspace/ODYSSEY/pom.xml -DskipTests spring-boot:run"
+    environment:
+      - HFT_KAFKA_ENABLED=true
+      - HFT_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - hft.kafka.enabled=true
+      - hft.kafka.bootstrap-servers=kafka:29092
+    ports:
+      - "8081:8080"
+    volumes:
+      - ..:/workspace
+    depends_on:
+      - kafka
+    networks:
+      - butterfly-e2e
+
+  capsule-mock:
+    image: alpine:3.19
+    container_name: butterfly-e2e-capsule-mock
+    profiles: ["capsule"]
+    entrypoint: ["sh", "-c", "echo 'Capsule mock accepting writes on :9099'; nc -lk -p 9099"]
+    ports:
+      - "9099:9099"
+    networks:
+      - butterfly-e2e
+
+  nexus-app:
+    image: eclipse-temurin:21-jdk
+    container_name: butterfly-e2e-nexus
+    profiles: ["nexus"]
+    working_dir: /workspace/butterfly-nexus
+    command: >
+      bash -c "mvn -q -f /workspace/butterfly-nexus/pom.xml -DskipTests spring-boot:run"
+    environment:
+      - SPRING_PROFILES_ACTIVE=e2e
+      - SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+      - NEXUS_CAPSULE_URL=http://capsule-mock:9099
+      - NEXUS_PERCEPTION_URL=http://wiremock:8080
+      - NEXUS_ODYSSEY_URL=http://odyssey-app:8080
+      - NEXUS_SECURITY_ENABLED=false
+    ports:
+      - "8080:8080"
+    volumes:
+      - ..:/workspace
+    depends_on:
+      - kafka
+      - redis
+    networks:
+      - butterfly-e2e
+
+  # === Mock Services ===
+  wiremock:
+    image: wiremock/wiremock:3.3.1
+    container_name: butterfly-e2e-wiremock
+    profiles: ["mocks"]
+    command: --verbose
+    ports:
+      - "8082:8080"
+    volumes:
+      - ./wiremock:/home/wiremock
+    networks:
+      - butterfly-e2e
+
+networks:
+  butterfly-e2e:
+    driver: bridge

@@ -1,0 +1,175 @@
+{
+  "name": "perception-capsule-golden-path",
+  "description": "PERCEPTION → CAPSULE golden path: Full detection → storage → query cycle validation",
+  "version": "1.0.0",
+  "category": "perception-capsule",
+  "tags": ["golden-path", "integration", "avro"],
+
+  "setup": {
+    "services": ["perception-signals", "butterfly-nexus", "capsule"],
+    "kafka_topics": [
+      "perception.signals",
+      "perception.events",
+      "perception.signals.dlq",
+      "perception.events.dlq",
+      "capsule.detections"
+    ],
+    "schema_registry": {
+      "schemas": [
+        "PerceptionSignalEvent",
+        "PerceptionDetectionResult",
+        "PerceptionToCapsuleEvent",
+        "CapsuleDetectionEvent"
+      ]
+    }
+  },
+
+  "steps": [
+    {
+      "name": "publish_volatility_detection",
+      "action": "kafka_publish",
+      "topic": "perception.signals",
+      "payload": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-signals",
+          "correlationId": "{{correlationId}}"
+        },
+        "signalId": "{{uuid}}",
+        "signalType": "VOLATILITY",
+        "sourceSystem": "PERCEPTION",
+        "targetSystem": "CAPSULE",
+        "confidence": 0.85,
+        "timestamp": "{{now}}",
+        "payload": {
+          "volatility": "high",
+          "changeRate": 0.15,
+          "baselineValue": 0.05
+        },
+        "metadata": {
+          "detectorVersion": "1.0.0",
+          "sourceId": "financial-feeds-1"
+        },
+        "schema_version": "1.0.0"
+      },
+      "key": "rim-node-test-001",
+      "headers": {
+        "correlationId": "{{correlationId}}",
+        "traceparent": "{{traceparent}}"
+      },
+      "timeout_ms": 5000
+    },
+    {
+      "name": "wait_for_nexus_processing",
+      "action": "wait",
+      "duration_ms": 2000
+    },
+    {
+      "name": "verify_capsule_pattern_detection",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{capsule_url}}/api/v2/detection/patterns?scopeId=rim-node-test-001&lookbackPeriod=PT1H",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.patternsFound",
+          "operator": "gte",
+          "value": 0
+        },
+        {
+          "path": "$.degraded",
+          "operator": "eq",
+          "value": false
+        }
+      ]
+    },
+    {
+      "name": "verify_capsule_anomaly_detection",
+      "action": "http_request",
+      "method": "POST",
+      "url": "{{capsule_url}}/api/v2/detection/anomalies",
+      "body": {
+        "scopeId": "rim-node-test-001",
+        "lookbackPeriod": "PT1H",
+        "anomalyTypes": ["DYNAMICS"],
+        "threshold": 0.5,
+        "useModel": true
+      },
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.scopeId",
+          "operator": "eq",
+          "value": "rim-node-test-001"
+        }
+      ]
+    },
+    {
+      "name": "verify_detection_event_published",
+      "action": "kafka_consume",
+      "topic": "capsule.detections",
+      "filter": {
+        "header.correlationId": "{{correlationId}}"
+      },
+      "timeout_ms": 15000,
+      "assertions": [
+        {
+          "path": "$.detectionId",
+          "operator": "exists"
+        },
+        {
+          "path": "$.scopeId",
+          "operator": "eq",
+          "value": "rim-node-test-001"
+        },
+        {
+          "path": "$.detectionType",
+          "operator": "in",
+          "value": ["PATTERN", "ANOMALY"]
+        }
+      ]
+    },
+    {
+      "name": "verify_temporal_query",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{nexus_url}}/api/v1/temporal/slice?scopeId=rim-node-test-001&mode=present",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "timeout_ms": 10000,
+      "assertions": [
+        {
+          "path": "$.present",
+          "operator": "exists"
+        }
+      ]
+    }
+  ],
+
+  "teardown": {
+    "cleanup_topics": false,
+    "cleanup_data": false
+  },
+
+  "success_criteria": {
+    "all_steps_pass": true,
+    "max_duration_ms": 60000,
+    "dlq_messages": 0
+  },
+
+  "slo": {
+    "perception_to_capsule_latency_p95_ms": 500,
+    "capsule_detection_latency_p95_ms": 200,
+    "end_to_end_latency_p95_ms": 1000
+  }
+}
+

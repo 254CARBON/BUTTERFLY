@@ -1,0 +1,183 @@
+{
+  "scenario_id": "temporal-past-to-future",
+  "description": "Use historical patterns from CAPSULE to inform ODYSSEY projections, then validate that projected paths are supported by historical trends",
+  "category": "temporal-navigation",
+  "tags": ["temporal", "past-to-future", "projection", "pattern-matching", "golden-path"],
+  "nexus_endpoints": {
+    "step_1_history": {
+      "method": "POST",
+      "path": "/api/v1/temporal/slice",
+      "description": "Query historical patterns from CAPSULE via NEXUS"
+    },
+    "step_2_patterns": {
+      "method": "POST",
+      "path": "/api/v1/temporal/causal-chains",
+      "description": "Extract causal patterns from historical data"
+    },
+    "step_3_projections": {
+      "method": "GET",
+      "path": "/api/v1/odyssey/paths",
+      "description": "Get ODYSSEY projections for the entity"
+    },
+    "step_4_validate": {
+      "method": "POST",
+      "path": "/api/v1/temporal/coherence",
+      "description": "Validate that projections are supported by history"
+    }
+  },
+  "test_data": {
+    "rim_node_id": "rim:entity:finance:EURUSD",
+    "display_name": "EUR/USD Exchange Rate",
+    "domain": "finance",
+    "historical_window": "P90D",
+    "projection_horizon": "P14D",
+    "expected_patterns": ["mean_reversion", "momentum", "volatility_clustering"]
+  },
+  "workflow": [
+    {
+      "step": 1,
+      "name": "query_historical_patterns",
+      "action": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "request_body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "historyStart": "{{now - 90 days}}",
+        "futureEnd": "{{now}}",
+        "resolutionSeconds": 86400,
+        "options": {
+          "includePatterns": true,
+          "patternTypes": ["trend", "cycle", "anomaly"]
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["historicalStates", "dataQuality"],
+        "historical_data_points_min": 60,
+        "data_quality_coverage_min": 0.7
+      }
+    },
+    {
+      "step": 2,
+      "name": "extract_causal_patterns",
+      "action": "POST",
+      "endpoint": "/api/v1/temporal/causal-chains",
+      "request_body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "lookback": "P90D",
+        "minConfidence": 0.5,
+        "includePatternAnalysis": true
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["causalChains", "patternSummary"],
+        "chains_with_high_confidence_min": 2
+      },
+      "depends_on": "query_historical_patterns"
+    },
+    {
+      "step": 3,
+      "name": "get_odyssey_projections",
+      "action": "GET",
+      "endpoint": "/api/v1/odyssey/paths?scopeId=rim:entity:finance:EURUSD&horizon=P14D",
+      "expected": {
+        "status": 200,
+        "body_contains": ["paths", "pathId", "confidence", "weight"],
+        "paths_count_min": 2,
+        "highest_confidence_min": 0.5
+      },
+      "depends_on": "extract_causal_patterns"
+    },
+    {
+      "step": 4,
+      "name": "validate_past_future_alignment",
+      "action": "POST",
+      "endpoint": "/api/v1/temporal/coherence",
+      "request_body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "window": {
+          "start": "{{now - 90 days}}",
+          "end": "{{now + 14 days}}"
+        },
+        "validatePastFutureAlignment": true
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["pastFutureAlignment", "coherenceScore"],
+        "past_future_alignment_min": 0.4,
+        "coherence_score_min": 0.5
+      },
+      "depends_on": "get_odyssey_projections"
+    },
+    {
+      "step": 5,
+      "name": "check_historical_precedents",
+      "action": "POST",
+      "endpoint": "/api/v1/synthesis/historical-support",
+      "request_body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "paths": "{{step_3_paths}}",
+        "lookback": "P365D"
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["supportScores", "precedentCounts"],
+        "at_least_one_supported_path": true
+      },
+      "depends_on": "validate_past_future_alignment"
+    }
+  ],
+  "assertions": [
+    {
+      "name": "sufficient_historical_data",
+      "condition": "step_1_data_points >= 60",
+      "message": "At least 60 days of historical data required for pattern analysis"
+    },
+    {
+      "name": "causal_patterns_found",
+      "condition": "step_2_high_confidence_chains >= 2",
+      "message": "At least 2 high-confidence causal patterns should be identified"
+    },
+    {
+      "name": "odyssey_projections_available",
+      "condition": "step_3_paths_count >= 2",
+      "message": "ODYSSEY should provide at least 2 projected paths"
+    },
+    {
+      "name": "projections_historically_supported",
+      "condition": "step_4_past_future_alignment >= 0.4",
+      "message": "Projections should have at least 0.4 alignment with historical patterns"
+    },
+    {
+      "name": "at_least_one_path_with_precedent",
+      "condition": "step_5_supported_paths >= 1",
+      "message": "At least one projected path should have historical precedent"
+    }
+  ],
+  "slo_targets": {
+    "total_latency_p99_ms": 1000,
+    "per_step_latency_p99_ms": 250,
+    "success_rate": 0.99
+  },
+  "upstream_mocks": {
+    "capsule": {
+      "history": {
+        "endpoint": "/api/v1/capsules/history",
+        "response_file": "capsule-eurusd-90day-history.json"
+      }
+    },
+    "odyssey": {
+      "paths": {
+        "endpoint": "/api/v1/paths",
+        "response_file": "odyssey-eurusd-paths.json"
+      }
+    }
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "temporal-past-to-future",
+    "created": "2025-12-03",
+    "author": "BUTTERFLY Team",
+    "version": "1.0.0"
+  }
+}
+

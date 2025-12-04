@@ -1,0 +1,53 @@
+{
+  "scenario_id": "nexus-contradiction-detection",
+  "description": "Test contradiction detection and resolution between CAPSULE and PERCEPTION",
+  "nexus_endpoint": "/api/v1/reasoning/contradictions",
+  "setup": {
+    "inject_contradiction": {
+      "rim_node_id": "rim:entity:finance:BTCUSD",
+      "capsule_value": {
+        "configuration.price": 45000.0
+      },
+      "perception_value": {
+        "configuration.price": 47500.0
+      },
+      "divergence_threshold": 0.05
+    }
+  },
+  "request": {
+    "rim_node_ids": ["rim:entity:finance:BTCUSD"],
+    "detect_only": false,
+    "resolution_method": "TRUST_SCORE"
+  },
+  "expected_response": {
+    "contradictions_detected_min": 1,
+    "contradiction_fields_include": ["configuration.price"],
+    "resolution_attempted": true,
+    "max_latency_ms": 2000
+  },
+  "contradiction_lifecycle": [
+    {
+      "phase": "detection",
+      "expected_status": "DETECTED",
+      "severity_min": 0.3
+    },
+    {
+      "phase": "analysis",
+      "expected_status": "ANALYZING",
+      "systems_involved": ["CAPSULE", "PERCEPTION"]
+    },
+    {
+      "phase": "resolution",
+      "expected_status": "RESOLVED",
+      "resolution_method": "TRUST_SCORE",
+      "confidence_min": 0.7
+    }
+  ],
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "nexus-contradiction-detection",
+    "created": "2025-12-02"
+  }
+}
+
+

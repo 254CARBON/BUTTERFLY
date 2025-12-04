@@ -2,7 +2,7 @@
 
 > Chaos Mesh experiments for validating platform resilience
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-04  
 **Target Audience**: SREs, Platform engineers
 
 ---
@@ -25,7 +25,10 @@ chaos/
 │   ├── redis-failover.yaml
 │   ├── network-partition.yaml
 │   ├── pod-cpu-stress.yaml
-│   └── ignite-partition.yaml
+│   ├── ignite-partition.yaml
+│   ├── capsule-outage.yaml      # CAPSULE pod kill + DLQ verification
+│   ├── nexus-partial-degradation.yaml  # NEXUS CPU/latency stress
+│   └── plato-latency-spike.yaml # PLATO governance API latency
 └── scripts/
     └── run-chaos-suite.sh       # Automated chaos runner
 ```
@@ -102,6 +105,7 @@ kubectl delete -f experiments/kafka-broker-loss.yaml
 | Cache | redis-failover, ignite-partition | Bi-weekly |
 | Network | cross-service partition | Weekly |
 | Pods | cpu-stress, memory-pressure, pod-kill | Monthly |
+| Services | capsule-outage, nexus-degradation, plato-latency | Twice weekly |
 
 ## Pass/Fail Criteria
 
@@ -115,6 +119,9 @@ Each experiment has defined success criteria:
 | redis-failover | Sentinel promotes replica < 10s |
 | network-partition | Circuit breaker trips < 30s |
 | pod-cpu-stress | HPA scales out < 60s |
+| capsule-outage | DLQ capture successful, NEXUS fallback < 60s, recovery < 60s |
+| nexus-partial-degradation | PLATO/SYNAPSE continue without errors, HPA scales < 2 min |
+| plato-latency-spike | SYNAPSE buffering active, client retries succeed, no cascade |
 
 ## Safety Controls
 
@@ -214,11 +221,41 @@ kubectl get chaos -A
 kubectl get pods -n chaos-mesh -l app.kubernetes.io/component=chaos-daemon
 ```
 
+## CI Integration
+
+The Resilience CI Stage integrates chaos experiments into the CI pipeline:
+
+- **Workflow**: `.github/workflows/resilience-ci.yml`
+- **Triggers**: PRs to core services, Tuesday/Friday 3 AM UTC, manual dispatch
+- **Orchestrator**: `butterfly-e2e/resilience-ci-stage.sh`
+
+### Automated Post-Chaos Validation
+
+After each chaos experiment:
+1. **DLQ Replay**: Automatically replays messages from DLQ
+2. **Scaling Validation**: Verifies HPA reactions using PERCEPTION runbook metrics
+3. **Report Generation**: Produces JUnit XML for CI gating
+
+### Usage in CI
+
+```bash
+# Run from CI with all experiments
+./butterfly-e2e/resilience-ci-stage.sh --experiments all --env staging
+
+# Skip chaos (local testing without k8s)
+./butterfly-e2e/resilience-ci-stage.sh --skip-chaos
+
+# Run specific experiments
+./butterfly-e2e/resilience-ci-stage.sh --experiments capsule,nexus
+```
+
 ## Related Documentation
 
 | Document | Description |
 |----------|-------------|
 | [Failure-Mode Catalog](../docs/operations/failure-modes.md) | Failure modes and targets |
 | [Disaster Recovery](../docs/operations/runbooks/disaster-recovery.md) | Recovery procedures |
+| [PERCEPTION Scaling Runbook](../PERCEPTION/docs/runbooks/scaling.md) | Scaling indicators and metrics |
+| [DLQ Replay Tool](../PERCEPTION/ingestion-dlq-replay/README.md) | DLQ replay documentation |
 | [Chaos Mesh Docs](https://chaos-mesh.org/docs/) | Official documentation |
 

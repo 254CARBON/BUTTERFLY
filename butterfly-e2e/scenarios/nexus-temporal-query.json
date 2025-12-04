@@ -1,0 +1,45 @@
+{
+  "scenario_id": "nexus-temporal-query",
+  "description": "Full past/present/future temporal slice query through NEXUS",
+  "nexus_endpoint": "/api/v1/temporal/slice",
+  "request": {
+    "rim_node_id": "rim:entity:finance:BTCUSD",
+    "temporal_window": {
+      "history_depth": "P30D",
+      "projection_horizon": "P7D"
+    },
+    "options": {
+      "include_confidence": true,
+      "include_causal_chains": true,
+      "min_confidence": 0.5
+    }
+  },
+  "expected_response": {
+    "has_historical_state": true,
+    "has_current_state": true,
+    "has_projected_futures": true,
+    "min_coherence_score": 0.3,
+    "max_latency_ms": 2000
+  },
+  "upstream_dependencies": {
+    "capsule": {
+      "endpoint": "/api/v1/capsules/history",
+      "expected_data": "30_day_history"
+    },
+    "perception": {
+      "endpoint": "/api/v1/rim/nodes/{rim_node_id}",
+      "expected_data": "current_state"
+    },
+    "odyssey": {
+      "endpoint": "/api/v1/paths",
+      "expected_data": "narrative_paths"
+    }
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "nexus-temporal-query",
+    "created": "2025-12-02"
+  }
+}
+
+

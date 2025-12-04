@@ -1,0 +1,158 @@
+{
+  "scenario_id": "temporal-present-to-past",
+  "description": "Query current state from PERCEPTION, then trace backward through CAPSULE history to discover causal chains and validate current state against historical context",
+  "category": "temporal-navigation",
+  "tags": ["temporal", "present-to-past", "causal-discovery", "golden-path"],
+  "nexus_endpoints": {
+    "step_1_present": {
+      "method": "GET",
+      "path": "/api/v1/temporal/current-state/{rimNodeId}",
+      "description": "Get current state from PERCEPTION via NEXUS"
+    },
+    "step_2_history": {
+      "method": "POST",
+      "path": "/api/v1/temporal/slice",
+      "description": "Query historical context based on current state insights"
+    },
+    "step_3_causal": {
+      "method": "POST",
+      "path": "/api/v1/temporal/causal-chains",
+      "description": "Discover causal chains leading to current state"
+    }
+  },
+  "test_data": {
+    "rim_node_id": "rim:entity:finance:EURUSD",
+    "display_name": "EUR/USD Exchange Rate",
+    "domain": "finance",
+    "current_state": {
+      "price": 1.1050,
+      "volume": 1500000,
+      "trust_score": 0.92,
+      "visibility": "HIGH"
+    },
+    "historical_window": "P60D",
+    "causal_lookback": "P90D"
+  },
+  "workflow": [
+    {
+      "step": 1,
+      "name": "query_current_state",
+      "action": "GET",
+      "endpoint": "/api/v1/temporal/current-state/rim:entity:finance:EURUSD",
+      "expected": {
+        "status": 200,
+        "body_contains": ["rimNodeId", "configuration", "trustMetrics"],
+        "trust_score_min": 0.5
+      }
+    },
+    {
+      "step": 2,
+      "name": "query_historical_context",
+      "action": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "request_body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "historyStart": "{{now - 60 days}}",
+        "futureEnd": "{{now}}",
+        "resolutionSeconds": 86400
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["historicalStates", "currentState"],
+        "historical_data_points_min": 30,
+        "coherence_score_min": 0.5
+      },
+      "depends_on": "query_current_state"
+    },
+    {
+      "step": 3,
+      "name": "discover_causal_chains",
+      "action": "POST",
+      "endpoint": "/api/v1/temporal/causal-chains",
+      "request_body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "lookback": "P90D",
+        "minConfidence": 0.4
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["causalChains", "chainId", "confidence"],
+        "chains_discovered_min": 1
+      },
+      "depends_on": "query_historical_context"
+    },
+    {
+      "step": 4,
+      "name": "validate_coherence",
+      "action": "POST",
+      "endpoint": "/api/v1/temporal/coherence",
+      "request_body": {
+        "rimNodeId": "rim:entity:finance:EURUSD",
+        "window": {
+          "start": "{{now - 60 days}}",
+          "end": "{{now}}"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "past_present_alignment_min": 0.4,
+        "issues_count_max": 5
+      },
+      "depends_on": "discover_causal_chains"
+    }
+  ],
+  "assertions": [
+    {
+      "name": "current_state_available",
+      "condition": "step_1_status == 200",
+      "message": "PERCEPTION current state must be available"
+    },
+    {
+      "name": "historical_data_complete",
+      "condition": "step_2_historical_data_points >= 30",
+      "message": "At least 30 days of historical data from CAPSULE"
+    },
+    {
+      "name": "causal_chains_discovered",
+      "condition": "step_3_chains_count >= 1",
+      "message": "At least one causal chain should be discovered"
+    },
+    {
+      "name": "coherence_acceptable",
+      "condition": "step_4_past_present_alignment >= 0.4",
+      "message": "Past-present coherence should be at least 0.4"
+    },
+    {
+      "name": "latency_within_slo",
+      "condition": "total_duration_ms < 500",
+      "message": "Total scenario duration should be under 500ms"
+    }
+  ],
+  "slo_targets": {
+    "total_latency_p99_ms": 500,
+    "per_step_latency_p99_ms": 150,
+    "success_rate": 0.99
+  },
+  "upstream_mocks": {
+    "capsule": {
+      "history": {
+        "endpoint": "/api/v1/capsules/history",
+        "response_file": "capsule-eurusd-history.json"
+      }
+    },
+    "perception": {
+      "current_state": {
+        "endpoint": "/api/v1/rim/nodes/rim:entity:finance:EURUSD/state",
+        "response_file": "perception-eurusd-state.json"
+      }
+    }
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "temporal-present-to-past",
+    "created": "2025-12-03",
+    "author": "BUTTERFLY Team",
+    "version": "1.0.0"
+  }
+}
+

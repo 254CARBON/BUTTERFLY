@@ -1,0 +1,198 @@
+{
+  "name": "closed-loop-trading",
+  "description": "Full closed-loop automation: Signal → Strategy → Governance → Execution → Observation → Learning",
+  "correlationId": "e2e-closed-loop-trading-{{timestamp}}",
+  "steps": [
+    {
+      "name": "perception-market-signal",
+      "target": "perception",
+      "action": "publish",
+      "topic": "perception.events",
+      "payload": {
+        "eventId": "evt-trading-signal-{{uuid}}",
+        "eventType": "MARKET_OPPORTUNITY",
+        "title": "Trading Opportunity Detected for AAPL",
+        "description": "Momentum signal detected for AAPL with favorable risk/reward",
+        "timestamp": "{{timestamp_ms}}",
+        "eventCategory": "TRADING_SIGNAL",
+        "trustScore": 0.85,
+        "correlationId": "{{correlationId}}",
+        "rimNodeIds": ["rim:entity:equity:AAPL"],
+        "sources": ["quant-model-v2", "sentiment-analyzer"],
+        "entities": ["AAPL", "NASDAQ"],
+        "impactEstimate": {
+          "magnitude": 0.65,
+          "direction": "UP",
+          "confidence": 0.75,
+          "horizonSeconds": 86400
+        },
+        "tradingSignal": {
+          "instrumentId": "AAPL",
+          "signalType": "BUY",
+          "targetPrice": 195.50,
+          "stopLoss": 188.00,
+          "positionSize": 100,
+          "confidenceScore": 0.75,
+          "riskScore": 0.45
+        }
+      },
+      "expectSuccess": true
+    },
+    {
+      "name": "wait-for-odyssey-strategy",
+      "action": "wait",
+      "durationMs": 3000,
+      "description": "Wait for ODYSSEY to generate strategy paths"
+    },
+    {
+      "name": "odyssey-verify-strategy",
+      "target": "odyssey",
+      "action": "http-get",
+      "endpoint": "/api/v1/strategic/paths/rim:entity:equity:AAPL",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["nodeId", "paths", "worldStoryState"]
+    },
+    {
+      "name": "plato-governance-evaluation",
+      "target": "plato",
+      "action": "http-get",
+      "endpoint": "/api/v1/strategic/governance/evaluate/rim:entity:equity:AAPL",
+      "queryParams": {
+        "stressLevel": "0.45",
+        "regime": "NORMAL"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["triggeredPolicies", "recommendedPlans"]
+    },
+    {
+      "name": "plato-plan-approval",
+      "target": "plato",
+      "action": "http-post",
+      "endpoint": "/api/v1/plans/approve",
+      "payload": {
+        "planId": "{{extract:plato-governance-evaluation:$.recommendedPlans[0].planId}}",
+        "approverId": "e2e-test-approver",
+        "approvalNote": "Automated E2E test approval"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "skipIfMissing": true
+    },
+    {
+      "name": "synapse-execute-action",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/actions",
+      "payload": {
+        "toolId": "http-webhook",
+        "parameters": {
+          "url": "https://mock-trading.butterfly.local/api/orders",
+          "method": "POST",
+          "body": {
+            "instrumentId": "AAPL",
+            "action": "BUY",
+            "quantity": 100,
+            "limitPrice": 195.50,
+            "stopLoss": 188.00
+          }
+        },
+        "executionMode": "DRY_RUN",
+        "namespace": "trading",
+        "platoPlanId": "{{extract:plato-governance-evaluation:$.recommendedPlans[0].planId}}",
+        "rimNodeId": "rim:entity:equity:AAPL",
+        "metadata": {
+          "source": "e2e-test",
+          "strategy": "momentum-buy"
+        }
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["actionId", "outcomeStatus"]
+    },
+    {
+      "name": "wait-for-outcome-propagation",
+      "action": "wait",
+      "durationMs": 2000,
+      "description": "Wait for outcome to propagate to PERCEPTION and CAPSULE"
+    },
+    {
+      "name": "perception-verify-outcome",
+      "target": "perception",
+      "action": "http-get",
+      "endpoint": "/api/v1/rim/nodes/rim:entity:equity:AAPL/observations",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["observations"],
+      "description": "Verify SYNAPSE outcome recorded as PERCEPTION observation"
+    },
+    {
+      "name": "capsule-verify-history",
+      "target": "capsule",
+      "action": "http-get",
+      "endpoint": "/api/v1/history",
+      "queryParams": {
+        "scopeId": "rim:entity:equity:AAPL",
+        "fromTs": "{{timestamp_minus_1h}}",
+        "toTs": "{{timestamp_plus_1h}}"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["rim:entity:equity:AAPL"],
+      "description": "Verify action recorded in CAPSULE history"
+    },
+    {
+      "name": "nexus-verify-learning-signal",
+      "target": "nexus",
+      "action": "http-get",
+      "endpoint": "/api/v1/evolution/learning-signals/pending",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["signals"],
+      "description": "Verify NEXUS received learning signal from action outcome"
+    }
+  ],
+  "assertions": [
+    {
+      "name": "full-loop-completed",
+      "description": "Verify correlation ID is present in all responses, proving full loop execution",
+      "type": "correlation-check"
+    },
+    {
+      "name": "synapse-action-executed",
+      "description": "Verify SYNAPSE executed the action (even in DRY_RUN mode)",
+      "type": "response-check",
+      "step": "synapse-execute-action",
+      "jsonPath": "$.outcomeStatus",
+      "expectValue": "SKIPPED"
+    },
+    {
+      "name": "learning-signal-generated",
+      "description": "Verify learning signal was recorded for feedback loop",
+      "type": "response-check",
+      "step": "nexus-verify-learning-signal",
+      "jsonPath": "$.signals",
+      "expectNotEmpty": true
+    }
+  ],
+  "cleanup": {
+    "action": "none",
+    "description": "No cleanup needed - DRY_RUN mode prevents real side effects"
+  }
+}
+

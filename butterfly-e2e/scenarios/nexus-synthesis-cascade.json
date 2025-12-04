@@ -1,0 +1,61 @@
+{
+  "scenario_id": "nexus-synthesis-cascade",
+  "description": "PERCEPTION scenario triggers strategic option synthesis through NEXUS",
+  "nexus_endpoint": "/api/v1/synthesis/options",
+  "request": {
+    "rim_node_id": "rim:entity:finance:BTCUSD",
+    "synthesis_context": {
+      "max_options": 5,
+      "include_counterfactuals": true,
+      "include_future_paths": true,
+      "include_historical_trends": true,
+      "min_confidence": 0.4
+    },
+    "trigger_scenario": {
+      "scenario_id": "perception-stress-spike",
+      "stress_level": 0.85,
+      "source_event": "market-volatility"
+    }
+  },
+  "expected_response": {
+    "min_options": 2,
+    "option_includes_perception": true,
+    "option_includes_odyssey": true,
+    "option_includes_capsule": true,
+    "has_risk_assessment": true,
+    "max_latency_ms": 5000
+  },
+  "cascade_flow": [
+    {
+      "step": 1,
+      "system": "PERCEPTION",
+      "action": "detect_scenario",
+      "input": "stress_spike_event"
+    },
+    {
+      "step": 2,
+      "system": "NEXUS",
+      "action": "gather_context",
+      "input": "temporal_slice"
+    },
+    {
+      "step": 3,
+      "system": "ODYSSEY",
+      "action": "project_paths",
+      "input": "current_state + scenario"
+    },
+    {
+      "step": 4,
+      "system": "NEXUS",
+      "action": "synthesize_options",
+      "input": "all_system_data"
+    }
+  ],
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "nexus-synthesis-cascade",
+    "created": "2025-12-02"
+  }
+}
+
+

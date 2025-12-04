@@ -1,0 +1,107 @@
+# ============================================================================
+# Kubernetes Chaos Scenario: PLATO Latency Spike
+# ============================================================================
+# Apply network delay to PLATO pods and ensure SYNAPSE buffers actions while
+# PLATO recovers. Mirrors the higher-level chaos workflow.
+# ============================================================================
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: plato-latency
+  namespace: butterfly
+spec:
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: plato
+  action: delay
+  mode: all
+  delay:
+    latency: "4500ms"
+    jitter: "500ms"
+  duration: "8m"
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: plato-latency-spike-k8s
+  namespace: butterfly
+spec:
+  entry: plato-latency-flow
+  templates:
+    - name: plato-latency-flow
+      templateType: Serial
+      deadline: 25m
+      children:
+        - capture-baseline
+        - inject-latency
+        - submit-plan
+        - check-synapse
+        - wait-end
+        - verify-health
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              curl -s http://plato:8080/actuator/health
+
+    - name: inject-latency
+      templateType: NetworkChaos
+      networkChaos:
+        ref: plato-latency
+
+    - name: submit-plan
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              curl -s -o /dev/null -w "%{http_code}" \
+                -X POST http://plato:8080/api/v1/plans \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{"namespace":"chaos","localId":"latency-spike","planType":"GOVERNANCE_LOOP","steps":[{"name":"synapse-probe","action":{"type":"EXECUTE","synapseAction":{"toolId":"probe","actionType":"QUERY","parameters":{"mode":"DRY_RUN","targetId":"rim:chaos"}}}}]}'
+
+    - name: check-synapse
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              curl -s "http://synapse:8080/api/v1/actions?status=QUEUED&limit=3"
+
+    - name: wait-end
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              sleep 60
+
+    - name: verify-health
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              curl -s http://plato:8080/actuator/health

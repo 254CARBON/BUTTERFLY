@@ -1,0 +1,163 @@
+# Chaos Experiment: CAPSULE API Outage & DLQ Recovery
+#
+# Purpose:
+#   - Validate that CAPSULE outages do not cascade to PERCEPTION/NEXUS
+#   - Ensure DLQ/replay automation keeps message loss < 1%
+#   - Confirm NEXUS temporal queries degrade gracefully and recover inside SLO
+#
+# Fault Pattern:
+#   - Hard-stop CAPSULE pods for 3 minutes
+#   - Continue to publish perception events
+#   - Observe DLQ fill-up and replay trigger after recovery
+#
+# Related Docs: docs/operations/runbooks/chaos-capsule-outage.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: capsule-outage
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: availability
+    chaos.butterfly.io/severity: high
+    chaos.butterfly.io/target: capsule
+spec:
+  entry: capsule-outage-sequence
+  templates:
+    - name: capsule-outage-sequence
+      templateType: Serial
+      deadline: 30m
+      children:
+        - baseline-checks
+        - stop-capsule
+        - publish-perception-events
+        - verify-nexus-degradation
+        - start-capsule
+        - verify-recovery
+
+    - name: baseline-checks
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline CAPSULE/NEXUS metrics..."
+              curl -s http://capsule-service.butterfly:8080/actuator/health
+              curl -s http://butterfly-nexus:8080/actuator/health
+
+    - name: stop-capsule
+      templateType: Task
+      task:
+        container:
+          name: kill-capsule
+          image: bitnami/kubectl:1.30
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Deleting CAPSULE pods to simulate outage"
+              kubectl -n butterfly delete pod -l app=capsule --grace-period=0 --force
+              sleep 10
+
+    - name: publish-perception-events
+      templateType: Task
+      task:
+        container:
+          name: perception-publisher
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Publishing perception evidence events while CAPSULE is down"
+              for i in $(seq 1 10); do
+                curl -s -X POST http://perception:8080/api/v1/signals \
+                  -H "Content-Type: application/json" \
+                  -H "X-Tenant-ID: chaos-test" \
+                  -d "{\"signalType\":\"OUTAGE_TEST\",\"rimNodeId\":\"rim:chaos:capsule:${i}\",\"payload\":{\"value\":${i}}}" >/dev/null || true
+              done
+
+    - name: verify-nexus-degradation
+      templateType: Task
+      task:
+        container:
+          name: degradation-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Validating NEXUS temporal slices use degraded mode"
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                -X POST http://butterfly-nexus:8080/api/v1/temporal/slice \
+                -H "Content-Type: application/json" \
+                -d '{"entityId":"rim:chaos:capsule:sample","timeframe":{"lookback":"PT30M","lookahead":"PT5M"},"requireGovernanceView":true}')
+              echo "NEXUS slice status during outage: $STATUS"
+              if [ "$STATUS" = "500" ]; then
+                echo "FAIL: NEXUS returned 500 while CAPSULE offline"
+                exit 1
+              fi
+              echo "PASS: NEXUS degraded gracefully (status $STATUS)"
+
+    - name: start-capsule
+      templateType: Task
+      task:
+        container:
+          name: restart-capsule
+          image: bitnami/kubectl:1.30
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Restarting CAPSULE deployment"
+              kubectl -n butterfly rollout restart deployment capsule
+              kubectl -n butterfly rollout status deployment capsule --timeout=180s
+
+    - name: verify-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying CAPSULE + DLQ recovery"
+              sleep 30
+              HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://capsule-service.butterfly:8080/actuator/health)
+              echo "CAPSULE health after restart: $HEALTH"
+              if [ "$HEALTH" != "200" ]; then
+                echo "FAIL: CAPSULE not healthy after restart"
+                exit 1
+              fi
+              echo "Querying DLQ replay status (perception)"
+              curl -s "http://perception:8080/api/v1/dlq/events?scope=capsule&limit=5"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: capsule-outage-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - CAPSULE pods restart cleanly inside 3 minutes
+    - NEXUS temporal queries remain responsive (no 5xx)
+    - DLQ capture observed while CAPSULE offline
+    - Perception events replay successfully after recovery
+
+  fail_criteria: |
+    - CAPSULE outage cascades to PERCEPTION or PLATO
+    - More than 5% of events lost during outage window
+    - Recovery exceeds 5 minutes or requires manual pod delete
+
+  remediation: |
+    See docs/operations/runbooks/chaos-capsule-outage.md
+    1. Check Cassandra availability and PVC usage
+    2. Trigger DLQ manual replay if automation stalled
+    3. Scale CAPSULE deployment temporarily if backlog persists

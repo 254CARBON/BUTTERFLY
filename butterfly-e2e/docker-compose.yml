@@ -1,0 +1,75 @@
+version: "3.9"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: butterfly-e2e-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo ruok | nc 127.0.0.1 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks:
+      - butterfly-e2e
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: butterfly-e2e-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - butterfly-e2e
+
+  fastpath-producer:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: butterfly-e2e-fastpath-producer
+    depends_on:
+      - kafka
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        sleep ${STARTUP_DELAY:-8};
+        echo "Seeding rim.fast-path event to ${FASTPATH_TOPIC:-rim.fast-path}";
+        cat /payloads/fastpath-event.json | kafka-console-producer --broker-list kafka:9092 --topic ${FASTPATH_TOPIC:-rim.fast-path};
+        echo "Seeded rim.fast-path event";
+        tail -f /dev/null
+    volumes:
+      - ./scenarios:/payloads:ro
+    environment:
+      FASTPATH_TOPIC: ${FASTPATH_TOPIC:-rim.fast-path}
+      STARTUP_DELAY: ${STARTUP_DELAY:-8}
+    networks:
+      - butterfly-e2e
+
+  kafka-inspector:
+    image: confluentinc/cp-kafkacat:7.5.0
+    container_name: butterfly-e2e-inspector
+    profiles: ["tools"]
+    depends_on:
+      - kafka
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        echo "Consuming rim.fast-path feed";
+        kcat -b kafka:9092 -t ${FASTPATH_TOPIC:-rim.fast-path} -C -o beginning -q
+    environment:
+      FASTPATH_TOPIC: ${FASTPATH_TOPIC:-rim.fast-path}
+    networks:
+      - butterfly-e2e
+
+networks:
+  butterfly-e2e:
+    driver: bridge

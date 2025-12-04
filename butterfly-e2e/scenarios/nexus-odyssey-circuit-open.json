@@ -1,0 +1,243 @@
+{
+  "scenario_id": "nexus-odyssey-circuit-open",
+  "description": "Verifies NEXUS behavior when ODYSSEY circuit breaker is open - should use fallback paths and cached predictions",
+  "category": "failure-injection",
+  "tags": ["failure", "circuit-breaker", "odyssey", "fallback", "resilience"],
+  "fault_injection": {
+    "type": "circuit-breaker-open",
+    "target_service": "ODYSSEY",
+    "fault_config": {
+      "trigger_failures": 5,
+      "failure_type": "CONNECTION_REFUSED",
+      "endpoints": [
+        "/api/v1/paths",
+        "/api/v1/tipping-points",
+        "/api/v1/world-state"
+      ]
+    },
+    "pre_condition": {
+      "description": "First, trigger enough failures to open the circuit",
+      "requests_to_fail": 5,
+      "failure_response": {
+        "status": 503,
+        "body": {"error": "Service unavailable", "retryAfter": 30}
+      }
+    },
+    "duration_seconds": 120
+  },
+  "nexus_endpoint": {
+    "method": "GET",
+    "path": "/api/v1/temporal/slice",
+    "description": "Request temporal slice after ODYSSEY circuit breaker has opened"
+  },
+  "request": {
+    "rim_node_id": "rim:entity:finance:EURUSD",
+    "temporal_window": {
+      "history_start": "P7D",
+      "future_end": "P14D"
+    },
+    "options": {
+      "include_confidence": true,
+      "include_causal_chains": true,
+      "min_confidence": 0.3,
+      "fallback_strategy": "CACHED_PROJECTIONS"
+    }
+  },
+  "expected_response": {
+    "status": 200,
+    "degraded_mode": true,
+    "has_historical_state": true,
+    "has_current_state": true,
+    "has_projected_futures": true,
+    "futures_source": "CACHE",
+    "futures_staleness_warning": true,
+    "min_coherence_score": 0.4,
+    "max_latency_ms": 3000,
+    "headers": {
+      "X-Circuit-State-ODYSSEY": "OPEN",
+      "X-Data-Source-FUTURES": "CACHE",
+      "X-Cache-Age-Seconds": "numeric"
+    }
+  },
+  "workflow": [
+    {
+      "step": 1,
+      "name": "trigger_circuit_open",
+      "description": "Make requests that fail to open the circuit breaker",
+      "repeat": 5,
+      "action": "GET",
+      "endpoint": "/api/v1/odyssey/health-check-internal",
+      "expected_status": 503
+    },
+    {
+      "step": 2,
+      "name": "verify_circuit_open",
+      "action": "GET",
+      "endpoint": "/actuator/health/circuitBreakers",
+      "expected": {
+        "odyssey-client": {
+          "state": "OPEN"
+        }
+      }
+    },
+    {
+      "step": 3,
+      "name": "request_temporal_slice_with_open_circuit",
+      "action": "GET",
+      "endpoint": "/api/v1/temporal/slice?rimNodeId=rim:entity:finance:EURUSD&historyStart=P7D&futureEnd=P14D",
+      "expected": {
+        "status": 200,
+        "degraded_mode": true,
+        "futures_source": "CACHE"
+      }
+    },
+    {
+      "step": 4,
+      "name": "wait_for_half_open",
+      "wait_seconds": 30,
+      "description": "Wait for circuit to transition to HALF_OPEN"
+    },
+    {
+      "step": 5,
+      "name": "verify_recovery_attempt",
+      "action": "GET",
+      "endpoint": "/api/v1/temporal/slice?rimNodeId=rim:entity:finance:EURUSD&historyStart=P7D&futureEnd=P14D",
+      "description": "After restoring ODYSSEY, circuit should close and fresh data should flow"
+    }
+  ],
+  "assertions": [
+    {
+      "name": "circuit_breaker_state_exposed",
+      "condition": "response.headers['X-Circuit-State-ODYSSEY'] == 'OPEN'",
+      "message": "Response headers should expose circuit breaker state"
+    },
+    {
+      "name": "fallback_futures_provided",
+      "condition": "response.body.futures.hasData == true",
+      "message": "Fallback futures should be provided even with open circuit"
+    },
+    {
+      "name": "futures_marked_as_cached",
+      "condition": "response.body.futures.source == 'CACHE' || response.body.futures.stale == true",
+      "message": "Futures should be marked as cached/stale"
+    },
+    {
+      "name": "cache_age_reported",
+      "condition": "response.body.futures.cacheAgeSeconds != null",
+      "message": "Cache age should be reported for cached futures"
+    },
+    {
+      "name": "confidence_reduced_for_stale_futures",
+      "condition": "response.body.futures.confidence < 0.6",
+      "message": "Confidence should be reduced for stale/cached futures"
+    },
+    {
+      "name": "historical_and_current_unaffected",
+      "condition": "response.body.past.hasData == true && response.body.present.hasData == true",
+      "message": "Historical and current data should be unaffected by ODYSSEY circuit"
+    },
+    {
+      "name": "no_request_to_odyssey_while_open",
+      "condition": "metrics.odyssey_requests_while_circuit_open == 0",
+      "message": "No requests should be made to ODYSSEY while circuit is open"
+    }
+  ],
+  "circuit_breaker_config": {
+    "name": "odyssey-client",
+    "expected_config": {
+      "failureRateThreshold": 50,
+      "minimumNumberOfCalls": 5,
+      "waitDurationInOpenState": "30s",
+      "permittedNumberOfCallsInHalfOpenState": 3,
+      "slidingWindowSize": 10
+    }
+  },
+  "cache_requirements": {
+    "description": "Pre-populate cache with ODYSSEY futures before running this test",
+    "pre_seed_cache": {
+      "key": "odyssey:futures:rim:entity:finance:EURUSD",
+      "max_age_seconds": 3600,
+      "data_file": "odyssey-eurusd-paths-cached.json"
+    }
+  },
+  "metrics_validation": {
+    "expected_metrics": [
+      {
+        "name": "resilience4j_circuitbreaker_state",
+        "labels": {"name": "odyssey-client"},
+        "expected_value": 1,
+        "description": "1 = OPEN"
+      },
+      {
+        "name": "nexus_temporal_futures_cache_hits",
+        "increment": 1
+      },
+      {
+        "name": "nexus_client_odyssey_circuit_open_total",
+        "increment_min": 1
+      }
+    ]
+  },
+  "recovery_validation": {
+    "description": "After ODYSSEY recovers and circuit closes, fresh data should flow",
+    "recovery_steps": [
+      {
+        "step": "restore_odyssey",
+        "description": "Remove fault injection, restore ODYSSEY to healthy state"
+      },
+      {
+        "step": "wait_for_half_open",
+        "wait_seconds": 30
+      },
+      {
+        "step": "make_successful_requests",
+        "count": 3,
+        "expected_status": 200
+      },
+      {
+        "step": "verify_circuit_closed",
+        "expected_state": "CLOSED"
+      }
+    ],
+    "post_recovery_request": {
+      "expected_status": 200,
+      "has_projected_futures": true,
+      "futures_source": "LIVE",
+      "futures_staleness_warning": false
+    }
+  },
+  "upstream_mocks": {
+    "capsule": {
+      "history": {
+        "endpoint": "/api/v1/capsules/history",
+        "response_file": "capsule-eurusd-7day.json",
+        "latency_ms": 100
+      }
+    },
+    "perception": {
+      "state": {
+        "endpoint": "/api/v1/rim/nodes/{rim_node_id}/state",
+        "response_file": "perception-eurusd-current.json",
+        "latency_ms": 50
+      }
+    },
+    "odyssey": {
+      "paths": {
+        "endpoint": "/api/v1/paths",
+        "mock_type": "fault",
+        "fault_sequence": [
+          {"count": 5, "response": {"status": 503}},
+          {"count": "infinity", "response_file": "odyssey-eurusd-paths.json"}
+        ]
+      }
+    }
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario_type": "failure-injection",
+    "created": "2025-12-03",
+    "author": "BUTTERFLY Team",
+    "version": "1.0.0"
+  }
+}
+

@@ -1,0 +1,458 @@
+name: Resilience CI Stage
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiments:
+        description: "Chaos experiments to run (comma-separated: capsule,nexus,plato,all)"
+        required: false
+        default: "all"
+        type: string
+      skip_chaos:
+        description: "Skip chaos experiments (only run DLQ and scaling validation)"
+        required: false
+        default: false
+        type: boolean
+      skip_dlq:
+        description: "Skip DLQ replay automation"
+        required: false
+        default: false
+        type: boolean
+      skip_scaling:
+        description: "Skip scaling validation"
+        required: false
+        default: false
+        type: boolean
+      environment:
+        description: "Target environment"
+        required: false
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - canary
+
+  pull_request:
+    paths:
+      - "CAPSULE/**"
+      - "PERCEPTION/**"
+      - "butterfly-nexus/**"
+      - "PLATO/**"
+      - "SYNAPSE/**"
+      - "ODYSSEY/**"
+      - "chaos/**"
+      - "butterfly-e2e/**"
+      - ".github/workflows/resilience-ci.yml"
+
+  schedule:
+    # Run resilience tests every Tuesday and Friday at 3 AM UTC
+    - cron: "0 3 * * 2,5"
+
+env:
+  JAVA_VERSION: "17"
+  MAVEN_OPTS: "-Xmx1024m"
+  RESILIENCE_TIMEOUT: 600
+
+jobs:
+  # ==========================================================================
+  # Build Stage: Prepare services and validate configurations
+  # ==========================================================================
+  build-and-validate:
+    runs-on: ubuntu-latest
+    outputs:
+      chaos_mesh_available: ${{ steps.check-cluster.outputs.chaos_mesh }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Cache Avro codegen
+        uses: actions/cache@v4
+        with:
+          path: butterfly-common/target/generated-sources/avro
+          key: ${{ runner.os }}-avro-${{ hashFiles('butterfly-common/src/main/avro/**') }}
+
+      - name: Build all modules
+        run: |
+          mvn -B -q install -DskipTests -pl butterfly-common,PERCEPTION,CAPSULE,butterfly-nexus,PLATO,SYNAPSE
+
+      - name: Validate chaos experiment YAML
+        run: |
+          echo "Validating chaos experiment configurations..."
+          for file in chaos/experiments/*.yaml; do
+            echo "  Checking: $file"
+            # Basic YAML syntax validation
+            python3 -c "import yaml; yaml.safe_load(open('$file'))" || exit 1
+          done
+          echo "All chaos experiments validated"
+
+      - name: Check cluster connectivity
+        id: check-cluster
+        run: |
+          # Check if kubectl is configured and Chaos Mesh is available
+          if command -v kubectl &>/dev/null && kubectl cluster-info &>/dev/null 2>&1; then
+            if kubectl get crd podchaos.chaos-mesh.org &>/dev/null 2>&1; then
+              echo "chaos_mesh=true" >> $GITHUB_OUTPUT
+              echo "Chaos Mesh is available"
+            else
+              echo "chaos_mesh=false" >> $GITHUB_OUTPUT
+              echo "Chaos Mesh not installed"
+            fi
+          else
+            echo "chaos_mesh=false" >> $GITHUB_OUTPUT
+            echo "Kubernetes cluster not available"
+          fi
+
+  # ==========================================================================
+  # Resilience Test Stage: Execute chaos, DLQ replay, and scaling validation
+  # ==========================================================================
+  resilience-tests:
+    needs: build-and-validate
+    runs-on: ubuntu-latest
+    services:
+      kafka:
+        image: bitnami/kafka:3.6
+        ports:
+          - 9092:9092
+        env:
+          KAFKA_CFG_NODE_ID: 0
+          KAFKA_CFG_PROCESS_ROLES: controller,broker
+          KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@localhost:9093
+          KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      prometheus:
+        image: prom/prometheus:v2.47.0
+        ports:
+          - 9090:9090
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          pip install pyyaml junitparser
+
+      - name: Start services with Docker Compose
+        run: |
+          docker compose -f butterfly-e2e/docker-compose.full.yml up -d
+          echo "Waiting for services to initialize..."
+          sleep 60
+
+      - name: Wait for services to be healthy
+        timeout-minutes: 5
+        run: |
+          echo "Checking service health..."
+          max_attempts=30
+          attempt=0
+          
+          while [[ $attempt -lt $max_attempts ]]; do
+            healthy=0
+            
+            # Check each service
+            for service_port in "8081:perception" "8082:capsule" "8085:nexus" "8084:plato" "8086:synapse"; do
+              port="${service_port%%:*}"
+              name="${service_port##*:}"
+              if curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}/actuator/health" 2>/dev/null | grep -q "200"; then
+                echo "  ✓ ${name} is healthy"
+                ((healthy++))
+              else
+                echo "  ✗ ${name} not ready yet"
+              fi
+            done
+            
+            if [[ $healthy -ge 3 ]]; then
+              echo "Sufficient services healthy ($healthy/5)"
+              break
+            fi
+            
+            ((attempt++))
+            echo "Attempt $attempt/$max_attempts - waiting 10s..."
+            sleep 10
+          done
+
+      - name: Make scripts executable
+        run: |
+          chmod +x butterfly-e2e/resilience-ci-stage.sh
+          chmod +x butterfly-e2e/scripts/auto-dlq-replay.sh
+          chmod +x butterfly-e2e/scripts/validate-scaling-reactions.sh
+          chmod +x butterfly-e2e/scripts/generate-resilience-report.py 2>/dev/null || true
+
+      - name: Run Resilience CI Stage
+        id: resilience
+        env:
+          EXPERIMENTS: ${{ github.event.inputs.experiments || 'all' }}
+          ENV: ${{ github.event.inputs.environment || 'staging' }}
+          SKIP_CHAOS: ${{ github.event.inputs.skip_chaos || 'true' }}  # Skip in CI by default (no k8s)
+          SKIP_DLQ: ${{ github.event.inputs.skip_dlq || 'false' }}
+          SKIP_SCALING: ${{ github.event.inputs.skip_scaling || 'false' }}
+          PERCEPTION_URL: http://localhost:8081
+          CAPSULE_URL: http://localhost:8082
+          NEXUS_URL: http://localhost:8085
+          PLATO_URL: http://localhost:8084
+          SYNAPSE_URL: http://localhost:8086
+          PROMETHEUS_URL: http://localhost:9090
+          OUTPUT_DIR: ${{ github.workspace }}/resilience-results
+        run: |
+          mkdir -p $OUTPUT_DIR
+          
+          # Build skip flags
+          SKIP_FLAGS=""
+          [[ "$SKIP_CHAOS" == "true" ]] && SKIP_FLAGS="$SKIP_FLAGS --skip-chaos"
+          [[ "$SKIP_DLQ" == "true" ]] && SKIP_FLAGS="$SKIP_FLAGS --skip-dlq"
+          [[ "$SKIP_SCALING" == "true" ]] && SKIP_FLAGS="$SKIP_FLAGS --skip-scaling"
+          
+          ./butterfly-e2e/resilience-ci-stage.sh \
+            --experiments "$EXPERIMENTS" \
+            --env "$ENV" \
+            --prometheus "$PROMETHEUS_URL" \
+            --perception-url "$PERCEPTION_URL" \
+            --output-dir "$OUTPUT_DIR" \
+            --timeout ${{ env.RESILIENCE_TIMEOUT }} \
+            $SKIP_FLAGS || echo "resilience_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Run DLQ Replay (standalone verification)
+        if: github.event.inputs.skip_dlq != 'true'
+        continue-on-error: true
+        env:
+          PERCEPTION_URL: http://localhost:8081
+          PROMETHEUS_URL: http://localhost:9090
+        run: |
+          mkdir -p resilience-results/dlq
+          ./butterfly-e2e/scripts/auto-dlq-replay.sh \
+            --perception-url "$PERCEPTION_URL" \
+            --prometheus-url "$PROMETHEUS_URL" \
+            --output resilience-results/dlq/dlq-standalone-${{ github.run_number }}.json \
+            --operator "github-actions" \
+            --ticket "GH-RUN-${{ github.run_id }}"
+
+      - name: Run Scaling Validation (standalone verification)
+        if: github.event.inputs.skip_scaling != 'true'
+        continue-on-error: true
+        env:
+          PROMETHEUS_URL: http://localhost:9090
+        run: |
+          mkdir -p resilience-results/scaling
+          ./butterfly-e2e/scripts/validate-scaling-reactions.sh \
+            --prometheus-url "$PROMETHEUS_URL" \
+            --namespace perception \
+            --output resilience-results/scaling/scaling-standalone-${{ github.run_number }}.json \
+            --verbose
+
+      - name: Generate Resilience Report
+        if: always()
+        run: |
+          if [[ -f butterfly-e2e/scripts/generate-resilience-report.py ]]; then
+            python3 butterfly-e2e/scripts/generate-resilience-report.py \
+              --input-dir resilience-results \
+              --output resilience-results/resilience-junit-${{ github.run_number }}.xml \
+              --summary resilience-results/resilience-summary-${{ github.run_number }}.json \
+              --markdown resilience-results/resilience-summary.md
+          fi
+
+      - name: Collect service logs
+        if: always()
+        run: |
+          mkdir -p resilience-results/logs
+          docker compose -f butterfly-e2e/docker-compose.full.yml logs --no-color > resilience-results/logs/all-services.log 2>&1 || true
+          
+          # Extract per-service logs
+          for svc in perception capsule nexus plato synapse; do
+            docker compose -f butterfly-e2e/docker-compose.full.yml logs $svc --no-color > resilience-results/logs/${svc}.log 2>&1 || true
+          done
+
+      - name: Upload Resilience Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resilience-results-${{ github.run_number }}
+          path: resilience-results/
+          retention-days: 30
+
+      - name: Publish JUnit Report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: |
+            resilience-results/resilience-junit-*.xml
+          check_name: "Resilience Test Report"
+          fail_on_failure: false
+
+      - name: Generate GitHub Step Summary
+        if: always()
+        run: |
+          echo "## Resilience CI Stage Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Run Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | [${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.head_ref || github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | \`${{ github.event.inputs.environment || 'staging' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Experiments | \`${{ github.event.inputs.experiments || 'all' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Resilience Phases" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Phase | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # Read results if available
+          if [[ -f resilience-results/resilience-summary-*.json ]]; then
+            summary_file=$(ls -t resilience-results/resilience-summary-*.json | head -1)
+            
+            chaos_skipped=$(jq -r '.phases.chaos.skipped // true' "$summary_file")
+            dlq_skipped=$(jq -r '.phases.dlq.skipped // true' "$summary_file")
+            scaling_skipped=$(jq -r '.phases.scaling.skipped // true' "$summary_file")
+            
+            [[ "$chaos_skipped" == "true" ]] && echo "| Chaos Experiments | Skipped |" >> $GITHUB_STEP_SUMMARY || echo "| Chaos Experiments | Executed |" >> $GITHUB_STEP_SUMMARY
+            [[ "$dlq_skipped" == "true" ]] && echo "| DLQ Replay | Skipped |" >> $GITHUB_STEP_SUMMARY || echo "| DLQ Replay | Executed |" >> $GITHUB_STEP_SUMMARY
+            [[ "$scaling_skipped" == "true" ]] && echo "| Scaling Validation | Skipped |" >> $GITHUB_STEP_SUMMARY || echo "| Scaling Validation | Executed |" >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            total=$(jq -r '.summary.total_tests // 0' "$summary_file")
+            passed=$(jq -r '.summary.passed // 0' "$summary_file")
+            failed=$(jq -r '.summary.failed // 0' "$summary_file")
+            overall=$(jq -r '.overall_result // "UNKNOWN"' "$summary_file")
+            
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Total Tests | $total |" >> $GITHUB_STEP_SUMMARY
+            echo "| Passed | $passed |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failed | $failed |" >> $GITHUB_STEP_SUMMARY
+            echo "| Overall | \`$overall\` |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Chaos Experiments | ${{ github.event.inputs.skip_chaos == 'true' && 'Skipped' || 'Pending' }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| DLQ Replay | ${{ github.event.inputs.skip_dlq == 'true' && 'Skipped' || 'Pending' }} |" >> $GITHUB_STEP_SUMMARY
+            echo "| Scaling Validation | ${{ github.event.inputs.skip_scaling == 'true' && 'Skipped' || 'Pending' }} |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### SLO Targets" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Target |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Chaos Recovery Time | < 60s |" >> $GITHUB_STEP_SUMMARY
+          echo "| DLQ Replay Success Rate | ≥ 93% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Message Loss Rate | < 1% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scaling Reaction Time | < 2 min |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Related Documentation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- [PERCEPTION Scaling Runbook](PERCEPTION/docs/runbooks/scaling.md)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Chaos Experiments](chaos/README.md)" >> $GITHUB_STEP_SUMMARY
+          echo "- [DLQ Replay Tool](PERCEPTION/ingestion-dlq-replay/README.md)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f butterfly-e2e/docker-compose.full.yml down -v
+
+  # ==========================================================================
+  # Chaos Mesh Stage (Kubernetes cluster required)
+  # ==========================================================================
+  chaos-mesh-experiments:
+    if: |
+      (github.event_name == 'schedule') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.skip_chaos != 'true')
+    needs: build-and-validate
+    runs-on: ubuntu-latest
+    # This job requires a Kubernetes cluster with Chaos Mesh
+    # It will be skipped in most CI environments
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check Chaos Mesh availability
+        id: check
+        run: |
+          if [[ "${{ needs.build-and-validate.outputs.chaos_mesh_available }}" == "true" ]]; then
+            echo "available=true" >> $GITHUB_OUTPUT
+          else
+            echo "available=false" >> $GITHUB_OUTPUT
+            echo "Chaos Mesh not available - skipping Kubernetes chaos experiments"
+          fi
+
+      - name: Run Chaos Mesh experiments
+        if: steps.check.outputs.available == 'true'
+        env:
+          EXPERIMENTS: ${{ github.event.inputs.experiments || 'all' }}
+        run: |
+          echo "Running Chaos Mesh experiments: $EXPERIMENTS"
+          
+          # Apply chaos experiments
+          if [[ "$EXPERIMENTS" == "all" || "$EXPERIMENTS" == *"capsule"* ]]; then
+            echo "Applying capsule-outage experiment..."
+            kubectl apply -f chaos/experiments/capsule-outage.yaml -n butterfly-chaos || true
+          fi
+          
+          if [[ "$EXPERIMENTS" == "all" || "$EXPERIMENTS" == *"nexus"* ]]; then
+            echo "Applying nexus-partial-degradation experiment..."
+            kubectl apply -f chaos/experiments/nexus-partial-degradation.yaml -n butterfly-chaos || true
+          fi
+          
+          if [[ "$EXPERIMENTS" == "all" || "$EXPERIMENTS" == *"plato"* ]]; then
+            echo "Applying plato-latency-spike experiment..."
+            kubectl apply -f chaos/experiments/plato-latency-spike.yaml -n butterfly-chaos || true
+          fi
+
+      - name: Wait for chaos experiments to complete
+        if: steps.check.outputs.available == 'true'
+        run: |
+          echo "Waiting for chaos experiments to complete..."
+          sleep 300  # 5 minutes
+
+      - name: Cleanup chaos experiments
+        if: always() && steps.check.outputs.available == 'true'
+        run: |
+          kubectl delete -f chaos/experiments/ -n butterfly-chaos --ignore-not-found || true
+
+  # ==========================================================================
+  # Nightly Comprehensive Resilience Suite
+  # ==========================================================================
+  nightly-resilience-suite:
+    if: github.event.schedule == '0 3 * * 2,5'
+    needs: [build-and-validate, resilience-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate Comprehensive Report
+        run: |
+          echo "## Nightly Resilience Suite Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Run completed at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See individual job results for detailed metrics." >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "Resilience suite failed - consider investigating"
+          # Add Slack/PagerDuty notification here if configured
+

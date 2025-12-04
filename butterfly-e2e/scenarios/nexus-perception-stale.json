@@ -1,0 +1,260 @@
+{
+  "scenario_id": "nexus-perception-stale",
+  "description": "Verifies NEXUS behavior when PERCEPTION returns stale data - should adjust trust scores and flag data quality issues",
+  "category": "failure-injection",
+  "tags": ["failure", "stale-data", "perception", "trust-score", "data-quality", "resilience"],
+  "fault_injection": {
+    "type": "stale-data",
+    "target_service": "PERCEPTION",
+    "fault_config": {
+      "staleness_seconds": 3600,
+      "staleness_marker": "X-Data-Timestamp",
+      "endpoints": [
+        "/api/v1/rim/nodes/{nodeId}/state",
+        "/api/v1/rim/fast-query"
+      ]
+    },
+    "description": "PERCEPTION returns data with timestamps 1 hour in the past"
+  },
+  "nexus_endpoint": {
+    "method": "GET",
+    "path": "/api/v1/temporal/slice",
+    "description": "Request temporal slice when PERCEPTION is returning stale data"
+  },
+  "request": {
+    "rim_node_id": "rim:entity:finance:EURUSD",
+    "temporal_window": {
+      "history_start": "P7D",
+      "future_end": "P7D"
+    },
+    "options": {
+      "include_confidence": true,
+      "include_data_quality": true,
+      "staleness_threshold_seconds": 300,
+      "min_confidence": 0.3
+    }
+  },
+  "expected_response": {
+    "status": 200,
+    "degraded_mode": false,
+    "has_historical_state": true,
+    "has_current_state": true,
+    "has_projected_futures": true,
+    "data_quality_warnings": true,
+    "current_state_stale": true,
+    "min_coherence_score": 0.5,
+    "max_latency_ms": 1500,
+    "headers": {
+      "X-Data-Quality-Warning": "PERCEPTION_STALE",
+      "X-Staleness-Seconds": "numeric"
+    }
+  },
+  "assertions": [
+    {
+      "name": "response_indicates_staleness",
+      "condition": "response.body.present.dataQuality.stale == true",
+      "message": "Current state should be marked as stale"
+    },
+    {
+      "name": "staleness_age_reported",
+      "condition": "response.body.present.dataQuality.stalenessSeconds >= 3600",
+      "message": "Staleness duration should be reported accurately"
+    },
+    {
+      "name": "trust_score_reduced",
+      "condition": "response.body.present.trustScore < 0.7",
+      "message": "Trust score should be reduced for stale data"
+    },
+    {
+      "name": "trust_score_reason_provided",
+      "condition": "response.body.present.trustScoreReasons.includes('STALE_DATA')",
+      "message": "Trust score reduction reason should be documented"
+    },
+    {
+      "name": "overall_confidence_impacted",
+      "condition": "response.body.overallConfidence < response.body.confidenceWithoutStaleness",
+      "message": "Overall confidence should be lower due to staleness"
+    },
+    {
+      "name": "historical_unaffected",
+      "condition": "response.body.past.dataQuality.stale == false",
+      "message": "Historical data quality should be unaffected"
+    },
+    {
+      "name": "futures_confidence_adjusted",
+      "condition": "response.body.futures.inputQualityAdjustment != null",
+      "message": "Future projections should note the stale input data"
+    },
+    {
+      "name": "warning_header_present",
+      "condition": "response.headers['X-Data-Quality-Warning'] == 'PERCEPTION_STALE'",
+      "message": "Response should include data quality warning header"
+    }
+  ],
+  "trust_score_calculation": {
+    "description": "Trust score adjustments based on staleness",
+    "base_trust_score": 0.95,
+    "staleness_penalties": [
+      {
+        "staleness_range": "0-60s",
+        "penalty": 0.0,
+        "description": "Fresh data, no penalty"
+      },
+      {
+        "staleness_range": "60-300s",
+        "penalty": 0.05,
+        "description": "Slightly stale, minor penalty"
+      },
+      {
+        "staleness_range": "300-1800s",
+        "penalty": 0.15,
+        "description": "Moderately stale, moderate penalty"
+      },
+      {
+        "staleness_range": "1800-3600s",
+        "penalty": 0.30,
+        "description": "Significantly stale, significant penalty"
+      },
+      {
+        "staleness_range": "3600s+",
+        "penalty": 0.50,
+        "description": "Very stale, major penalty"
+      }
+    ],
+    "expected_trust_score_for_test": {
+      "min": 0.45,
+      "max": 0.65,
+      "description": "With 3600s staleness, expect ~0.45-0.65 trust score"
+    }
+  },
+  "data_quality_indicators": {
+    "fields_to_check": [
+      {
+        "path": "present.dataQuality.stale",
+        "type": "boolean",
+        "expected": true
+      },
+      {
+        "path": "present.dataQuality.stalenessSeconds",
+        "type": "integer",
+        "expected_min": 3600
+      },
+      {
+        "path": "present.dataQuality.source",
+        "type": "string",
+        "expected": "PERCEPTION"
+      },
+      {
+        "path": "present.dataQuality.lastUpdated",
+        "type": "timestamp",
+        "expected": "at_least_1_hour_old"
+      },
+      {
+        "path": "present.trustScore",
+        "type": "number",
+        "expected_range": [0.45, 0.65]
+      },
+      {
+        "path": "present.trustScoreReasons",
+        "type": "array",
+        "expected_contains": "STALE_DATA"
+      }
+    ]
+  },
+  "propagation_effects": {
+    "description": "How staleness affects downstream components",
+    "futures_projection_impact": {
+      "confidence_reduction": 0.1,
+      "flag": "INPUT_DATA_QUALITY_DEGRADED"
+    },
+    "coherence_analysis_impact": {
+      "cross_temporal_coherence_penalty": 0.1,
+      "reason": "Current state timestamp gap with recent historical data"
+    },
+    "causal_chain_impact": {
+      "affected": true,
+      "reason": "Causal chains spanning current state have reduced confidence"
+    }
+  },
+  "metrics_validation": {
+    "expected_metrics": [
+      {
+        "name": "nexus_perception_data_staleness_seconds",
+        "type": "histogram",
+        "expected_bucket": "3600+"
+      },
+      {
+        "name": "nexus_temporal_data_quality_warnings_total",
+        "labels": {"type": "STALE_DATA", "source": "PERCEPTION"},
+        "increment": 1
+      },
+      {
+        "name": "nexus_trust_score_adjustments_total",
+        "labels": {"reason": "STALE_DATA"},
+        "increment": 1
+      },
+      {
+        "name": "nexus_temporal_slice_completeness",
+        "value": 3,
+        "description": "Completeness is still 3, but with quality flags"
+      }
+    ]
+  },
+  "recovery_validation": {
+    "description": "After PERCEPTION starts returning fresh data",
+    "recovery_request": {
+      "expected_status": 200,
+      "current_state_stale": false,
+      "trust_score_min": 0.9,
+      "no_data_quality_warnings": true
+    }
+  },
+  "related_scenarios": [
+    {
+      "scenario": "nexus-capsule-timeout",
+      "relationship": "Similar degradation handling but for complete data absence vs stale data"
+    },
+    {
+      "scenario": "nexus-odyssey-circuit-open",
+      "relationship": "Tests different resilience pattern (circuit breaker) vs data quality (staleness)"
+    }
+  ],
+  "upstream_mocks": {
+    "capsule": {
+      "history": {
+        "endpoint": "/api/v1/capsules/history",
+        "response_file": "capsule-eurusd-7day.json",
+        "latency_ms": 100
+      }
+    },
+    "perception": {
+      "state": {
+        "endpoint": "/api/v1/rim/nodes/{rim_node_id}/state",
+        "response_file": "perception-eurusd-stale.json",
+        "custom_headers": {
+          "X-Data-Timestamp": "{{now_minus_3600_seconds}}"
+        },
+        "latency_ms": 50
+      }
+    },
+    "odyssey": {
+      "paths": {
+        "endpoint": "/api/v1/paths",
+        "response_file": "odyssey-eurusd-paths.json",
+        "latency_ms": 100
+      }
+    }
+  },
+  "test_data_files": {
+    "perception_stale_response": "perception-eurusd-stale.json",
+    "description": "Response file should have lastUpdated timestamp 1 hour in the past"
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario_type": "failure-injection",
+    "created": "2025-12-03",
+    "author": "BUTTERFLY Team",
+    "version": "1.0.0"
+  }
+}
+

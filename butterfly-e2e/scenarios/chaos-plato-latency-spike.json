@@ -1,0 +1,356 @@
+{
+  "name": "chaos-plato-latency-spike",
+  "description": "Chaos scenario: Force PLATO governance APIs to exceed latency SLOs and confirm retries + SYNAPSE buffering with scaling validation.",
+  "version": "2.0.0",
+  "mode": "negative",
+  "target": "plato,synapse,capsule",
+  "category": "chaos",
+  "tags": ["resilience", "latency", "governance", "scaling", "buffering"],
+  "fault_injection": {
+    "type": "network_delay",
+    "target_service": "plato",
+    "latency_ms": 5000,
+    "jitter_ms": 500,
+    "duration_seconds": 600
+  },
+  "timeout_seconds": 720,
+  "resilience_hooks": {
+    "dlq_replay": {
+      "enabled": false,
+      "comment": "PLATO latency doesn't typically cause DLQ scenarios"
+    },
+    "scaling_validation": {
+      "enabled": true,
+      "namespace": "butterfly",
+      "metrics": [
+        "cpu_utilization",
+        "api_request_queue",
+        "event_processing_latency_p95_ms"
+      ],
+      "validate_hpa_reaction": true,
+      "reaction_timeout_minutes": 2
+    },
+    "circuit_breaker_monitoring": {
+      "enabled": true,
+      "breakers_to_monitor": ["plato-governance", "synapse-plato"],
+      "expected_state_during_latency": "HALF_OPEN",
+      "recovery_timeout_seconds": 120
+    },
+    "governance_continuity": {
+      "enabled": true,
+      "verify_synapse_buffering": true,
+      "verify_capsule_continuity": true,
+      "max_governance_queue_depth": 500
+    }
+  },
+  "steps": [
+    {
+      "name": "capture-baseline-metrics",
+      "type": "metrics",
+      "action": "capture_baseline",
+      "description": "Record baseline PLATO latency metrics",
+      "metrics": {
+        "prometheus_queries": [
+          {
+            "name": "plato_request_latency_p95",
+            "query": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"plato\"}[5m])) by (le)) * 1000"
+          },
+          {
+            "name": "synapse_action_queue_size",
+            "query": "synapse_action_queue_size"
+          },
+          {
+            "name": "plato_active_requests",
+            "query": "http_server_requests_active{application=\"plato\"}"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verify-initial-plato-health",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "name": "verify-initial-synapse-health",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "name": "inject-plato-network-latency",
+      "type": "chaos",
+      "action": "network_delay",
+      "service": "plato",
+      "config": {
+        "latency_ms": 5000,
+        "jitter_ms": 500,
+        "correlation": "100",
+        "duration_seconds": 600
+      }
+    },
+    {
+      "name": "submit-governance-plan-during-latency",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "namespace": "chaos",
+        "localId": "plato-latency-{{timestamp}}",
+        "planType": "GOVERNANCE_LOOP",
+        "steps": [
+          {
+            "name": "synapse-probe",
+            "action": {
+              "type": "EXECUTE",
+              "synapseAction": {
+                "toolId": "probe",
+                "actionType": "QUERY",
+                "parameters": {
+                  "mode": "DRY_RUN",
+                  "targetId": "rim:chaos:latency"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "timeout_ms": 30000,
+      "expect": {
+        "status": [200, 201, 202, 408, 503, 504],
+        "description": "Plan submission may timeout but should not cause 500"
+      },
+      "optional": true,
+      "capture": {
+        "plan_response": "$"
+      }
+    },
+    {
+      "name": "check-synapse-buffering-during-latency",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "query": {
+        "status": "QUEUED",
+        "limit": 10
+      },
+      "expect": {
+        "status": [200]
+      },
+      "optional": true,
+      "capture": {
+        "synapse_queue_during_latency": "$.length"
+      }
+    },
+    {
+      "name": "verify-capsule-continues-operating",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200,
+        "description": "CAPSULE should continue operating despite PLATO latency"
+      }
+    },
+    {
+      "name": "verify-synapse-continues-operating",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200,
+        "description": "SYNAPSE should continue operating despite PLATO latency"
+      }
+    },
+    {
+      "name": "monitor-plato-latency-metrics",
+      "type": "metrics",
+      "action": "query",
+      "description": "Verify latency is elevated during chaos",
+      "query": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"plato\"}[1m])) by (le)) * 1000",
+      "expect": {
+        "value": {"$gte": 2000},
+        "description": "p95 latency should be elevated during network delay"
+      },
+      "optional": true
+    },
+    {
+      "name": "monitor-scaling-reaction",
+      "type": "scaling_validation",
+      "action": "monitor",
+      "description": "Monitor scaling reaction to latency spike",
+      "config": {
+        "namespace": "butterfly",
+        "deployment": "plato",
+        "check_hpa": true,
+        "check_interval_seconds": 15
+      },
+      "optional": true
+    },
+    {
+      "name": "wait-for-latency-effects",
+      "type": "wait",
+      "duration_seconds": 60,
+      "description": "Allow latency effects to propagate through system"
+    },
+    {
+      "name": "remove-plato-latency",
+      "type": "chaos",
+      "action": "restore",
+      "service": "plato"
+    },
+    {
+      "name": "wait-for-recovery",
+      "type": "wait",
+      "duration_seconds": 60,
+      "description": "Allow PLATO to recover"
+    },
+    {
+      "name": "verify-plato-recovers",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200
+      },
+      "retries": 5,
+      "retry_delay_seconds": 10
+    },
+    {
+      "name": "verify-latency-returns-to-normal",
+      "type": "metrics",
+      "action": "query",
+      "description": "Verify latency returned to baseline",
+      "query": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"plato\"}[2m])) by (le)) * 1000",
+      "expect": {
+        "value": {"$lte": 500},
+        "description": "p95 latency should return to normal within 2 minutes"
+      },
+      "optional": true
+    },
+    {
+      "name": "verify-synapse-queue-drains",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "query": {
+        "status": "QUEUED",
+        "limit": 10
+      },
+      "expect": {
+        "status": [200]
+      },
+      "optional": true,
+      "retries": 3,
+      "retry_delay_seconds": 20
+    },
+    {
+      "name": "validate-scaling-metrics-final",
+      "type": "scaling_validation",
+      "action": "validate",
+      "description": "Verify scaling metrics returned to normal",
+      "config": {
+        "prometheus_url": "{{prometheus_url}}",
+        "namespace": "butterfly",
+        "checks": [
+          {
+            "metric": "api_request_queue",
+            "expect": {"$lte": 20},
+            "description": "API request queue returned to normal"
+          },
+          {
+            "metric": "event_processing_latency_p95_ms",
+            "expect": {"$lte": 500},
+            "description": "Latency returned to normal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verify-governance-clients-recovered",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans",
+      "query": {
+        "namespace": "chaos",
+        "limit": 5
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    },
+    {
+      "name": "capture-final-metrics",
+      "type": "metrics",
+      "action": "capture_final",
+      "description": "Record final metrics after recovery"
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "Governance plan submission does not result in hard 5xx",
+        "step": "submit-governance-plan-during-latency",
+        "condition": "status not in [500]"
+      },
+      {
+        "description": "SYNAPSE buffers actions instead of failing outright",
+        "step": "check-synapse-buffering-during-latency",
+        "condition": "status == 200"
+      },
+      {
+        "description": "CAPSULE continues operating during PLATO latency",
+        "step": "verify-capsule-continues-operating",
+        "condition": "status == 200"
+      },
+      {
+        "description": "PLATO health returns to UP within 2 minutes of chaos ending",
+        "step": "verify-plato-recovers",
+        "condition": "status == 200"
+      },
+      {
+        "description": "Latency returns to normal within 2 minutes",
+        "step": "verify-latency-returns-to-normal",
+        "condition": "value <= 500"
+      }
+    ],
+    "resilience_targets": {
+      "plato_graceful_degradation": true,
+      "synapse_buffers_actions": true,
+      "capsule_unaffected": true,
+      "governance_clients_retry": true,
+      "recovery_time_minutes": 2,
+      "scaling_reaction_minutes": 2
+    },
+    "slo": {
+      "recovery_time_seconds": 120,
+      "max_latency_during_degradation_ms": 10000,
+      "normal_latency_p95_ms": 500,
+      "synapse_queue_drain_seconds": 120,
+      "no_cascading_failures": true
+    }
+  },
+  "teardown": {
+    "clear_faults": true,
+    "restore_scaling": true
+  },
+  "reporting": {
+    "include_metrics_diff": true,
+    "include_latency_histogram": true,
+    "include_scaling_analysis": true,
+    "include_governance_queue_analysis": true,
+    "export_prometheus_metrics": true
+  }
+}

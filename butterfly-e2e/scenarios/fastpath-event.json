@@ -1,0 +1,18 @@
+{
+  "rim_node_id": "rim:entity:finance:EURUSD",
+  "vector_timestamp": {
+    "event_ts_ms": 1737739200000,
+    "ingest_ts_ms": 1737739200500,
+    "logical_clock": 1
+  },
+  "critical_metrics": {
+    "stress": 0.96,
+    "price": 1.0845,
+    "volume": 1200000
+  },
+  "status": "ALERT",
+  "metadata": {
+    "source": "perception-rim-stub",
+    "scenario": "butterfly-e2e-golden-path"
+  }
+}

@@ -1,0 +1,333 @@
+{
+  "name": "chaos-nexus-partial-degradation",
+  "description": "Chaos scenario: Inject latency/CPU pressure on NEXUS to validate graceful degradation to PLATO/SYNAPSE clients with scaling validation.",
+  "version": "2.0.0",
+  "mode": "negative",
+  "target": "nexus,plato,synapse",
+  "category": "chaos",
+  "tags": ["resilience", "latency", "scaling", "backpressure"],
+  "fault_injection": {
+    "type": "latency_injection",
+    "target_service": "nexus",
+    "latency_ms": 5000,
+    "jitter_ms": 500,
+    "cpu_stress_workers": 2,
+    "cpu_load_percent": 75,
+    "duration_seconds": 480
+  },
+  "timeout_seconds": 600,
+  "resilience_hooks": {
+    "dlq_replay": {
+      "enabled": false,
+      "comment": "DLQ not primary concern for latency scenarios"
+    },
+    "scaling_validation": {
+      "enabled": true,
+      "namespace": "butterfly",
+      "metrics": [
+        "cpu_utilization",
+        "memory_utilization",
+        "event_processing_latency_p95_ms",
+        "api_request_queue"
+      ],
+      "validate_hpa_reaction": true,
+      "reaction_timeout_minutes": 2,
+      "expect_scale_out": true
+    },
+    "circuit_breaker_monitoring": {
+      "enabled": true,
+      "breakers_to_monitor": ["nexus-temporal", "nexus-synthesis"],
+      "expected_state_during_degradation": "HALF_OPEN",
+      "recovery_timeout_seconds": 120
+    },
+    "backpressure_validation": {
+      "enabled": true,
+      "check_plato_buffering": true,
+      "check_synapse_queue_depth": true,
+      "max_queue_depth": 1000
+    }
+  },
+  "steps": [
+    {
+      "name": "capture-baseline-metrics",
+      "type": "metrics",
+      "action": "capture_baseline",
+      "description": "Record baseline latency and CPU metrics",
+      "metrics": {
+        "prometheus_queries": [
+          {
+            "name": "nexus_request_latency_p95",
+            "query": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"butterfly-nexus\"}[5m])) by (le)) * 1000"
+          },
+          {
+            "name": "nexus_cpu_utilization",
+            "query": "avg(rate(container_cpu_usage_seconds_total{pod=~\"nexus.*\"}[5m])) * 100"
+          },
+          {
+            "name": "plato_queue_depth",
+            "query": "http_server_requests_active{application=\"plato\"}"
+          },
+          {
+            "name": "synapse_queue_depth",
+            "query": "synapse_action_queue_size"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verify-initial-health",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "name": "inject-nexus-cpu-stress",
+      "type": "chaos",
+      "action": "cpu_stress",
+      "service": "nexus",
+      "config": {
+        "workers": 2,
+        "load_percent": 75,
+        "duration_seconds": 480
+      }
+    },
+    {
+      "name": "inject-nexus-latency",
+      "type": "chaos",
+      "action": "latency_injection",
+      "service": "nexus",
+      "config": {
+        "latency_ms": 5000,
+        "jitter_ms": 500,
+        "correlation": "100"
+      }
+    },
+    {
+      "name": "submit-plato-plan-during-degradation",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "namespace": "chaos",
+        "localId": "nexus-degradation-{{timestamp}}",
+        "planType": "GOVERNANCE_LOOP",
+        "steps": [
+          {
+            "name": "query-nexus",
+            "action": {
+              "type": "QUERY",
+              "parameters": {
+                "target": "nexus",
+                "entityId": "rim:chaos:latency"
+              }
+            }
+          }
+        ]
+      },
+      "timeout_ms": 30000,
+      "expect": {
+        "status": [200, 201, 202, 408, 503],
+        "description": "PLATO should accept plan even if NEXUS is degraded"
+      },
+      "optional": true,
+      "capture": {
+        "plato_response": "$"
+      }
+    },
+    {
+      "name": "check-synapse-buffering",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "query": {
+        "status": "QUEUED",
+        "limit": 10
+      },
+      "expect": {
+        "status": [200]
+      },
+      "optional": true,
+      "capture": {
+        "synapse_queued_actions": "$.length"
+      }
+    },
+    {
+      "name": "monitor-scaling-reaction",
+      "type": "scaling_validation",
+      "action": "monitor",
+      "description": "Monitor HPA scaling reaction to CPU stress",
+      "config": {
+        "namespace": "butterfly",
+        "deployment": "butterfly-nexus",
+        "expect_scale_out": true,
+        "max_wait_minutes": 2,
+        "check_interval_seconds": 15
+      },
+      "optional": true
+    },
+    {
+      "name": "verify-nexus-health-degraded",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "timeout_ms": 10000,
+      "expect": {
+        "status": [200, 503],
+        "description": "NEXUS may report degraded but should remain responsive"
+      },
+      "optional": true
+    },
+    {
+      "name": "validate-latency-metrics-elevated",
+      "type": "metrics",
+      "action": "query",
+      "description": "Verify latency is elevated during chaos",
+      "query": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"butterfly-nexus\"}[1m])) by (le)) * 1000",
+      "expect": {
+        "value": {"$gte": 1000},
+        "description": "p95 latency should be elevated during stress"
+      },
+      "optional": true
+    },
+    {
+      "name": "wait-for-stress-duration",
+      "type": "wait",
+      "duration_seconds": 60,
+      "description": "Allow degradation effects to be observed"
+    },
+    {
+      "name": "remove-nexus-stress",
+      "type": "chaos",
+      "action": "restore",
+      "service": "nexus"
+    },
+    {
+      "name": "wait-for-recovery",
+      "type": "wait",
+      "duration_seconds": 60,
+      "description": "Allow NEXUS to recover from stress"
+    },
+    {
+      "name": "verify-nexus-recovers",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200
+      },
+      "retries": 5,
+      "retry_delay_seconds": 10
+    },
+    {
+      "name": "verify-latency-returns-to-normal",
+      "type": "metrics",
+      "action": "query",
+      "description": "Verify latency returned to baseline",
+      "query": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{application=\"butterfly-nexus\"}[2m])) by (le)) * 1000",
+      "expect": {
+        "value": {"$lte": 500},
+        "description": "p95 latency should return to normal within 2 minutes"
+      },
+      "optional": true
+    },
+    {
+      "name": "validate-scaling-metrics-final",
+      "type": "scaling_validation",
+      "action": "validate",
+      "description": "Verify scaling metrics returned to normal",
+      "config": {
+        "prometheus_url": "{{prometheus_url}}",
+        "namespace": "butterfly",
+        "checks": [
+          {
+            "metric": "cpu_utilization",
+            "expect": {"$lte": 70},
+            "description": "CPU utilization returned to normal"
+          },
+          {
+            "metric": "event_processing_latency_p95_ms",
+            "expect": {"$lte": 500},
+            "description": "Latency returned to normal"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verify-synapse-queue-drained",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "query": {
+        "status": "QUEUED",
+        "limit": 10
+      },
+      "expect": {
+        "status": [200],
+        "body": {
+          "length": {"$lte": 5}
+        }
+      },
+      "optional": true
+    },
+    {
+      "name": "capture-final-metrics",
+      "type": "metrics",
+      "action": "capture_final",
+      "description": "Record final metrics after recovery"
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "PLATO plan submission does not hard fail",
+        "step": "submit-plato-plan-during-degradation",
+        "condition": "status not in [500]"
+      },
+      {
+        "description": "SYNAPSE buffers actions instead of dropping",
+        "step": "check-synapse-buffering",
+        "condition": "status == 200"
+      },
+      {
+        "description": "NEXUS health returns to UP within 2 minutes",
+        "step": "verify-nexus-recovers",
+        "condition": "status == 200"
+      },
+      {
+        "description": "Latency returns to baseline within 2 minutes",
+        "step": "verify-latency-returns-to-normal",
+        "condition": "value <= 500"
+      }
+    ],
+    "resilience_targets": {
+      "nexus_stays_responsive": true,
+      "plato_tolerates_degradation": true,
+      "synapse_buffers_actions": true,
+      "recovery_time_minutes": 2,
+      "scaling_reaction_minutes": 2
+    },
+    "slo": {
+      "recovery_time_seconds": 120,
+      "max_latency_during_degradation_ms": 10000,
+      "normal_latency_p95_ms": 500,
+      "synapse_queue_drain_seconds": 120
+    }
+  },
+  "teardown": {
+    "clear_faults": true,
+    "restore_scaling": true
+  },
+  "reporting": {
+    "include_metrics_diff": true,
+    "include_latency_histogram": true,
+    "include_scaling_analysis": true,
+    "export_prometheus_metrics": true
+  }
+}

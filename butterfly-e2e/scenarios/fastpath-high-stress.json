@@ -1,0 +1,25 @@
+{
+  "rim_node_id": "rim:entity:finance:SP500",
+  "event_id": "evt-high-stress-001",
+  "instrument_id": "SPY",
+  "vector_timestamp": {
+    "event_ts_ms": 1737742800000,
+    "ingest_ts_ms": 1737742800100,
+    "logical_clock": 5
+  },
+  "critical_metrics": {
+    "stress": 0.99,
+    "spread": 0.35,
+    "pressure": 0.91
+  },
+  "price": 485.25,
+  "volume": 2150000,
+  "stress": 0.99,
+  "status": "ALERT",
+  "source_topic": "rim.fast-path",
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "edge-high-stress",
+    "note": "Expect reflex trigger and CAPSULE write"
+  }
+}

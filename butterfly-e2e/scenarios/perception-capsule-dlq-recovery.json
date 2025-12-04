@@ -1,0 +1,284 @@
+{
+  "name": "perception-capsule-dlq-recovery",
+  "description": "PERCEPTION → CAPSULE DLQ recovery: Simulate outage, verify DLQ routing, trigger replay, validate recovery",
+  "version": "1.0.0",
+  "category": "perception-capsule",
+  "tags": ["dlq", "recovery", "resilience", "failure-injection"],
+
+  "setup": {
+    "services": ["perception-signals", "butterfly-nexus", "capsule"],
+    "kafka_topics": [
+      "perception.signals",
+      "perception.events",
+      "perception.signals.dlq",
+      "perception.events.dlq",
+      "capsule.detections"
+    ]
+  },
+
+  "steps": [
+    {
+      "name": "publish_baseline_events",
+      "description": "Publish events while system is healthy to establish baseline",
+      "action": "kafka_publish_batch",
+      "topic": "perception.events",
+      "count": 100,
+      "template": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-signals",
+          "correlationId": "baseline-{{sequence}}"
+        },
+        "detectionResult": {
+          "detectorId": "volatility-detector",
+          "detectionType": "ANOMALY",
+          "detectedAt": "{{now}}",
+          "signalCount": 1,
+          "entities": ["rim-node-baseline-{{sequence}}"],
+          "metrics": {"volatility": 0.5},
+          "patterns": [],
+          "anomalies": [],
+          "metadata": {},
+          "schema_version": "1.0.0"
+        },
+        "metadata": {},
+        "schema_version": "1.0.0"
+      },
+      "interval_ms": 50
+    },
+    {
+      "name": "verify_baseline_processed",
+      "action": "wait_for_condition",
+      "condition": {
+        "type": "kafka_lag",
+        "topic": "perception.events",
+        "consumer_group": "perception-to-capsule-adapter",
+        "max_lag": 10
+      },
+      "timeout_ms": 30000
+    },
+    {
+      "name": "inject_capsule_failure",
+      "description": "Simulate CAPSULE service unavailable",
+      "action": "fault_injection",
+      "target": "capsule",
+      "fault_type": "service_unavailable",
+      "duration_seconds": 30,
+      "error_code": 503
+    },
+    {
+      "name": "publish_events_during_outage",
+      "description": "Publish events while CAPSULE is down - these should go to DLQ",
+      "action": "kafka_publish_batch",
+      "topic": "perception.events",
+      "count": 200,
+      "template": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-signals",
+          "correlationId": "outage-{{sequence}}"
+        },
+        "detectionResult": {
+          "detectorId": "volatility-detector",
+          "detectionType": "ANOMALY",
+          "detectedAt": "{{now}}",
+          "signalCount": 1,
+          "entities": ["rim-node-outage-{{sequence}}"],
+          "metrics": {"volatility": 0.8},
+          "patterns": [],
+          "anomalies": [],
+          "metadata": {"during_outage": "true"},
+          "schema_version": "1.0.0"
+        },
+        "metadata": {"test_phase": "outage"},
+        "schema_version": "1.0.0"
+      },
+      "interval_ms": 100
+    },
+    {
+      "name": "wait_for_outage_period",
+      "action": "wait",
+      "duration_ms": 35000
+    },
+    {
+      "name": "verify_dlq_populated",
+      "description": "Verify failed events were routed to DLQ",
+      "action": "kafka_consume",
+      "topic": "perception.events.dlq",
+      "timeout_ms": 10000,
+      "min_messages": 150,
+      "max_messages": 250,
+      "assertions": [
+        {
+          "path": "$.errorCode",
+          "operator": "in",
+          "value": ["CAPSULE_ERROR", "NETWORK_ERROR", "CIRCUIT_BREAKER_OPEN"]
+        }
+      ]
+    },
+    {
+      "name": "verify_circuit_breaker_opened",
+      "description": "Verify circuit breaker opened during outage",
+      "action": "http_request",
+      "method": "GET",
+      "url": "{{nexus_url}}/actuator/health/circuitBreakers",
+      "assertions": [
+        {
+          "path": "$.components.['capsule-detection'].status",
+          "operator": "in",
+          "value": ["OPEN", "HALF_OPEN"]
+        }
+      ]
+    },
+    {
+      "name": "remove_capsule_failure",
+      "description": "Restore CAPSULE service",
+      "action": "fault_injection",
+      "target": "capsule",
+      "fault_type": "clear"
+    },
+    {
+      "name": "wait_for_circuit_breaker_recovery",
+      "action": "wait_for_condition",
+      "condition": {
+        "type": "circuit_breaker_state",
+        "circuit_breaker": "capsule-detection",
+        "expected_state": "CLOSED"
+      },
+      "timeout_ms": 60000
+    },
+    {
+      "name": "trigger_dlq_replay",
+      "description": "Replay DLQ messages to primary topic",
+      "action": "http_request",
+      "method": "POST",
+      "url": "{{perception_url}}/api/v1/dlq/replay",
+      "body": {
+        "topic": "perception.events.dlq",
+        "targetFlow": "EVENTS",
+        "dryRun": false,
+        "maxRecords": 300,
+        "rateLimitPerSecond": 50,
+        "operator": "e2e-test",
+        "ticket": "E2E-DLQ-RECOVERY-TEST",
+        "reason": "Automated DLQ recovery test"
+      },
+      "timeout_ms": 60000,
+      "assertions": [
+        {
+          "path": "$.matched",
+          "operator": "gte",
+          "value": 150
+        },
+        {
+          "path": "$.replayed",
+          "operator": "gte",
+          "value": 140,
+          "description": "At least 93% of DLQ messages should be successfully replayed"
+        }
+      ],
+      "capture": {
+        "replay_result": "$"
+      }
+    },
+    {
+      "name": "wait_for_replay_processing",
+      "action": "wait",
+      "duration_ms": 20000
+    },
+    {
+      "name": "verify_events_recovered",
+      "description": "Verify replayed events were processed by CAPSULE",
+      "action": "kafka_consume",
+      "topic": "capsule.detections",
+      "filter": {
+        "metadata.test_phase": "outage"
+      },
+      "timeout_ms": 30000,
+      "min_messages": 140,
+      "assertions": [
+        {
+          "path": "$.detectionType",
+          "operator": "in",
+          "value": ["PATTERN", "ANOMALY"]
+        }
+      ]
+    },
+    {
+      "name": "verify_final_dlq_state",
+      "description": "Verify DLQ is mostly empty after replay",
+      "action": "kafka_consume",
+      "topic": "perception.events.dlq",
+      "timeout_ms": 5000,
+      "assertions": [
+        {
+          "path": "$.count",
+          "operator": "lte",
+          "value": 10,
+          "description": "DLQ should have < 5% messages remaining after replay"
+        }
+      ]
+    },
+    {
+      "name": "verify_metrics",
+      "action": "collect_metrics",
+      "sources": [
+        {
+          "type": "prometheus",
+          "service": "perception",
+          "metrics": [
+            "perception_signals_dlq_replay_matched",
+            "perception_signals_dlq_replay_replayed",
+            "perception_signals_dlq_replay_failed"
+          ]
+        }
+      ],
+      "assertions": [
+        {
+          "metric": "perception_signals_dlq_replay_failed",
+          "operator": "lte",
+          "value": 10,
+          "description": "Less than 5% replay failures"
+        }
+      ]
+    }
+  ],
+
+  "teardown": {
+    "clear_faults": true,
+    "cleanup_dlq": true
+  },
+
+  "success_criteria": {
+    "baseline_events_processed": {
+      "operator": "gte",
+      "value": 95,
+      "description": "At least 95% of baseline events processed"
+    },
+    "dlq_routing_success": {
+      "operator": "gte",
+      "value": 0.9,
+      "description": "At least 90% of outage events routed to DLQ"
+    },
+    "dlq_replay_success": {
+      "operator": "gte",
+      "value": 0.93,
+      "description": "At least 93% of DLQ events successfully replayed"
+    },
+    "final_message_loss": {
+      "operator": "lte",
+      "value": 0.01,
+      "description": "Less than 1% total message loss after recovery"
+    },
+    "max_duration_ms": 180000
+  },
+
+  "slo": {
+    "dlq_routing_latency_p95_ms": 100,
+    "dlq_replay_latency_p95_ms": 500,
+    "circuit_breaker_recovery_ms": 60000
+  }
+}
+

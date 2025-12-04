@@ -1,0 +1,816 @@
+{
+  "name": "evidence-loop-governance",
+  "description": "Phase 3 governance-aware evidence loop: PERCEPTION evidence → CAPSULE history → ODYSSEY context → NEXUS temporal synthesis → PLATO policy validation → SYNAPSE execution with governance hooks → feedback to evolution metrics",
+  "version": "1.0.0",
+  "mode": "positive",
+  "target": "all",
+  "category": "governance",
+  "golden": true,
+  "timeout_seconds": 240,
+  "correlation_id": "evidence-loop-gov-{{$timestamp}}",
+  "metadata": {
+    "phase": "3",
+    "feature": "NEXUS-PLATO-alignment",
+    "requirements": [
+      "PLATO integration clients implemented",
+      "NEXUS governance hooks operational",
+      "Policy constraint validation functional",
+      "Evolution metrics surfacing violations"
+    ]
+  },
+  "steps": [
+    {
+      "name": "verify-services-healthy",
+      "description": "Verify all services are healthy before starting",
+      "type": "parallel",
+      "sub_steps": [
+        {
+          "name": "check-perception-health",
+          "service": "perception",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-capsule-health",
+          "service": "capsule",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-odyssey-health",
+          "service": "odyssey",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-plato-health",
+          "service": "plato",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-synapse-health",
+          "service": "synapse",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        },
+        {
+          "name": "check-nexus-health",
+          "service": "nexus",
+          "method": "GET",
+          "endpoint": "/actuator/health",
+          "expect": { "status": 200, "body": { "status": "UP" } }
+        }
+      ]
+    },
+    {
+      "name": "step-1-setup-plato-governance-policy",
+      "description": "PLATO: Create a governance policy for evidence validation",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/policies",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "evidence-policy-{{$timestamp}}",
+        "policyType": "EVIDENCE_VALIDATION",
+        "name": "Evidence Validation Policy",
+        "description": "Policy governing evidence quality and provenance requirements",
+        "rules": [
+          {
+            "ruleId": "min-confidence",
+            "ruleType": "THRESHOLD",
+            "condition": "confidence >= 0.7",
+            "action": "ALLOW",
+            "severity": 0.8
+          },
+          {
+            "ruleId": "provenance-required",
+            "ruleType": "REQUIREMENT",
+            "condition": "provenance.source != null",
+            "action": "REQUIRE",
+            "severity": 0.9
+          },
+          {
+            "ruleId": "temporal-freshness",
+            "ruleType": "THRESHOLD",
+            "condition": "age_seconds <= 3600",
+            "action": "WARN",
+            "severity": 0.5
+          }
+        ],
+        "scope": "global",
+        "priority": 1.0,
+        "tags": ["e2e", "evidence-loop", "governance"]
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "id": { "$exists": true }
+        }
+      },
+      "outputs": {
+        "policyId": "$.id"
+      }
+    },
+    {
+      "name": "step-2-setup-plato-data-spec",
+      "description": "PLATO: Create a data contract spec for evidence structure",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/specs",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "evidence-spec-{{$timestamp}}",
+        "specType": "DATA_CONTRACT",
+        "content": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "evidenceId": { "type": "string" },
+              "evidenceType": { "type": "string", "enum": ["OBSERVATION", "MEASUREMENT", "INFERENCE"] },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "source": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" },
+              "payload": { "type": "object" }
+            },
+            "required": ["evidenceId", "evidenceType", "confidence", "source", "timestamp"]
+          },
+          "governance": {
+            "minConfidence": 0.7,
+            "requiresProvenance": true,
+            "maxAgeSec": 3600
+          }
+        },
+        "description": "Data contract for evidence in the governance loop",
+        "tags": ["e2e", "evidence-loop", "governance"]
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "status": "DRAFT"
+        }
+      },
+      "outputs": {
+        "specId": "$.id"
+      }
+    },
+    {
+      "name": "step-3-perception-ingest-evidence",
+      "description": "PERCEPTION: Ingest evidence signal with full provenance",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/signals",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "EVIDENCE_EVENT",
+        "source": "e2e-evidence-harness",
+        "rimNodeId": "rim:evidence:e2e:gov-loop-{{$timestamp}}",
+        "payload": {
+          "evidenceId": "evidence-{{$timestamp}}",
+          "evidenceType": "OBSERVATION",
+          "confidence": 0.85,
+          "source": "trusted-source-001",
+          "timestamp": "{{$isoTimestamp}}",
+          "payload": {
+            "metric": "performance",
+            "value": 78.5,
+            "unit": "percent",
+            "context": "quarterly-review"
+          }
+        },
+        "metadata": {
+          "priority": "HIGH",
+          "tags": ["e2e", "evidence-loop", "governance"],
+          "provenanceChain": ["source:trusted-source-001", "ingestion:perception"],
+          "governanceContext": {
+            "policyId": "{{policyId}}",
+            "specId": "{{specId}}"
+          }
+        }
+      },
+      "expect": {
+        "status": [201, 202],
+        "body": {
+          "signalId": { "$exists": true }
+        }
+      },
+      "outputs": {
+        "signalId": "$.signalId",
+        "rimNodeId": "$.rimNodeId"
+      }
+    },
+    {
+      "name": "step-4-wait-perception-processing",
+      "type": "wait",
+      "duration_seconds": 3,
+      "description": "Wait for PERCEPTION to process and propagate the evidence"
+    },
+    {
+      "name": "step-5-verify-perception-rim-state",
+      "description": "PERCEPTION: Verify evidence created RIM node state",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/state/{{rimNodeId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "rimNodeId": "{{rimNodeId}}",
+          "status": ["ACTIVE", "OBSERVED"]
+        }
+      },
+      "outputs": {
+        "capsuleId": "$.capsuleId"
+      }
+    },
+    {
+      "name": "step-6-capsule-verify-evidence-stored",
+      "description": "CAPSULE: Verify evidence was persisted with provenance",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/api/v1/capsules",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "scopeId": "{{rimNodeId}}",
+        "limit": 1
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "content": { "$exists": true }
+        }
+      },
+      "outputs": {
+        "storedCapsuleId": "$.content[0].capsuleId"
+      }
+    },
+    {
+      "name": "step-7-capsule-query-history",
+      "description": "CAPSULE: Query history for evidence lineage",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/api/v1/history",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "scopeId": "{{rimNodeId}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "totalElements": { "$gte": 1 }
+        }
+      }
+    },
+    {
+      "name": "step-8-odyssey-get-strategic-context",
+      "description": "ODYSSEY: Get strategic context for evidence interpretation",
+      "service": "odyssey",
+      "method": "GET",
+      "endpoint": "/api/v1/worlds/default/context",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": [200, 404]
+      },
+      "optional": true,
+      "outputs": {
+        "worldId": "$.worldId"
+      }
+    },
+    {
+      "name": "step-9-nexus-temporal-slice",
+      "description": "NEXUS: Query temporal slice combining PERCEPTION/CAPSULE/ODYSSEY",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "entityId": "{{rimNodeId}}",
+        "timeframe": {
+          "lookback": "PT1H",
+          "lookahead": "PT30M"
+        },
+        "includeSources": ["capsule", "perception", "odyssey"],
+        "governanceContext": {
+          "policyId": "{{policyId}}",
+          "requireValidation": true
+        }
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "coherenceScore": { "$gte": 0.3 }
+        }
+      },
+      "optional": true,
+      "outputs": {
+        "temporalSliceId": "$.sliceId"
+      }
+    },
+    {
+      "name": "step-10-nexus-synthesize-strategic-options",
+      "description": "NEXUS: Synthesize strategic options with governance validation",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/synthesis/options",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "contextId": "{{rimNodeId}}",
+        "request": {
+          "objective": "evaluate-evidence-impact",
+          "constraints": {
+            "maxRisk": 0.3,
+            "requireGovernance": true
+          },
+          "sources": {
+            "perception": true,
+            "capsule": true,
+            "odyssey": true,
+            "plato": true
+          }
+        },
+        "governanceContext": {
+          "policyId": "{{policyId}}",
+          "specId": "{{specId}}",
+          "validateAgainstPolicies": true
+        }
+      },
+      "expect": {
+        "status": [200, 202],
+        "body": {
+          "options": { "$exists": true }
+        }
+      },
+      "outputs": {
+        "synthesisId": "$.synthesisId",
+        "optionId": "$.options[0].optionId"
+      }
+    },
+    {
+      "name": "step-11-wait-synthesis-completion",
+      "type": "wait",
+      "duration_seconds": 5,
+      "description": "Wait for NEXUS synthesis and PLATO validation"
+    },
+    {
+      "name": "step-12-nexus-get-option-with-governance",
+      "description": "NEXUS: Retrieve strategic option with PLATO governance contribution",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/synthesis/options/{{optionId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "optionId": "{{optionId}}",
+          "platoContribution": { "$exists": true }
+        }
+      },
+      "optional": true,
+      "outputs": {
+        "governanceStatus": "$.platoContribution.status"
+      }
+    },
+    {
+      "name": "step-13-plato-validate-with-policy-constraints",
+      "description": "PLATO: Validate option against policy constraints",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/validation/option",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "optionId": "{{optionId}}",
+        "description": "Evidence-derived strategic option",
+        "affectedEntities": ["{{rimNodeId}}"],
+        "policyId": "{{policyId}}",
+        "specId": "{{specId}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": ["COMPLIANT", "REQUIRES_REVIEW", "NON_COMPLIANT"]
+        }
+      },
+      "outputs": {
+        "validationStatus": "$.status",
+        "violations": "$.constraints"
+      }
+    },
+    {
+      "name": "step-14-plato-create-execution-plan",
+      "description": "PLATO: Create execution plan with governance hooks",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "evidence-plan-{{$timestamp}}",
+        "planType": "GOVERNED",
+        "governanceContext": {
+          "policyId": "{{policyId}}",
+          "specId": "{{specId}}",
+          "optionId": "{{optionId}}",
+          "validationStatus": "{{validationStatus}}"
+        },
+        "steps": [
+          {
+            "name": "validate-evidence",
+            "action": {
+              "type": "VALIDATE",
+              "parameters": {
+                "specId": "{{specId}}",
+                "targetId": "{{rimNodeId}}"
+              }
+            }
+          },
+          {
+            "name": "apply-governance-checks",
+            "action": {
+              "type": "GOVERNANCE_CHECK",
+              "parameters": {
+                "policyId": "{{policyId}}",
+                "checkType": "FULL"
+              }
+            },
+            "dependsOn": ["validate-evidence"]
+          },
+          {
+            "name": "execute-if-compliant",
+            "action": {
+              "type": "CONDITIONAL_EXECUTE",
+              "synapseAction": {
+                "toolId": "evidence-processor",
+                "actionType": "PROCESS",
+                "parameters": {
+                  "evidenceId": "{{rimNodeId}}",
+                  "mode": "DRY_RUN"
+                }
+              },
+              "condition": "governance_passed == true"
+            },
+            "dependsOn": ["apply-governance-checks"]
+          },
+          {
+            "name": "record-outcome",
+            "action": {
+              "type": "RECORD",
+              "parameters": {
+                "target": "capsule",
+                "scopeId": "{{rimNodeId}}",
+                "includeGovernanceAudit": true
+              }
+            },
+            "dependsOn": ["execute-if-compliant"]
+          }
+        ],
+        "description": "Governance-aware evidence processing plan",
+        "tags": ["e2e", "evidence-loop", "governance"]
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "status": "PENDING"
+        }
+      },
+      "outputs": {
+        "planId": "$.id"
+      }
+    },
+    {
+      "name": "step-15-plato-execute-plan",
+      "description": "PLATO: Execute the governance-aware plan",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans/{{planId}}/execute",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "mode": "DRY_RUN",
+        "governanceContext": {
+          "enforcePolicy": true,
+          "auditLevel": "FULL"
+        }
+      },
+      "expect": {
+        "status": 202,
+        "body": {
+          "status": "EXECUTING"
+        }
+      },
+      "outputs": {
+        "executionId": "$.executionId"
+      }
+    },
+    {
+      "name": "step-16-wait-execution",
+      "type": "wait",
+      "duration_seconds": 8,
+      "description": "Wait for plan execution and SYNAPSE processing"
+    },
+    {
+      "name": "step-17-verify-synapse-action",
+      "description": "SYNAPSE: Verify action received with governance context",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "planId": "{{planId}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    },
+    {
+      "name": "step-18-verify-plan-completion",
+      "description": "PLATO: Verify plan executed with governance audit",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans/{{planId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": ["COMPLETED", "EXECUTING", "PARTIAL"]
+        }
+      }
+    },
+    {
+      "name": "step-19-nexus-submit-learning-signal",
+      "description": "NEXUS: Submit learning signal for evidence loop feedback",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/learning/signal",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "GOVERNANCE_OUTCOME",
+        "entityId": "{{rimNodeId}}",
+        "planId": "{{planId}}",
+        "optionId": "{{optionId}}",
+        "outcome": "SUCCESS",
+        "governanceResult": {
+          "policyId": "{{policyId}}",
+          "specId": "{{specId}}",
+          "validationStatus": "{{validationStatus}}",
+          "violations": []
+        },
+        "metrics": {
+          "latency_ms": 200,
+          "steps_completed": 4,
+          "governance_checks_passed": true
+        },
+        "feedback": {
+          "accuracy": 0.92,
+          "relevance": 0.88,
+          "governanceCompliance": 1.0
+        }
+      },
+      "expect": {
+        "status": 202
+      },
+      "optional": true
+    },
+    {
+      "name": "step-20-nexus-verify-evolution-metrics",
+      "description": "NEXUS: Verify evolution metrics captured governance outcome",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/evolution/health",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "overallScore": { "$gte": 0.5 }
+        }
+      },
+      "optional": true
+    },
+    {
+      "name": "step-21-verify-capsule-audit-trail",
+      "description": "CAPSULE: Verify complete audit trail with governance records",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/api/v1/history",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "scopeId": "{{rimNodeId}}",
+        "limit": 20
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "totalElements": { "$gte": 1 }
+        }
+      }
+    },
+    {
+      "name": "step-22-verify-perception-final-state",
+      "description": "PERCEPTION: Verify final RIM state reflects governance outcome",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/state/{{rimNodeId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "All services are healthy",
+        "step": "verify-services-healthy",
+        "condition": "all_sub_steps_pass"
+      },
+      {
+        "description": "PLATO governance policy created",
+        "step": "step-1-setup-plato-governance-policy",
+        "condition": "status == 201"
+      },
+      {
+        "description": "PLATO data spec created",
+        "step": "step-2-setup-plato-data-spec",
+        "condition": "status == 201"
+      },
+      {
+        "description": "PERCEPTION evidence ingested",
+        "step": "step-3-perception-ingest-evidence",
+        "condition": "status in [201, 202]"
+      },
+      {
+        "description": "PERCEPTION RIM state created",
+        "step": "step-5-verify-perception-rim-state",
+        "condition": "status == 200"
+      },
+      {
+        "description": "CAPSULE stored evidence",
+        "step": "step-6-capsule-verify-evidence-stored",
+        "condition": "status == 200"
+      },
+      {
+        "description": "CAPSULE history available",
+        "step": "step-7-capsule-query-history",
+        "condition": "status == 200"
+      },
+      {
+        "description": "PLATO policy validation completed",
+        "step": "step-13-plato-validate-with-policy-constraints",
+        "condition": "status == 200"
+      },
+      {
+        "description": "PLATO governance plan created",
+        "step": "step-14-plato-create-execution-plan",
+        "condition": "status == 201"
+      },
+      {
+        "description": "PLATO plan execution started",
+        "step": "step-15-plato-execute-plan",
+        "condition": "status == 202"
+      },
+      {
+        "description": "PLATO plan completed",
+        "step": "step-18-verify-plan-completion",
+        "condition": "status == 200"
+      },
+      {
+        "description": "CAPSULE audit trail complete",
+        "step": "step-21-verify-capsule-audit-trail",
+        "condition": "status == 200"
+      }
+    ],
+    "governance_criteria": [
+      {
+        "description": "Policy constraints were evaluated",
+        "step": "step-13-plato-validate-with-policy-constraints",
+        "condition": "body.status exists"
+      },
+      {
+        "description": "Governance hooks propagated to SYNAPSE",
+        "step": "step-17-verify-synapse-action",
+        "condition": "status == 200",
+        "optional": true
+      },
+      {
+        "description": "Learning signal recorded governance outcome",
+        "step": "step-19-nexus-submit-learning-signal",
+        "condition": "status == 202",
+        "optional": true
+      }
+    ],
+    "slo_targets": {
+      "total_duration_ms": 120000,
+      "perception_latency_p99_ms": 2000,
+      "capsule_latency_p99_ms": 3000,
+      "odyssey_latency_p99_ms": 5000,
+      "plato_latency_p99_ms": 5000,
+      "synapse_latency_p99_ms": 3000,
+      "nexus_synthesis_latency_p99_ms": 10000,
+      "plato_validation_latency_p99_ms": 2000
+    }
+  },
+  "cleanup": {
+    "enabled": true,
+    "steps": [
+      {
+        "name": "cleanup-plan",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/plans/{{planId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      },
+      {
+        "name": "cleanup-spec",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/specs/{{specId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      },
+      {
+        "name": "cleanup-policy",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/policies/{{policyId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      }
+    ]
+  }
+}
+

@@ -1,0 +1,188 @@
+{
+  "name": "closed-loop-kill-switch",
+  "description": "Tests global kill switch and safety controls in SYNAPSE",
+  "correlationId": "e2e-kill-switch-{{timestamp}}",
+  "steps": [
+    {
+      "name": "verify-initial-safety-status",
+      "target": "synapse",
+      "action": "http-get",
+      "endpoint": "/api/v1/safety/status",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["enabled", "namespaceStatuses"],
+      "description": "Verify initial safety status is operational"
+    },
+    {
+      "name": "execute-action-before-kill",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/actions",
+      "payload": {
+        "toolId": "http-webhook",
+        "parameters": {
+          "url": "https://httpbin.org/post",
+          "method": "POST",
+          "body": {"test": "before-kill-switch"}
+        },
+        "executionMode": "SANDBOX",
+        "namespace": "e2e-test-killswitch"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["actionId", "outcomeStatus"],
+      "description": "Action should succeed before kill switch"
+    },
+    {
+      "name": "activate-kill-switch",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/safety/kill-switch",
+      "payload": {
+        "activated": true,
+        "reason": "E2E test - kill switch validation",
+        "activatedBy": "e2e-test-harness",
+        "scope": "e2e-test-killswitch"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "description": "Activate namespace-scoped kill switch"
+    },
+    {
+      "name": "verify-kill-switch-active",
+      "target": "synapse",
+      "action": "http-get",
+      "endpoint": "/api/v1/safety/status",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "description": "Verify kill switch is now active"
+    },
+    {
+      "name": "execute-action-during-kill",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/actions",
+      "payload": {
+        "toolId": "http-webhook",
+        "parameters": {
+          "url": "https://httpbin.org/post",
+          "method": "POST",
+          "body": {"test": "during-kill-switch"}
+        },
+        "executionMode": "SANDBOX",
+        "namespace": "e2e-test-killswitch"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 403,
+      "expectBodyContains": ["SAFETY_REJECTED", "kill switch"],
+      "description": "Action should be rejected while kill switch is active"
+    },
+    {
+      "name": "execute-action-different-namespace",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/actions",
+      "payload": {
+        "toolId": "http-webhook",
+        "parameters": {
+          "url": "https://httpbin.org/post",
+          "method": "POST",
+          "body": {"test": "different-namespace"}
+        },
+        "executionMode": "DRY_RUN",
+        "namespace": "e2e-test-other"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "description": "Action in different namespace should succeed"
+    },
+    {
+      "name": "deactivate-kill-switch",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/safety/resume",
+      "payload": {
+        "scope": "e2e-test-killswitch",
+        "resumedBy": "e2e-test-harness",
+        "reason": "E2E test - resume after validation"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "description": "Deactivate kill switch"
+    },
+    {
+      "name": "execute-action-after-resume",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/actions",
+      "payload": {
+        "toolId": "http-webhook",
+        "parameters": {
+          "url": "https://httpbin.org/post",
+          "method": "POST",
+          "body": {"test": "after-resume"}
+        },
+        "executionMode": "DRY_RUN",
+        "namespace": "e2e-test-killswitch"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["actionId", "outcomeStatus"],
+      "description": "Action should succeed after resume"
+    }
+  ],
+  "assertions": [
+    {
+      "name": "kill-switch-blocks-actions",
+      "description": "Verify actions are blocked when kill switch is active",
+      "type": "response-check",
+      "step": "execute-action-during-kill",
+      "jsonPath": "$.errorCode",
+      "expectValue": "SAFETY_REJECTED"
+    },
+    {
+      "name": "namespace-isolation-works",
+      "description": "Verify kill switch only affects target namespace",
+      "type": "response-check",
+      "step": "execute-action-different-namespace",
+      "jsonPath": "$.outcomeStatus",
+      "expectValue": "SKIPPED"
+    },
+    {
+      "name": "resume-restores-operations",
+      "description": "Verify actions succeed after kill switch is deactivated",
+      "type": "response-check",
+      "step": "execute-action-after-resume",
+      "jsonPath": "$.outcomeStatus",
+      "expectValue": "SKIPPED"
+    }
+  ],
+  "cleanup": {
+    "action": "restore-safety",
+    "target": "synapse",
+    "endpoint": "/api/v1/safety/resume",
+    "payload": {
+      "scope": "e2e-test-killswitch",
+      "resumedBy": "e2e-cleanup",
+      "reason": "E2E test cleanup"
+    },
+    "description": "Ensure kill switch is deactivated after test"
+  }
+}
+

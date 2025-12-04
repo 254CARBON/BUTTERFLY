@@ -1,0 +1,133 @@
+{
+  "name": "strategic-eurusd-shock",
+  "description": "Full end-to-end strategic scenario: EURUSD market shock flowing through PERCEPTION → CAPSULE → ODYSSEY → PLATO → NEXUS",
+  "correlationId": "e2e-strategic-eurusd-{{timestamp}}",
+  "steps": [
+    {
+      "name": "perception-market-shock",
+      "target": "perception",
+      "action": "publish",
+      "topic": "perception.events",
+      "payload": {
+        "eventId": "evt-eurusd-shock-{{uuid}}",
+        "eventType": "MARKET_SHOCK",
+        "title": "EURUSD Flash Crash Detected",
+        "description": "Significant market stress detected for EURUSD currency pair with rapid price movement",
+        "timestamp": "{{timestamp_ms}}",
+        "eventCategory": "FX_MARKET",
+        "trustScore": 0.9,
+        "correlationId": "{{correlationId}}",
+        "rimNodeIds": ["rim:entity:finance:EURUSD"],
+        "sources": ["reuters", "bloomberg", "internal-feed"],
+        "entities": ["EURUSD", "ECB", "FED"],
+        "impactEstimate": {
+          "magnitude": 0.85,
+          "direction": "DOWN",
+          "confidence": 0.8,
+          "horizonSeconds": 3600
+        },
+        "marketData": {
+          "instrumentId": "EURUSD",
+          "currentPrice": 1.0523,
+          "priceChange": -0.015,
+          "volumeChange": 1.5,
+          "stressLevel": 0.85,
+          "marketSector": "FX"
+        }
+      },
+      "expectSuccess": true
+    },
+    {
+      "name": "wait-for-processing",
+      "action": "wait",
+      "durationMs": 3000,
+      "description": "Wait for event to propagate through CAPSULE and ODYSSEY"
+    },
+    {
+      "name": "capsule-verify-history",
+      "target": "capsule",
+      "action": "http-get",
+      "endpoint": "/api/v1/history",
+      "queryParams": {
+        "scopeId": "rim:entity:finance:EURUSD",
+        "fromTs": "{{timestamp_minus_1h}}",
+        "toTs": "{{timestamp_plus_1h}}"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["rim:entity:finance:EURUSD"]
+    },
+    {
+      "name": "odyssey-verify-paths",
+      "target": "odyssey",
+      "action": "http-get",
+      "endpoint": "/api/v1/strategic/paths/rim:entity:finance:EURUSD",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["nodeId", "paths", "worldStoryState"]
+    },
+    {
+      "name": "plato-evaluate-governance",
+      "target": "plato",
+      "action": "http-get",
+      "endpoint": "/api/v1/strategic/governance/evaluate/rim:entity:finance:EURUSD",
+      "queryParams": {
+        "stressLevel": "0.85",
+        "regime": "CRISIS"
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["triggeredPolicies", "recommendedPlans", "FXVolatilityThreshold"]
+    },
+    {
+      "name": "nexus-strategic-synthesis",
+      "target": "nexus",
+      "action": "http-get",
+      "endpoint": "/api/v1/synthesis/strategic/rim:entity:finance:EURUSD",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["options", "temporalSlice", "worldState", "triggeredPolicies"],
+      "expectBody": {
+        "nodeId": "rim:entity:finance:EURUSD",
+        "optionsNotEmpty": true,
+        "worldState.regime": "CRISIS"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "name": "correlation-id-propagated",
+      "description": "Verify correlation ID is present in all responses",
+      "type": "correlation-check"
+    },
+    {
+      "name": "strategic-options-generated",
+      "description": "Verify at least one strategic option is generated",
+      "type": "response-check",
+      "step": "nexus-strategic-synthesis",
+      "jsonPath": "$.options",
+      "expectNotEmpty": true
+    },
+    {
+      "name": "plato-plan-generated",
+      "description": "Verify PLATO generates at least one recommended plan",
+      "type": "response-check",
+      "step": "plato-evaluate-governance",
+      "jsonPath": "$.recommendedPlans",
+      "expectNotEmpty": true
+    }
+  ],
+  "cleanup": {
+    "action": "none",
+    "description": "No cleanup needed - test data is ephemeral"
+  }
+}
+

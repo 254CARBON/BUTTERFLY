@@ -1,0 +1,150 @@
+# Chaos Experiment: NEXUS Partial Degradation (CPU + Latency)
+#
+# Purpose:
+#   - Validate PLATO/SYNAPSE callers respect NEXUS backpressure and partial responses
+#   - Ensure SLO dashboards surface higher latency with actionable alerts
+#   - Confirm recovery inside latency budget ( < 2 min back to normal )
+#
+# Related Docs: docs/operations/runbooks/chaos-nexus-circuit-open.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: nexus-partial-degradation
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: latency
+    chaos.butterfly.io/target: nexus
+    chaos.butterfly.io/severity: medium
+spec:
+  entry: nexus-latency-sequence
+  templates:
+    - name: nexus-latency-sequence
+      templateType: Serial
+      deadline: 35m
+      children:
+        - capture-baseline
+        - inject-latency
+        - fire-plato-plan
+        - observe-synapse-buffer
+        - remove-latency
+        - confirm-recovery
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline NEXUS latency histograms"
+              curl -s "http://butterfly-nexus:8080/actuator/prometheus" | grep nexus_request_latency_seconds_bucket || true
+
+    - name: inject-latency
+      templateType: StressChaos
+      stressChaos:
+        mode: one
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: butterfly-nexus
+        stressors:
+          cpu:
+            workers: 2
+            load: 75
+        duration: "8m"
+
+    - name: fire-plato-plan
+      templateType: Task
+      task:
+        container:
+          name: plato-plan
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Submitting PLATO governance plan that depends on NEXUS"
+              RESPONSE=$(curl -s -o /tmp/plan.json -w "%{http_code}" \
+                -X POST http://plato:8080/api/v1/plans \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{
+                  "namespace":"chaos",
+                  "localId":"nexus-latency-'$(date +%s)'",
+                  "planType":"GOVERNANCE_LOOP",
+                  "steps":[{"name":"query-nexus","action":{"type":"QUERY","parameters":{"target":"nexus","entityId":"rim:chaos:latency"}}}]
+                }')
+              echo "PLATO response status: $RESPONSE"
+              if [ "$RESPONSE" = "500" ]; then
+                echo "FAIL: PLATO blew up under NEXUS latency"
+                exit 1
+              fi
+
+    - name: observe-synapse-buffer
+      templateType: Task
+      task:
+        container:
+          name: synapse-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Checking SYNAPSE queue depth during NEXUS degradation"
+              curl -s "http://synapse:8080/api/v1/actions?status=QUEUED&limit=3"
+
+    - name: remove-latency
+      templateType: Task
+      task:
+        container:
+          name: remove-stress
+          image: kubeshark/kubectl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for StressChaos duration to finish"
+              sleep 10
+
+    - name: confirm-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Ensuring NEXUS back to normal latency"
+              sleep 60
+              curl -s http://butterfly-nexus:8080/actuator/health
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexus-partial-degradation-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - PLATO plan submission succeeds (even if slower)
+    - SYNAPSE queues grow but do not drop requests
+    - NEXUS health endpoint stays UP
+    - Latency histograms return to baseline inside 2 minutes after chaos
+
+  fail_criteria: |
+    - PLATO returns 5xx or times out completely
+    - SYNAPSE queue drains stall (actions stuck > 5m)
+    - NEXUS health transitions to DOWN
+
+  remediation: |
+    Review docs/operations/runbooks/chaos-nexus-circuit-open.md
+    1. Consider scaling NEXUS horizontally
+    2. Adjust PLATO timeout budgets temporarily
+    3. Verify Redis / Cassandra saturation indicators

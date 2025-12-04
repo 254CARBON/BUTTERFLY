@@ -1,0 +1,358 @@
+[
+  {
+    "name": "golden-path",
+    "file": "fastpath-event.json",
+    "mode": "positive",
+    "description": "Baseline RimFastEvent that exercises the reflex stress rule and CAPSULE write path.",
+    "expect": "publish"
+  },
+  {
+    "name": "edge-high-stress",
+    "file": "fastpath-high-stress.json",
+    "mode": "edge",
+    "description": "High-stress payload with instrument_id, event_id, and richer metrics to mimic exchange spikes.",
+    "expect": "publish"
+  },
+  {
+    "name": "minimal-ok",
+    "file": "fastpath-minimal.json",
+    "mode": "edge",
+    "description": "Minimal RimFastEvent that should flow without triggering a reflex action (status OK).",
+    "expect": "publish"
+  },
+  {
+    "name": "invalid-node",
+    "file": "fastpath-invalid-node.json",
+    "mode": "negative",
+    "description": "Malformed rim_node_id to confirm mapper validation and drop behavior when feeding ODYSSEY.",
+    "raw": true,
+    "expect": "publish"
+  },
+  {
+    "name": "kafka-hiccup",
+    "file": "fastpath-event.json",
+    "mode": "negative",
+    "description": "Attempts publish while Kafka is paused; harness should capture the failure and recover.",
+    "fault": "kafka-stop",
+    "expect": "fail"
+  },
+  {
+    "name": "nexus-temporal-query",
+    "file": "nexus-temporal-query.json",
+    "mode": "positive",
+    "description": "Full past/present/future temporal slice query through NEXUS.",
+    "expect": "response",
+    "target": "nexus"
+  },
+  {
+    "name": "nexus-cross-inference",
+    "file": "nexus-cross-inference.json",
+    "mode": "positive",
+    "description": "Cross-system inference spanning CAPSULE and ODYSSEY via NEXUS reasoning engine.",
+    "expect": "response",
+    "target": "nexus"
+  },
+  {
+    "name": "nexus-synthesis-cascade",
+    "file": "nexus-synthesis-cascade.json",
+    "mode": "positive",
+    "description": "PERCEPTION scenario triggers strategic option synthesis through NEXUS.",
+    "expect": "response",
+    "target": "nexus"
+  },
+  {
+    "name": "nexus-learning-loop",
+    "file": "nexus-learning-loop.json",
+    "mode": "positive",
+    "description": "End-to-end test of learning signal propagation and feedback application.",
+    "expect": "response",
+    "target": "nexus"
+  },
+  {
+    "name": "nexus-contradiction-detection",
+    "file": "nexus-contradiction-detection.json",
+    "mode": "positive",
+    "description": "Test contradiction detection and resolution between CAPSULE and PERCEPTION.",
+    "expect": "response",
+    "target": "nexus"
+  },
+  {
+    "name": "strategic-eurusd-shock",
+    "file": "strategic-eurusd-shock.json",
+    "mode": "positive",
+    "description": "Full E2E strategic scenario: EURUSD market shock flowing through PERCEPTION → CAPSULE → ODYSSEY → PLATO → NEXUS.",
+    "expect": "response",
+    "target": "all",
+    "golden": true
+  },
+  {
+    "name": "temporal-present-to-past",
+    "file": "temporal-present-to-past.json",
+    "mode": "positive",
+    "description": "Query NEXUS for a temporal slice focusing on historical data, validating the present→past navigation flow.",
+    "expect": "response",
+    "target": "nexus",
+    "category": "temporal-navigation"
+  },
+  {
+    "name": "temporal-past-to-future",
+    "file": "temporal-past-to-future.json",
+    "mode": "positive",
+    "description": "Query NEXUS for a temporal slice spanning from historical data to projected futures, validating cross-temporal coherence.",
+    "expect": "response",
+    "target": "nexus",
+    "category": "temporal-navigation"
+  },
+  {
+    "name": "temporal-future-to-governance",
+    "file": "temporal-future-to-governance.json",
+    "mode": "positive",
+    "description": "ODYSSEY path triggers NEXUS synthesis which generates strategic options, then PLATO evaluates governance compliance and makes a decision.",
+    "expect": "response",
+    "target": "all",
+    "category": "temporal-navigation",
+    "golden": true
+  },
+  {
+    "name": "nexus-capsule-timeout",
+    "file": "nexus-capsule-timeout.json",
+    "mode": "negative",
+    "description": "Verifies NEXUS graceful degradation when CAPSULE times out - temporal slice should still return with present and future data.",
+    "expect": "degraded-response",
+    "target": "nexus",
+    "category": "failure-injection",
+    "fault": "timeout"
+  },
+  {
+    "name": "nexus-odyssey-circuit-open",
+    "file": "nexus-odyssey-circuit-open.json",
+    "mode": "negative",
+    "description": "Verifies NEXUS behavior when ODYSSEY circuit breaker is open - should use fallback paths and cached predictions.",
+    "expect": "degraded-response",
+    "target": "nexus",
+    "category": "failure-injection",
+    "fault": "circuit-breaker"
+  },
+  {
+    "name": "nexus-perception-stale",
+    "file": "nexus-perception-stale.json",
+    "mode": "negative",
+    "description": "Verifies NEXUS behavior when PERCEPTION returns stale data - should adjust trust scores and flag data quality issues.",
+    "expect": "response",
+    "target": "nexus",
+    "category": "failure-injection",
+    "fault": "stale-data"
+  },
+  {
+    "name": "closed-loop-trading",
+    "file": "closed-loop-trading.json",
+    "mode": "positive",
+    "description": "Full closed-loop automation: Signal → Strategy → Governance → Execution → Observation → Learning",
+    "expect": "response",
+    "target": "all",
+    "category": "closed-loop",
+    "golden": true
+  },
+  {
+    "name": "closed-loop-dry-run",
+    "file": "closed-loop-dry-run.json",
+    "mode": "positive",
+    "description": "Validates DRY_RUN execution mode: full validation without real execution",
+    "expect": "response",
+    "target": "synapse",
+    "category": "closed-loop"
+  },
+  {
+    "name": "closed-loop-kill-switch",
+    "file": "closed-loop-kill-switch.json",
+    "mode": "positive",
+    "description": "Tests global kill switch and safety controls in SYNAPSE",
+    "expect": "response",
+    "target": "synapse",
+    "category": "closed-loop"
+  },
+  {
+    "name": "closed-loop-high-risk-approval",
+    "file": "closed-loop-high-risk-approval.json",
+    "mode": "positive",
+    "description": "Tests approval workflow for high-risk SYNAPSE actions via PLATO governance",
+    "expect": "response",
+    "target": "all",
+    "category": "closed-loop"
+  },
+  {
+    "name": "golden-path-full-loop",
+    "file": "golden-path-full-loop.json",
+    "mode": "positive",
+    "description": "E2E golden path: PLATO plan → SYNAPSE execution → PERCEPTION outcome → CAPSULE history → NEXUS learning loop",
+    "expect": "response",
+    "target": "all",
+    "category": "golden-path",
+    "golden": true
+  },
+  {
+    "name": "chaos-synapse-unavailable",
+    "file": "chaos-synapse-unavailable.json",
+    "mode": "negative",
+    "description": "Chaos: SYNAPSE returns 503, verify PLATO graceful degradation and circuit breaker behavior",
+    "expect": "degraded-response",
+    "target": "plato",
+    "category": "chaos",
+    "fault": "service_unavailable"
+  },
+  {
+    "name": "chaos-odyssey-degraded",
+    "file": "chaos-odyssey-degraded.json",
+    "mode": "negative",
+    "description": "Chaos: ODYSSEY returns slow/partial responses, verify NEXUS fallback and graceful degradation",
+    "expect": "degraded-response",
+    "target": "nexus",
+    "category": "chaos",
+    "fault": "latency_injection"
+  },
+  {
+    "name": "chaos-cassandra-partial-outage",
+    "file": "chaos-cassandra-partial-outage.json",
+    "mode": "negative",
+    "description": "Chaos: Cassandra node failure, verify data consistency and read-repair during partial outage",
+    "expect": "degraded-response",
+    "target": "all",
+    "category": "chaos",
+    "fault": "data_store_partial_outage"
+  },
+  {
+    "name": "chaos-capsule-outage",
+    "file": "chaos-capsule-outage.json",
+    "mode": "negative",
+    "description": "Chaos: CAPSULE API outage with automated DLQ replay, circuit breaker monitoring, and scaling validation.",
+    "expect": "degraded-response",
+    "target": "capsule,nexus,perception",
+    "category": "chaos",
+    "fault": "service_unavailable",
+    "resilience_hooks": {
+      "dlq_replay": true,
+      "scaling_validation": true,
+      "circuit_breaker_monitoring": true
+    },
+    "slo": {
+      "recovery_seconds": 60,
+      "dlq_success_rate": 93,
+      "message_loss_percent": 1
+    }
+  },
+  {
+    "name": "chaos-nexus-partial-degradation",
+    "file": "chaos-nexus-partial-degradation.json",
+    "mode": "negative",
+    "description": "Chaos: NEXUS latency/CPU stress with scaling validation and backpressure monitoring to PLATO/SYNAPSE.",
+    "expect": "degraded-response",
+    "target": "nexus,plato,synapse",
+    "category": "chaos",
+    "fault": "latency_injection",
+    "resilience_hooks": {
+      "scaling_validation": true,
+      "circuit_breaker_monitoring": true,
+      "backpressure_validation": true
+    },
+    "slo": {
+      "recovery_seconds": 120,
+      "normal_latency_p95_ms": 500
+    }
+  },
+  {
+    "name": "chaos-plato-latency-spike",
+    "file": "chaos-plato-latency-spike.json",
+    "mode": "negative",
+    "description": "Chaos: PLATO governance latency spike with SYNAPSE buffering validation and scaling metrics.",
+    "expect": "degraded-response",
+    "target": "plato,synapse,capsule",
+    "category": "chaos",
+    "fault": "latency_injection",
+    "resilience_hooks": {
+      "scaling_validation": true,
+      "circuit_breaker_monitoring": true,
+      "governance_continuity": true
+    },
+    "slo": {
+      "recovery_seconds": 120,
+      "normal_latency_p95_ms": 500,
+      "no_cascading_failures": true
+    }
+  },
+  {
+    "name": "evidence-loop-governance",
+    "file": "evidence-loop-governance.json",
+    "mode": "positive",
+    "description": "Phase 3 governance-aware evidence loop: PERCEPTION evidence → CAPSULE history → ODYSSEY context → NEXUS temporal synthesis → PLATO policy validation → SYNAPSE execution with governance hooks",
+    "expect": "response",
+    "target": "all",
+    "category": "governance",
+    "golden": true,
+    "phase": "3"
+  },
+  {
+    "name": "governance-decision-loop",
+    "file": "governance-decision-loop.json",
+    "mode": "positive",
+    "description": "E2E governance decision loop from PERCEPTION + CAPSULE evidence through NEXUS, PLATO, and SYNAPSE with feedback.",
+    "expect": "response",
+    "target": "all",
+    "category": "governance",
+    "golden": true,
+    "phase": "4"
+  },
+  {
+    "name": "perception-capsule-golden-path",
+    "file": "perception-capsule-golden-path.json",
+    "mode": "positive",
+    "description": "PERCEPTION → CAPSULE golden path: Signal detection → Avro serialization → NEXUS adapter → CAPSULE API → Event storage → Query verification",
+    "expect": "response",
+    "target": "perception,capsule,nexus",
+    "category": "perception-capsule",
+    "golden": true,
+    "phase": "2"
+  },
+  {
+    "name": "perception-capsule-high-volume",
+    "file": "perception-capsule-high-volume.json",
+    "mode": "edge",
+    "description": "PERCEPTION → CAPSULE high-volume load test: 1000+ detection events/sec to verify performance SLOs (p95 < 100ms read, p95 < 500ms write)",
+    "expect": "response",
+    "target": "perception,capsule,nexus",
+    "category": "perception-capsule",
+    "loadTest": true,
+    "eventsPerSecond": 1000,
+    "durationSeconds": 60
+  },
+  {
+    "name": "perception-capsule-dlq-recovery",
+    "file": "perception-capsule-dlq-recovery.json",
+    "mode": "negative",
+    "description": "PERCEPTION → CAPSULE DLQ recovery: Simulate CAPSULE outage, verify DLQ routing, trigger replay, and validate message recovery with < 1% loss",
+    "expect": "degraded-response",
+    "target": "perception,capsule,nexus",
+    "category": "perception-capsule",
+    "fault": "service_unavailable",
+    "dlqRecovery": true
+  },
+  {
+    "name": "perception-capsule-circuit-breaker",
+    "file": "perception-capsule-circuit-breaker.json",
+    "mode": "negative",
+    "description": "Verify circuit breaker opens when CAPSULE detection APIs fail repeatedly, then recovers in half-open state",
+    "expect": "degraded-response",
+    "target": "nexus",
+    "category": "perception-capsule",
+    "fault": "circuit-breaker"
+  },
+  {
+    "name": "perception-capsule-avro-contract",
+    "file": "perception-capsule-avro-contract.json",
+    "mode": "positive",
+    "description": "Contract test: Verify Avro schema compatibility between PERCEPTION signal events and CAPSULE detection events",
+    "expect": "response",
+    "target": "perception,capsule",
+    "category": "perception-capsule",
+    "contractTest": true
+  }
+]

@@ -1,0 +1,114 @@
+# ============================================================================
+# Kubernetes Chaos Scenario: CAPSULE Pod Outage
+# ============================================================================
+# Inject a rolling restart/failure for CAPSULE pods and ensure downstream
+# services (PERCEPTION, NEXUS) degrade gracefully while DLQs capture backlog.
+# ============================================================================
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: capsule-hard-stop
+  namespace: butterfly
+  labels:
+    chaos.butterfly.io/target: capsule
+    chaos.butterfly.io/scenario: outage
+spec:
+  action: pod-kill
+  mode: all
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: capsule
+  gracePeriod: 0
+  duration: "180s"
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: capsule-outage-k8s
+  namespace: butterfly
+spec:
+  entry: capsule-outage-full
+  templates:
+    - name: capsule-outage-full
+      templateType: Serial
+      deadline: 20m
+      children:
+        - record-baseline
+        - kill-capsule
+        - verify-degradation
+        - monitor-dlq
+        - wait-for-recovery
+        - verify-healthy
+
+    - name: record-baseline
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Baseline CAPSULE + NEXUS health"
+              curl -s http://capsule-service:8080/actuator/health
+              curl -s http://butterfly-nexus:8080/actuator/health
+
+    - name: kill-capsule
+      templateType: PodChaos
+      podChaos:
+        ref: capsule-hard-stop
+
+    - name: verify-degradation
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Ensure NEXUS degrades gracefully while CAPSULE reloads"
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+                -X POST http://butterfly-nexus:8080/api/v1/temporal/slice \
+                -H "Content-Type: application/json" \
+                -d '{"entityId":"rim:chaos:capsule","timeframe":{"lookback":"PT1H","lookahead":"PT10M"}}')
+              echo "NEXUS status: $STATUS (acceptable: 200/206/503)"
+
+    - name: monitor-dlq
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Checking PERCEPTION DLQ for CAPSULE backlog"
+              curl -s "http://perception:8080/api/v1/dlq/events?scope=capsule&limit=5"
+
+    - name: wait-for-recovery
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting 90s for pods to restart"
+              sleep 90
+
+    - name: verify-healthy
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              curl -s http://capsule-service:8080/actuator/health
+              curl -s http://butterfly-nexus:8080/actuator/health

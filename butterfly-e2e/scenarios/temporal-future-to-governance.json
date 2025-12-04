@@ -1,0 +1,230 @@
+{
+  "scenario_id": "temporal-future-to-governance",
+  "description": "ODYSSEY path triggers NEXUS synthesis which generates strategic options, then PLATO evaluates governance compliance and makes a decision",
+  "category": "temporal-navigation",
+  "tags": ["temporal", "future-to-governance", "synthesis", "plato", "decision-flow", "golden-path"],
+  "nexus_endpoints": {
+    "step_1_futures": {
+      "method": "GET",
+      "path": "/api/v1/odyssey/paths",
+      "description": "Get projected futures from ODYSSEY"
+    },
+    "step_2_synthesize": {
+      "method": "POST",
+      "path": "/api/v1/synthesis/options",
+      "description": "Synthesize strategic options from futures"
+    },
+    "step_3_governance": {
+      "method": "POST",
+      "path": "/api/v1/plato/evaluate",
+      "description": "Submit options to PLATO for governance evaluation"
+    },
+    "step_4_decision": {
+      "method": "POST",
+      "path": "/api/v1/plato/decision",
+      "description": "Get PLATO governance decision"
+    }
+  },
+  "test_data": {
+    "rim_node_id": "rim:entity:finance:portfolio:aggressive-growth",
+    "display_name": "Aggressive Growth Portfolio",
+    "domain": "finance",
+    "projection_horizon": "P30D",
+    "governance_spec_id": "spec:risk-management:portfolio-rebalance",
+    "risk_tolerance": "HIGH"
+  },
+  "workflow": [
+    {
+      "step": 1,
+      "name": "get_projected_futures",
+      "action": "GET",
+      "endpoint": "/api/v1/odyssey/paths?scopeId=rim:entity:finance:portfolio:aggressive-growth&horizon=P30D",
+      "expected": {
+        "status": 200,
+        "body_contains": ["paths", "pathId", "weight", "confidence", "tippingPoints"],
+        "paths_count_min": 3,
+        "has_high_weight_path": true
+      }
+    },
+    {
+      "step": 2,
+      "name": "detect_tipping_points",
+      "action": "GET",
+      "endpoint": "/api/v1/odyssey/tipping-points?scopeId=rim:entity:finance:portfolio:aggressive-growth",
+      "expected": {
+        "status": 200,
+        "body_contains": ["tippingPoints", "tippingId", "distanceState"],
+        "approaching_tipping_points_check": true
+      },
+      "depends_on": "get_projected_futures"
+    },
+    {
+      "step": 3,
+      "name": "synthesize_strategic_options",
+      "action": "POST",
+      "endpoint": "/api/v1/synthesis/options",
+      "request_body": {
+        "scopeId": "rim:entity:finance:portfolio:aggressive-growth",
+        "paths": "{{step_1_paths}}",
+        "tippingPoints": "{{step_2_tipping_points}}",
+        "synthesisConfig": {
+          "maxOptions": 5,
+          "minConfidence": 0.5,
+          "includeRiskAnalysis": true,
+          "includeGovernancePrecheck": true
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["strategicOptions", "optionId", "confidence", "risks"],
+        "options_count_min": 2,
+        "options_count_max": 5
+      },
+      "depends_on": "detect_tipping_points"
+    },
+    {
+      "step": 4,
+      "name": "submit_to_governance",
+      "action": "POST",
+      "endpoint": "/api/v1/plato/evaluate",
+      "request_body": {
+        "specId": "spec:risk-management:portfolio-rebalance",
+        "options": "{{step_3_strategic_options}}",
+        "context": {
+          "rimNodeId": "rim:entity:finance:portfolio:aggressive-growth",
+          "riskTolerance": "HIGH",
+          "urgency": "MEDIUM"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["evaluationId", "evaluations", "compliantOptions"],
+        "at_least_one_compliant": true
+      },
+      "depends_on": "synthesize_strategic_options"
+    },
+    {
+      "step": 5,
+      "name": "await_governance_decision",
+      "action": "POST",
+      "endpoint": "/api/v1/plato/decision",
+      "request_body": {
+        "evaluationId": "{{step_4_evaluation_id}}",
+        "specId": "spec:risk-management:portfolio-rebalance",
+        "decisionType": "RECOMMENDATION"
+      },
+      "expected": {
+        "status": 200,
+        "body_contains": ["decisionId", "recommendation", "reasoning", "approvalStatus"],
+        "decision_made": true,
+        "has_reasoning": true
+      },
+      "depends_on": "submit_to_governance"
+    },
+    {
+      "step": 6,
+      "name": "verify_decision_audit",
+      "action": "GET",
+      "endpoint": "/api/v1/plato/decisions/{{step_5_decision_id}}/audit",
+      "expected": {
+        "status": 200,
+        "body_contains": ["auditTrail", "inputs", "outputs", "reasoning"],
+        "audit_complete": true
+      },
+      "depends_on": "await_governance_decision"
+    }
+  ],
+  "assertions": [
+    {
+      "name": "futures_available",
+      "condition": "step_1_paths_count >= 3",
+      "message": "ODYSSEY should provide at least 3 projected paths"
+    },
+    {
+      "name": "tipping_points_identified",
+      "condition": "step_2_status == 200",
+      "message": "Tipping points should be queryable"
+    },
+    {
+      "name": "options_synthesized",
+      "condition": "step_3_options_count >= 2",
+      "message": "NEXUS should synthesize at least 2 strategic options"
+    },
+    {
+      "name": "governance_evaluation_complete",
+      "condition": "step_4_compliant_options >= 1",
+      "message": "At least one option should pass governance evaluation"
+    },
+    {
+      "name": "decision_rendered",
+      "condition": "step_5_decision_made == true",
+      "message": "PLATO should render a governance decision"
+    },
+    {
+      "name": "decision_has_reasoning",
+      "condition": "step_5_has_reasoning == true",
+      "message": "Governance decision must include reasoning"
+    },
+    {
+      "name": "audit_trail_complete",
+      "condition": "step_6_audit_complete == true",
+      "message": "Decision audit trail must be complete and queryable"
+    }
+  ],
+  "slo_targets": {
+    "total_latency_p99_ms": 2000,
+    "synthesis_latency_p99_ms": 500,
+    "governance_latency_p99_ms": 1000,
+    "success_rate": 0.99
+  },
+  "governance_rules": {
+    "spec_id": "spec:risk-management:portfolio-rebalance",
+    "rules": [
+      {
+        "rule_id": "max-single-position",
+        "description": "No single position exceeds 25% of portfolio",
+        "threshold": 0.25
+      },
+      {
+        "rule_id": "min-diversification",
+        "description": "Portfolio must have at least 10 positions",
+        "threshold": 10
+      },
+      {
+        "rule_id": "max-sector-concentration",
+        "description": "No sector exceeds 40% of portfolio",
+        "threshold": 0.40
+      }
+    ]
+  },
+  "upstream_mocks": {
+    "odyssey": {
+      "paths": {
+        "endpoint": "/api/v1/paths",
+        "response_file": "odyssey-portfolio-paths.json"
+      },
+      "tipping_points": {
+        "endpoint": "/api/v1/tipping-points",
+        "response_file": "odyssey-portfolio-tipping-points.json"
+      }
+    },
+    "plato": {
+      "evaluate": {
+        "endpoint": "/api/v1/governance/evaluate",
+        "response_file": "plato-portfolio-evaluation.json"
+      },
+      "decision": {
+        "endpoint": "/api/v1/governance/decision",
+        "response_file": "plato-portfolio-decision.json"
+      }
+    }
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "temporal-future-to-governance",
+    "created": "2025-12-03",
+    "author": "BUTTERFLY Team",
+    "version": "1.0.0"
+  }
+}
+

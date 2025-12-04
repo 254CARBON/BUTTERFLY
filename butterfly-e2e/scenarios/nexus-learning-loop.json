@@ -1,0 +1,66 @@
+{
+  "scenario_id": "nexus-learning-loop",
+  "description": "End-to-end test of learning signal propagation and feedback application",
+  "nexus_endpoint": "/api/v1/evolution/learning",
+  "flow_steps": [
+    {
+      "step": "record_signal",
+      "method": "POST",
+      "endpoint": "/api/v1/evolution/learning-signal",
+      "request": {
+        "signal_id": "test-signal-001",
+        "source_system": "ODYSSEY",
+        "target_system": "PERCEPTION",
+        "signal_type": "DECISION_OUTCOME",
+        "payload": {
+          "decision_id": "decision-123",
+          "predicted_outcome": "positive",
+          "actual_outcome": "positive",
+          "confidence_delta": 0.05
+        },
+        "confidence": 0.9
+      },
+      "expected_status": 200
+    },
+    {
+      "step": "verify_pending",
+      "method": "GET",
+      "endpoint": "/api/v1/evolution/learning-signals/pending",
+      "expected_response": {
+        "min_signals": 1,
+        "signal_types_include": ["DECISION_OUTCOME"]
+      }
+    },
+    {
+      "step": "apply_signals",
+      "method": "POST",
+      "endpoint": "/api/v1/evolution/learning-signals/apply",
+      "expected_response": {
+        "signals_applied_min": 1
+      }
+    },
+    {
+      "step": "verify_effectiveness",
+      "method": "GET",
+      "endpoint": "/api/v1/evolution/effectiveness",
+      "expected_response": {
+        "loops_tracked_min": 1,
+        "improvement_measured": true
+      }
+    }
+  ],
+  "integration_health_check": {
+    "endpoint": "/api/v1/evolution/health",
+    "expected_response": {
+      "overall_score_min": 0.7,
+      "patterns_tracked_min": 1
+    }
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "nexus-learning-loop",
+    "created": "2025-12-02"
+  }
+}
+
+

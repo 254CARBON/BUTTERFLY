@@ -1,0 +1,193 @@
+{
+  "name": "chaos-synapse-unavailable",
+  "description": "Chaos scenario: SYNAPSE returns 503, verify PLATO graceful degradation",
+  "version": "1.0.0",
+  "mode": "negative",
+  "target": "plato",
+  "category": "chaos",
+  "fault_injection": {
+    "type": "service_unavailable",
+    "target_service": "synapse",
+    "http_status": 503,
+    "duration_seconds": 30
+  },
+  "timeout_seconds": 60,
+  "steps": [
+    {
+      "name": "inject-synapse-failure",
+      "type": "chaos",
+      "action": "service_unavailable",
+      "service": "synapse",
+      "config": {
+        "http_status": 503,
+        "response_body": {
+          "error": "Service Unavailable",
+          "message": "SYNAPSE is currently unavailable"
+        }
+      }
+    },
+    {
+      "name": "create-plan-during-outage",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "namespace": "chaos",
+        "localId": "synapse-unavailable-test-{{$timestamp}}",
+        "planType": "STANDARD",
+        "steps": [
+          {
+            "name": "execute-action",
+            "action": {
+              "type": "EXECUTE",
+              "parameters": {
+                "toolId": "test-tool",
+                "mode": "DRY_RUN"
+              }
+            }
+          }
+        ],
+        "description": "Test plan during SYNAPSE outage"
+      },
+      "expect": {
+        "status": 201
+      },
+      "outputs": {
+        "planId": "$.id"
+      }
+    },
+    {
+      "name": "attempt-execution-during-outage",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans/{{planId}}/execute",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "mode": "DRY_RUN"
+      },
+      "expect": {
+        "status": [202, 503, 500],
+        "body": {
+          "status": ["EXECUTING", "FAILED", "PENDING"]
+        }
+      }
+    },
+    {
+      "name": "wait-for-circuit-breaker",
+      "type": "wait",
+      "duration_seconds": 5,
+      "description": "Wait for circuit breaker to open"
+    },
+    {
+      "name": "verify-circuit-breaker-open",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": [200, 503]
+      }
+    },
+    {
+      "name": "verify-plan-status-reflects-failure",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans/{{planId}}",
+      "headers": {
+        "X-Tenant-ID": "chaos-test"
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": ["PENDING", "EXECUTING", "FAILED", "COMPLETED"]
+        }
+      }
+    },
+    {
+      "name": "remove-synapse-failure",
+      "type": "chaos",
+      "action": "restore",
+      "service": "synapse"
+    },
+    {
+      "name": "wait-for-recovery",
+      "type": "wait",
+      "duration_seconds": 10,
+      "description": "Wait for SYNAPSE to recover and circuit breaker to close"
+    },
+    {
+      "name": "verify-synapse-recovered",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": "UP"
+        }
+      },
+      "optional": true
+    },
+    {
+      "name": "execute-after-recovery",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "namespace": "chaos",
+        "localId": "post-recovery-test-{{$timestamp}}",
+        "planType": "STANDARD",
+        "steps": [
+          {
+            "name": "validate-recovery",
+            "action": {
+              "type": "VALIDATE",
+              "parameters": {
+                "mode": "DRY_RUN"
+              }
+            }
+          }
+        ],
+        "description": "Post-recovery test plan"
+      },
+      "expect": {
+        "status": 201
+      }
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "PLATO continues to accept plan creation during SYNAPSE outage",
+        "step": "create-plan-during-outage",
+        "condition": "status == 201"
+      },
+      {
+        "description": "PLATO handles execution failure gracefully (no crash)",
+        "step": "attempt-execution-during-outage",
+        "condition": "status in [202, 503, 500]"
+      },
+      {
+        "description": "System recovers after SYNAPSE is restored",
+        "step": "execute-after-recovery",
+        "condition": "status == 201"
+      }
+    ],
+    "resilience_targets": {
+      "no_cascade_failure": true,
+      "graceful_degradation": true,
+      "auto_recovery": true
+    }
+  }
+}
+

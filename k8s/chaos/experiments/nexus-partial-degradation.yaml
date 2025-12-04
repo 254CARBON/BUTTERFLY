@@ -1,0 +1,133 @@
+# ============================================================================
+# Kubernetes Chaos Scenario: NEXUS Partial Degradation
+# ============================================================================
+# Combine CPU stress + network latency on NEXUS pods to verify downstream
+# PLATO/SYNAPSE behavior and NEXUS auto-recovery.
+# ============================================================================
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: nexus-cpu-stress
+  namespace: butterfly
+spec:
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: butterfly-nexus
+  mode: one
+  stressors:
+    cpu:
+      workers: 2
+      load: 70
+  duration: "6m"
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: nexus-latency
+  namespace: butterfly
+spec:
+  selector:
+    namespaces:
+      - butterfly
+    labelSelectors:
+      app.kubernetes.io/name: butterfly-nexus
+  action: delay
+  mode: all
+  delay:
+    latency: "400ms"
+    jitter: "200ms"
+  duration: "6m"
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: nexus-partial-degradation-k8s
+  namespace: butterfly
+spec:
+  entry: nexus-degradation-chain
+  templates:
+    - name: nexus-degradation-chain
+      templateType: Serial
+      deadline: 25m
+      children:
+        - capture-baseline
+        - cpu-stress
+        - latency-injection
+        - verify-plato
+        - verify-synapse
+        - wait-for-recovery
+        - confirm-health
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              curl -s http://butterfly-nexus:8080/actuator/health
+
+    - name: cpu-stress
+      templateType: StressChaos
+      stressChaos:
+        ref: nexus-cpu-stress
+
+    - name: latency-injection
+      templateType: NetworkChaos
+      networkChaos:
+        ref: nexus-latency
+
+    - name: verify-plato
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Calling PLATO plan creation while NEXUS slow"
+              curl -s -o /dev/null -w "%{http_code}" \
+                -X POST http://plato:8080/api/v1/plans \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{"namespace":"chaos","localId":"nexus-slow","planType":"STANDARD","steps":[{"name":"context","action":{"type":"QUERY","parameters":{"target":"nexus"}}}]}'
+
+    - name: verify-synapse
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              echo "Querying SYNAPSE actions queue"
+              curl -s "http://synapse:8080/api/v1/actions?status=QUEUED&limit=3"
+
+    - name: wait-for-recovery
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              sleep 90
+
+    - name: confirm-health
+      templateType: Task
+      task:
+        container:
+          image: curlimages/curl:latest
+          command:
+            - sh
+            - -c
+            - |
+              curl -s http://butterfly-nexus:8080/actuator/health

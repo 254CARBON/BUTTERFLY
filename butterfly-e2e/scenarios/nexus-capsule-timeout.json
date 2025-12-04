@@ -1,0 +1,146 @@
+{
+  "scenario_id": "nexus-capsule-timeout",
+  "description": "Verifies NEXUS graceful degradation when CAPSULE times out - temporal slice should still return with present and future data",
+  "category": "failure-injection",
+  "tags": ["failure", "timeout", "capsule", "degraded", "resilience"],
+  "fault_injection": {
+    "type": "timeout",
+    "target_service": "CAPSULE",
+    "fault_config": {
+      "delay_ms": 35000,
+      "endpoints": [
+        "/api/v1/capsules/history",
+        "/api/v1/capsules/{scopeId}/snapshots"
+      ],
+      "probability": 1.0
+    },
+    "duration_seconds": 60
+  },
+  "nexus_endpoint": {
+    "method": "GET",
+    "path": "/api/v1/temporal/slice",
+    "description": "Request temporal slice while CAPSULE is timing out"
+  },
+  "request": {
+    "rim_node_id": "rim:entity:finance:EURUSD",
+    "temporal_window": {
+      "history_start": "P7D",
+      "future_end": "P7D"
+    },
+    "options": {
+      "include_confidence": true,
+      "include_causal_chains": false,
+      "min_confidence": 0.3,
+      "timeout_strategy": "PARTIAL_RESULTS"
+    }
+  },
+  "expected_response": {
+    "status": 200,
+    "degraded_mode": true,
+    "has_historical_state": false,
+    "has_current_state": true,
+    "has_projected_futures": true,
+    "historical_state_reason": "TIMEOUT",
+    "min_coherence_score": 0.3,
+    "max_latency_ms": 6000,
+    "headers": {
+      "X-Degraded-Services": "CAPSULE",
+      "X-Data-Completeness": "PARTIAL"
+    }
+  },
+  "assertions": [
+    {
+      "name": "response_received_within_timeout",
+      "condition": "latency_ms <= 6000",
+      "message": "NEXUS should respond within its own timeout even if CAPSULE times out"
+    },
+    {
+      "name": "degraded_flag_present",
+      "condition": "response.body.degraded == true",
+      "message": "Response should indicate degraded mode"
+    },
+    {
+      "name": "historical_absent_with_reason",
+      "condition": "response.body.past.hasData == false && response.body.past.failureReason == 'TIMEOUT'",
+      "message": "Historical data should be absent with TIMEOUT reason"
+    },
+    {
+      "name": "current_state_present",
+      "condition": "response.body.present.hasData == true",
+      "message": "Current state from PERCEPTION should still be available"
+    },
+    {
+      "name": "future_projections_present",
+      "condition": "response.body.futures.hasData == true",
+      "message": "Future projections from ODYSSEY should still be available"
+    },
+    {
+      "name": "confidence_adjusted_for_missing_data",
+      "condition": "response.body.overallConfidence < 0.7",
+      "message": "Overall confidence should be reduced due to missing historical data"
+    },
+    {
+      "name": "circuit_breaker_not_open",
+      "condition": "response.headers['X-Circuit-State-CAPSULE'] != 'OPEN'",
+      "message": "A single timeout should not open the circuit breaker"
+    }
+  ],
+  "metrics_validation": {
+    "expected_metrics": [
+      {
+        "name": "nexus_temporal_historical_misses",
+        "increment": 1
+      },
+      {
+        "name": "nexus_client_capsule_timeout_total",
+        "increment": 1
+      },
+      {
+        "name": "nexus_temporal_slice_completeness",
+        "value_range": [2, 2],
+        "description": "Completeness should be 2 (present + future) out of 3"
+      }
+    ]
+  },
+  "recovery_validation": {
+    "description": "After fault clears, next request should succeed fully",
+    "wait_after_fault_clear_ms": 1000,
+    "subsequent_request": {
+      "expected_status": 200,
+      "has_historical_state": true,
+      "has_current_state": true,
+      "has_projected_futures": true
+    }
+  },
+  "upstream_mocks": {
+    "capsule": {
+      "history": {
+        "endpoint": "/api/v1/capsules/history",
+        "mock_type": "delay",
+        "delay_ms": 35000
+      }
+    },
+    "perception": {
+      "state": {
+        "endpoint": "/api/v1/rim/nodes/{rim_node_id}/state",
+        "response_file": "perception-eurusd-current.json",
+        "latency_ms": 50
+      }
+    },
+    "odyssey": {
+      "paths": {
+        "endpoint": "/api/v1/paths",
+        "response_file": "odyssey-eurusd-paths.json",
+        "latency_ms": 100
+      }
+    }
+  },
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario_type": "failure-injection",
+    "created": "2025-12-03",
+    "author": "BUTTERFLY Team",
+    "version": "1.0.0"
+  }
+}
+

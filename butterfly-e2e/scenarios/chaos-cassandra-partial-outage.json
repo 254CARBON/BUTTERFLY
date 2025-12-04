@@ -1,0 +1,284 @@
+{
+  "name": "chaos-cassandra-partial-outage",
+  "description": "Chaos scenario: Cassandra node failure causes partial data availability, verify read-repair and consistency handling",
+  "version": "1.0.0",
+  "mode": "negative",
+  "target": "all",
+  "category": "chaos",
+  "fault_injection": {
+    "type": "data_store_partial_outage",
+    "target_service": "cassandra",
+    "affected_nodes": 1,
+    "total_nodes": 3,
+    "duration_seconds": 60
+  },
+  "timeout_seconds": 120,
+  "steps": [
+    {
+      "name": "baseline-capsule-write",
+      "service": "capsule",
+      "method": "POST",
+      "endpoint": "/api/v1/facts",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "entityId": "chaos:cassandra-test-{{$timestamp}}",
+        "factType": "BASELINE",
+        "data": {
+          "value": 100,
+          "unit": "test"
+        },
+        "timestamp": "{{$now}}"
+      },
+      "expect": {
+        "status": [201, 202]
+      },
+      "outputs": {
+        "baselineFactId": "$.id"
+      },
+      "optional": true
+    },
+    {
+      "name": "baseline-plato-read",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "X-Tenant-ID": "chaos-test"
+      },
+      "query": {
+        "namespace": "chaos",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "name": "inject-cassandra-node-failure",
+      "type": "chaos",
+      "action": "data_store_partial_outage",
+      "service": "cassandra",
+      "config": {
+        "affected_nodes": ["cassandra-node-2"],
+        "action": "stop",
+        "simulate_network_partition": true
+      }
+    },
+    {
+      "name": "wait-for-partition-detection",
+      "type": "wait",
+      "duration_seconds": 5,
+      "description": "Wait for cluster to detect node failure"
+    },
+    {
+      "name": "write-during-partial-outage",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "namespace": "chaos",
+        "localId": "cassandra-outage-plan-{{$timestamp}}",
+        "planType": "STANDARD",
+        "steps": [
+          {
+            "name": "test-step",
+            "action": {
+              "type": "VALIDATE",
+              "parameters": {
+                "mode": "DRY_RUN"
+              }
+            }
+          }
+        ],
+        "description": "Plan created during Cassandra partial outage"
+      },
+      "expect": {
+        "status": [201, 503, 504],
+        "timeout_ms": 10000
+      },
+      "outputs": {
+        "outageWritePlanId": "$.id"
+      }
+    },
+    {
+      "name": "read-during-partial-outage",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "X-Tenant-ID": "chaos-test"
+      },
+      "query": {
+        "namespace": "chaos",
+        "limit": 10
+      },
+      "expect": {
+        "status": [200, 503, 504],
+        "timeout_ms": 10000
+      }
+    },
+    {
+      "name": "capsule-write-during-outage",
+      "service": "capsule",
+      "method": "POST",
+      "endpoint": "/api/v1/facts",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "entityId": "chaos:cassandra-outage-fact-{{$timestamp}}",
+        "factType": "OUTAGE_TEST",
+        "data": {
+          "value": 200,
+          "unit": "test",
+          "during_outage": true
+        },
+        "timestamp": "{{$now}}"
+      },
+      "expect": {
+        "status": [201, 202, 503, 504]
+      },
+      "optional": true
+    },
+    {
+      "name": "nexus-query-during-outage",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "entityId": "chaos:cassandra-test",
+        "timeframe": {
+          "lookback": "PT1H",
+          "lookahead": "PT30M"
+        },
+        "includeSources": ["capsule"],
+        "options": {
+          "allowStaleData": true,
+          "timeout": 5000
+        }
+      },
+      "expect": {
+        "status": [200, 206, 503, 504]
+      },
+      "optional": true
+    },
+    {
+      "name": "restore-cassandra-node",
+      "type": "chaos",
+      "action": "restore",
+      "service": "cassandra",
+      "config": {
+        "affected_nodes": ["cassandra-node-2"],
+        "action": "start"
+      }
+    },
+    {
+      "name": "wait-for-cluster-recovery",
+      "type": "wait",
+      "duration_seconds": 15,
+      "description": "Wait for Cassandra cluster to recover and synchronize"
+    },
+    {
+      "name": "verify-data-consistency-post-recovery",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans/{{outageWritePlanId}}",
+      "headers": {
+        "X-Tenant-ID": "chaos-test"
+      },
+      "expect": {
+        "status": [200, 404]
+      },
+      "optional": true
+    },
+    {
+      "name": "verify-write-post-recovery",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "namespace": "chaos",
+        "localId": "post-recovery-plan-{{$timestamp}}",
+        "planType": "STANDARD",
+        "steps": [
+          {
+            "name": "recovery-test",
+            "action": {
+              "type": "VALIDATE",
+              "parameters": {
+                "mode": "DRY_RUN"
+              }
+            }
+          }
+        ],
+        "description": "Plan created after Cassandra recovery"
+      },
+      "expect": {
+        "status": 201
+      }
+    },
+    {
+      "name": "verify-read-post-recovery",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "X-Tenant-ID": "chaos-test"
+      },
+      "query": {
+        "namespace": "chaos",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "System handles writes during partial outage (success or graceful failure)",
+        "step": "write-during-partial-outage",
+        "condition": "status in [201, 503, 504]"
+      },
+      {
+        "description": "System handles reads during partial outage (success or graceful failure)",
+        "step": "read-during-partial-outage",
+        "condition": "status in [200, 503, 504]"
+      },
+      {
+        "description": "System recovers and accepts writes after node restoration",
+        "step": "verify-write-post-recovery",
+        "condition": "status == 201"
+      },
+      {
+        "description": "System returns consistent reads after recovery",
+        "step": "verify-read-post-recovery",
+        "condition": "status == 200"
+      }
+    ],
+    "data_consistency_targets": {
+      "eventual_consistency": true,
+      "read_repair_enabled": true,
+      "write_availability_during_outage": "best_effort",
+      "full_recovery_after_restore": true
+    }
+  }
+}
+

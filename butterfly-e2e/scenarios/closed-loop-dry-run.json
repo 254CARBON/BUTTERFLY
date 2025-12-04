@@ -1,0 +1,108 @@
+{
+  "name": "closed-loop-dry-run",
+  "description": "Validates DRY_RUN execution mode: full validation without real execution",
+  "correlationId": "e2e-dry-run-{{timestamp}}",
+  "steps": [
+    {
+      "name": "synapse-register-tool",
+      "target": "synapse",
+      "action": "http-get",
+      "endpoint": "/api/v1/tools/http-webhook",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["toolId", "http-webhook"],
+      "description": "Verify HTTP webhook tool is registered"
+    },
+    {
+      "name": "synapse-dry-run-action",
+      "target": "synapse",
+      "action": "http-post",
+      "endpoint": "/api/v1/actions",
+      "payload": {
+        "toolId": "http-webhook",
+        "parameters": {
+          "url": "https://httpbin.org/post",
+          "method": "POST",
+          "body": {
+            "test": "dry-run-validation",
+            "timestamp": "{{timestamp}}"
+          },
+          "headers": {
+            "X-Test-Header": "dry-run-test"
+          }
+        },
+        "executionMode": "DRY_RUN",
+        "namespace": "e2e-test",
+        "metadata": {
+          "testType": "dry-run-validation"
+        }
+      },
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["actionId", "outcomeStatus"]
+    },
+    {
+      "name": "verify-skipped-status",
+      "target": "synapse",
+      "action": "http-get",
+      "endpoint": "/api/v1/actions/{{extract:synapse-dry-run-action:$.actionId}}",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBody": {
+        "status": "COMPLETED"
+      },
+      "description": "Verify action completed with SKIPPED outcome"
+    },
+    {
+      "name": "verify-result-output",
+      "target": "synapse",
+      "action": "http-get",
+      "endpoint": "/api/v1/actions/{{extract:synapse-dry-run-action:$.actionId}}/result",
+      "headers": {
+        "X-Correlation-ID": "{{correlationId}}"
+      },
+      "expectStatus": 200,
+      "expectBodyContains": ["dry_run", "message", "parameters"],
+      "description": "Verify DRY_RUN result contains validation info"
+    },
+    {
+      "name": "verify-no-real-call",
+      "action": "assert",
+      "description": "Confirm no actual HTTP call was made (verified by outcome status)",
+      "assertion": {
+        "step": "synapse-dry-run-action",
+        "jsonPath": "$.outcomeStatus",
+        "expectValue": "SKIPPED"
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "name": "dry-run-no-execution",
+      "description": "Verify DRY_RUN mode skipped actual execution",
+      "type": "response-check",
+      "step": "synapse-dry-run-action",
+      "jsonPath": "$.outcomeStatus",
+      "expectValue": "SKIPPED"
+    },
+    {
+      "name": "parameters-validated",
+      "description": "Verify parameters were included in validation output",
+      "type": "response-check",
+      "step": "verify-result-output",
+      "jsonPath": "$.output.parameters",
+      "expectNotEmpty": true
+    }
+  ],
+  "cleanup": {
+    "action": "none",
+    "description": "DRY_RUN mode - no real side effects to clean up"
+  }
+}
+

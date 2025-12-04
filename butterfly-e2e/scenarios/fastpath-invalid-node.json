@@ -1,0 +1,16 @@
+{
+  "rim_node_id": "invalid-node-id",
+  "vector_timestamp": {
+    "event_ts_ms": 1737750000000,
+    "ingest_ts_ms": 1737750000050,
+    "logical_clock": 2
+  },
+  "critical_metrics": {
+    "stress": 0.97
+  },
+  "status": "ALERT",
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "invalid-node"
+  }
+}

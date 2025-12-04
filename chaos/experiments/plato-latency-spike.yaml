@@ -1,0 +1,151 @@
+# Chaos Experiment: PLATO Governance Latency Spike
+#
+# Purpose:
+#   - Validate SYNAPSE + CAPSULE continue to operate when PLATO APIs exceed latency SLOs
+#   - Confirm clients observe retries/backoff instead of hard failures
+#   - Capture metrics used to tune governance queue depth
+#
+# Related Docs: docs/operations/runbooks/chaos-synapse-unavailable.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: plato-latency-spike
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: latency
+    chaos.butterfly.io/target: plato
+    chaos.butterfly.io/severity: medium
+spec:
+  entry: plato-latency-workflow
+  templates:
+    - name: plato-latency-workflow
+      templateType: Serial
+      deadline: 30m
+      children:
+        - capture-baseline
+        - inject-latency
+        - run-governance-plan
+        - check-synapse-buffering
+        - release-latency
+        - verify-recovery
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline PLATO latency metrics..."
+              curl -s http://plato:8080/actuator/prometheus | grep http_server_requests_seconds_bucket | head -n 5 || true
+
+    - name: inject-latency
+      templateType: NetworkChaos
+      networkChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: plato
+        action: delay
+        mode: all
+        delay:
+          latency: "5000ms"
+          jitter: "500ms"
+          correlation: "100"
+        duration: "10m"
+
+    - name: run-governance-plan
+      templateType: Task
+      task:
+        container:
+          name: governance-plan
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Submitting governance plan during latency spike"
+              STATUS=$(curl -s -o /tmp/governance.json -w "%{http_code}" \
+                -X POST http://plato:8080/api/v1/plans \
+                -H "Content-Type: application/json" \
+                -H "X-Tenant-ID: chaos-test" \
+                -d '{
+                  "namespace":"chaos",
+                  "localId":"plato-latency-'$(date +%s)'",
+                  "planType":"GOVERNANCE_LOOP",
+                  "steps":[{"name":"synapse-probe","action":{"type":"EXECUTE","synapseAction":{"toolId":"probe","actionType":"QUERY","parameters":{"mode":"DRY_RUN","targetId":"rim:chaos:latency"}}}}]
+                }')
+              echo "Plan submission status: $STATUS"
+              if [ "$STATUS" = "500" ]; then
+                echo "FAIL: Plan creation hard failed"
+                exit 1
+              fi
+
+    - name: check-synapse-buffering
+      templateType: Task
+      task:
+        container:
+          name: synapse-buffer
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying SYNAPSE buffering while PLATO is slow"
+              curl -s "http://synapse:8080/api/v1/actions?status=QUEUED&limit=3"
+
+    - name: release-latency
+      templateType: Task
+      task:
+        container:
+          name: release
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for NetworkChaos duration to expire"
+              sleep 15
+
+    - name: verify-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Checking PLATO + SYNAPSE health post-latency"
+              sleep 60
+              curl -s http://plato:8080/actuator/health
+              curl -s http://synapse:8080/actuator/health
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plato-latency-spike-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - Governance plan submission does not result in hard 5xx
+    - SYNAPSE buffers actions instead of failing outright
+    - PLATO health returns to UP within 2 minutes of chaos ending
+
+  fail_criteria: |
+    - PLATO health flips to DOWN during latency injection
+    - SYNAPSE queues drop actions (missing in metrics/logs)
+    - Governance clients observe fatal errors without retries
+
+  remediation: |
+    Reference docs/operations/runbooks/chaos-synapse-unavailable.md
+    1. Scale PLATO horizontally or enable adaptive throttles
+    2. Increase SYNAPSE queue depth temporarily
+    3. Engage governance kill-switch if latency persists

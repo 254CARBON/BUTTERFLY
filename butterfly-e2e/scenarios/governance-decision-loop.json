@@ -1,0 +1,458 @@
+{
+  "name": "governance-decision-loop",
+  "description": "Full end-to-end PERCEPTION → CAPSULE → ODYSSEY → NEXUS → PLATO → SYNAPSE governance loop with evidence ingestion, policy validation, execution, and learning feedback.",
+  "version": "1.0.0",
+  "mode": "positive",
+  "target": "all",
+  "category": "governance",
+  "golden": true,
+  "timeout_seconds": 240,
+  "correlation_id": "gov-loop-{{$timestamp}}",
+  "metadata": {
+    "phase": "4",
+    "feature": "governance-loop-evidence",
+    "objectives": [
+      "Exercise evidence ingest path through PERCEPTION and CAPSULE",
+      "Query ODYSSEY world-state context for the entity under governance",
+      "Verify NEXUS temporal synthesis before governance decisions are made",
+      "Create PLATO governance assets (policy + spec + plan) and dispatch to SYNAPSE",
+      "Feed execution outcome back into NEXUS learning API"
+    ]
+  },
+  "steps": [
+    {
+      "name": "verify-services-healthy",
+      "description": "Verify all core services respond before the run begins",
+      "type": "parallel",
+      "sub_steps": [
+        { "name": "perception-health", "service": "perception", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "capsule-health", "service": "capsule", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "odyssey-health", "service": "odyssey", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "nexus-health", "service": "nexus", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "plato-health", "service": "plato", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "synapse-health", "service": "synapse", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } }
+      ]
+    },
+    {
+      "name": "step-1-perception-ingest",
+      "description": "PERCEPTION ingests a governance-evidence signal and emits downstream state",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/signals",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "GOVERNANCE_EVIDENCE",
+        "source": "e2e-governance-harness",
+        "rimNodeId": "rim:gov:e2e:{{$timestamp}}",
+        "payload": {
+          "evidenceId": "e2e-evidence-{{$timestamp}}",
+          "dimension": "control-loop",
+          "metric": "policy-compliance",
+          "value": 0.87,
+          "metadata": {
+            "provenance": "perception-simulator",
+            "confidence": 0.92
+          }
+        },
+        "metadata": {
+          "tags": ["e2e", "governance", "evidence-loop"],
+          "priority": "HIGH"
+        }
+      },
+      "expect": {
+        "status": [201, 202],
+        "body": { "signalId": { "$exists": true } }
+      },
+      "outputs": {
+        "signalId": "$.signalId",
+        "rimNodeId": "$.rimNodeId"
+      }
+    },
+    {
+      "name": "step-2-wait-for-ingest",
+      "type": "wait",
+      "duration_seconds": 4,
+      "description": "Allow downstream stores to persist the signal"
+    },
+    {
+      "name": "step-3-verify-perception-state",
+      "description": "PERCEPTION state updated after ingest",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/api/v1/state/{{rimNodeId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": { "status": ["ACTIVE", "OBSERVED"] }
+      },
+      "outputs": {
+        "capsuleId": "$.capsuleId"
+      }
+    },
+    {
+      "name": "step-4-verify-capsule",
+      "description": "CAPSULE returns last persisted capsule for the rim node",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/api/v1/capsules",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "scopeId": "{{rimNodeId}}",
+        "limit": 1
+      },
+      "expect": {
+        "status": 200,
+        "body": { "content": { "$exists": true } }
+      }
+    },
+    {
+      "name": "step-5-odyssey-context",
+      "description": "ODYSSEY returns situational context for the rim node",
+      "service": "odyssey",
+      "method": "GET",
+      "endpoint": "/api/v1/entities",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "entityId": "{{rimNodeId}}"
+      },
+      "expect": {
+        "status": [200, 404]
+      },
+      "optional": true
+    },
+    {
+      "name": "step-6-nexus-temporal-fusion",
+      "description": "NEXUS fuses PERCEPTION, CAPSULE, and ODYSSEY slices before governance decision",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "entityId": "{{rimNodeId}}",
+        "timeframe": {
+          "lookback": "PT45M",
+          "lookahead": "PT15M"
+        },
+        "includeSources": ["perception", "capsule", "odyssey"],
+        "requireGovernanceView": true
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "coherenceScore": { "$gte": 0.25 }
+        }
+      },
+      "outputs": {
+        "coherenceScore": "$.coherenceScore"
+      }
+    },
+    {
+      "name": "step-7-plato-governance-policy",
+      "description": "PLATO creates a governance policy specific to the scenario",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/policies",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "gov-loop-policy-{{$timestamp}}",
+        "policyType": "GOVERNANCE_LOOP",
+        "name": "Governance Loop Policy",
+        "description": "Ensures governance decisions require evidence confidence >= 0.75 and recency < 30m",
+        "rules": [
+          { "ruleId": "confidence", "ruleType": "THRESHOLD", "condition": "confidence >= 0.75", "action": "ALLOW" },
+          { "ruleId": "freshness", "ruleType": "THRESHOLD", "condition": "age_seconds <= 1800", "action": "WARN" },
+          { "ruleId": "provenance", "ruleType": "REQUIREMENT", "condition": "provenance.source != null", "action": "REQUIRE" }
+        ],
+        "scope": "entity",
+        "tags": ["e2e", "governance-loop"]
+      },
+      "expect": {
+        "status": 201,
+        "body": { "id": { "$exists": true } }
+      },
+      "outputs": {
+        "policyId": "$.id"
+      }
+    },
+    {
+      "name": "step-8-plato-spec",
+      "description": "PLATO registers a contract spec mapping rim node data to governance checks",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/specs",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "gov-loop-spec-{{$timestamp}}",
+        "specType": "DATA_CONTRACT",
+        "content": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "evidenceId": { "type": "string" },
+              "confidence": { "type": "number" },
+              "metric": { "type": "string" },
+              "value": { "type": "number" }
+            },
+            "required": ["evidenceId", "confidence", "metric", "value"]
+          },
+          "governance": {
+            "minConfidence": 0.75,
+            "maxAgeSeconds": 1800
+          }
+        },
+        "description": "Contract for governance evidence flowing into PLATO",
+        "tags": ["e2e", "governance-loop"]
+      },
+      "expect": {
+        "status": 201,
+        "body": { "status": "DRAFT" }
+      },
+      "outputs": {
+        "specId": "$.id"
+      }
+    },
+    {
+      "name": "step-9-plato-plan",
+      "description": "PLATO creates a governance plan referencing the policy/spec and targeted SYNAPSE action",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "gov-loop-plan-{{$timestamp}}",
+        "planType": "GOVERNANCE_LOOP",
+        "policyId": "{{policyId}}",
+        "steps": [
+          {
+            "name": "validate-evidence",
+            "action": {
+              "type": "VALIDATE",
+              "parameters": {
+                "specId": "{{specId}}",
+                "rimNodeId": "{{rimNodeId}}",
+                "mode": "DRY_RUN"
+              }
+            }
+          },
+          {
+            "name": "execute-synapse",
+            "dependsOn": ["validate-evidence"],
+            "action": {
+              "type": "EXECUTE",
+              "synapseAction": {
+                "toolId": "synapse-governance-tester",
+                "actionType": "QUERY",
+                "parameters": {
+                  "targetId": "{{rimNodeId}}",
+                  "operation": "stabilize",
+                  "reason": "governance-loop"
+                }
+              }
+            }
+          }
+        ],
+        "description": "Governance loop validation plan routed through SYNAPSE",
+        "tags": ["e2e", "governance-loop"]
+      },
+      "expect": {
+        "status": 201,
+        "body": { "status": "PENDING" }
+      },
+      "outputs": {
+        "planId": "$.id"
+      }
+    },
+    {
+      "name": "step-10-plato-execute",
+      "description": "PLATO triggers execution (SYNAPSE receives action)",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans/{{planId}}/execute",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "mode": "DRY_RUN"
+      },
+      "expect": {
+        "status": 202,
+        "body": { "status": "EXECUTING" }
+      },
+      "outputs": {
+        "executionId": "$.executionId"
+      }
+    },
+    {
+      "name": "step-11-wait-synapse",
+      "type": "wait",
+      "duration_seconds": 6,
+      "description": "Allow SYNAPSE action worker to process request"
+    },
+    {
+      "name": "step-12-synapse-verify",
+      "description": "SYNAPSE surfaces the governance action submitted by PLATO",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "planId": "{{planId}}",
+        "limit": 5
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true,
+      "outputs": {
+        "actionId": "$.content[0].actionId"
+      }
+    },
+    {
+      "name": "step-13-plan-status",
+      "description": "PLATO plan transitions towards COMPLETED or PARTIAL",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans/{{planId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": { "status": ["COMPLETED", "EXECUTING", "PARTIAL"] }
+      }
+    },
+    {
+      "name": "step-14-nexus-learning-feedback",
+      "description": "NEXUS records learning signal referencing plan outcome",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/learning/signal",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "GOVERNANCE_LOOP",
+        "entityId": "{{rimNodeId}}",
+        "planId": "{{planId}}",
+        "outcome": "SUCCESS",
+        "metrics": {
+          "coherenceScore": "{{coherenceScore}}",
+          "executionLatencyMs": 400
+        },
+        "feedback": {
+          "policyGuardrailsRespected": true
+        }
+      },
+      "expect": {
+        "status": [200, 202]
+      },
+      "optional": true
+    },
+    {
+      "name": "step-15-nexus-reasoning",
+      "description": "NEXUS reasoning query reflects updated learning state",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/api/v1/reasoning/inferences",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "entityId": "{{rimNodeId}}",
+        "limit": 5
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      { "description": "PERCEPTION signal accepted", "step": "step-1-perception-ingest", "condition": "status in [201,202]" },
+      { "description": "CAPSULE persisted evidence", "step": "step-4-verify-capsule", "condition": "status == 200" },
+      { "description": "NEXUS fused timeline", "step": "step-6-nexus-temporal-fusion", "condition": "status == 200" },
+      { "description": "PLATO policy created", "step": "step-7-plato-governance-policy", "condition": "status == 201" },
+      { "description": "PLATO plan executing", "step": "step-10-plato-execute", "condition": "status == 202" },
+      { "description": "Plan status progressed", "step": "step-13-plan-status", "condition": "status == 200" }
+    ],
+    "slo_targets": {
+      "total_duration_ms": 90000,
+      "perception_ingest_p99_ms": 2000,
+      "capsule_persistence_p99_ms": 3000,
+      "nexus_temporal_latency_ms": 2500,
+      "plato_plan_submission_ms": 3500,
+      "synapse_action_ack_ms": 5000
+    }
+  },
+  "cleanup": {
+    "enabled": true,
+    "steps": [
+      {
+        "name": "cleanup-plan",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/plans/{{planId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      },
+      {
+        "name": "cleanup-policy",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/policies/{{policyId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      },
+      {
+        "name": "cleanup-spec",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/specs/{{specId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      }
+    ]
+  }
+}

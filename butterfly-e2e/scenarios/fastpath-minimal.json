@@ -1,0 +1,16 @@
+{
+  "rim_node_id": "rim:entity:finance:BTCUSD",
+  "vector_timestamp": {
+    "event_ts_ms": 1737746400000,
+    "ingest_ts_ms": 1737746400050,
+    "logical_clock": 0
+  },
+  "critical_metrics": {
+    "stress": 0.42
+  },
+  "status": "OK",
+  "metadata": {
+    "source": "butterfly-e2e",
+    "scenario": "minimal-ok"
+  }
+}

@@ -1,0 +1,197 @@
+{
+  "name": "chaos-odyssey-degraded",
+  "description": "Chaos scenario: ODYSSEY returns slow/partial responses, verify NEXUS fallback behavior",
+  "version": "1.0.0",
+  "mode": "negative",
+  "target": "nexus",
+  "category": "chaos",
+  "fault_injection": {
+    "type": "latency_injection",
+    "target_service": "odyssey",
+    "latency_ms": 5000,
+    "error_rate": 0.5,
+    "duration_seconds": 45
+  },
+  "timeout_seconds": 90,
+  "steps": [
+    {
+      "name": "baseline-nexus-query",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "entityId": "chaos:odyssey-degraded-test",
+        "timeframe": {
+          "lookback": "PT1H",
+          "lookahead": "PT30M"
+        },
+        "includeSources": ["capsule", "perception", "odyssey"]
+      },
+      "expect": {
+        "status": 200
+      },
+      "outputs": {
+        "baselineCoherence": "$.coherenceScore"
+      }
+    },
+    {
+      "name": "inject-odyssey-degradation",
+      "type": "chaos",
+      "action": "latency_injection",
+      "service": "odyssey",
+      "config": {
+        "latency_ms": 5000,
+        "error_rate": 0.5,
+        "response_headers": {
+          "X-Degraded": "true"
+        }
+      }
+    },
+    {
+      "name": "query-during-degradation",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "entityId": "chaos:odyssey-degraded-test",
+        "timeframe": {
+          "lookback": "PT1H",
+          "lookahead": "PT30M"
+        },
+        "includeSources": ["capsule", "perception", "odyssey"]
+      },
+      "expect": {
+        "status": [200, 206, 503],
+        "timeout_ms": 15000
+      }
+    },
+    {
+      "name": "verify-graceful-degradation",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/inference/cross-system",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "query": {
+          "type": "CAUSAL_CHAIN",
+          "entities": ["chaos:odyssey-degraded-test"],
+          "depth": 2
+        },
+        "options": {
+          "allowPartialResults": true,
+          "timeout": 10000
+        }
+      },
+      "expect": {
+        "status": [200, 206],
+        "body": {
+          "partial": { "$exists": true }
+        }
+      }
+    },
+    {
+      "name": "check-fallback-behavior",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/synthesis/options",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "context": {
+          "entityId": "chaos:odyssey-degraded-test",
+          "urgency": "NORMAL"
+        },
+        "constraints": {
+          "maxOptions": 3,
+          "riskTolerance": "MEDIUM"
+        }
+      },
+      "expect": {
+        "status": [200, 206, 503]
+      }
+    },
+    {
+      "name": "verify-metrics-captured",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/actuator/prometheus",
+      "expect": {
+        "status": 200,
+        "body_contains": ["nexus_odyssey_requests", "nexus_fallback_activated"]
+      },
+      "optional": true
+    },
+    {
+      "name": "remove-odyssey-degradation",
+      "type": "chaos",
+      "action": "restore",
+      "service": "odyssey"
+    },
+    {
+      "name": "wait-for-recovery",
+      "type": "wait",
+      "duration_seconds": 10,
+      "description": "Wait for ODYSSEY to recover"
+    },
+    {
+      "name": "verify-recovery",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "entityId": "chaos:odyssey-degraded-test",
+        "timeframe": {
+          "lookback": "PT1H",
+          "lookahead": "PT30M"
+        },
+        "includeSources": ["capsule", "perception", "odyssey"]
+      },
+      "expect": {
+        "status": 200
+      }
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "NEXUS continues to respond during ODYSSEY degradation",
+        "step": "query-during-degradation",
+        "condition": "status in [200, 206, 503]"
+      },
+      {
+        "description": "NEXUS provides partial results when possible",
+        "step": "verify-graceful-degradation",
+        "condition": "status in [200, 206]"
+      },
+      {
+        "description": "NEXUS recovers fully after ODYSSEY is restored",
+        "step": "verify-recovery",
+        "condition": "status == 200"
+      }
+    ],
+    "resilience_targets": {
+      "graceful_degradation": true,
+      "partial_results_supported": true,
+      "fallback_activated": true,
+      "auto_recovery": true
+    }
+  }
+}
+

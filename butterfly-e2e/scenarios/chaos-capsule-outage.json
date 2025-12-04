@@ -1,0 +1,326 @@
+{
+  "name": "chaos-capsule-outage",
+  "description": "Chaos scenario: Force CAPSULE API outage and observe NEXUS temporal degradations + automated DLQ recovery.",
+  "version": "2.0.0",
+  "mode": "negative",
+  "target": "capsule,nexus,perception",
+  "category": "chaos",
+  "tags": ["resilience", "dlq", "recovery", "scaling"],
+  "fault_injection": {
+    "type": "service_unavailable",
+    "target_service": "capsule",
+    "http_status": 503,
+    "duration_seconds": 180
+  },
+  "timeout_seconds": 360,
+  "resilience_hooks": {
+    "dlq_replay": {
+      "enabled": true,
+      "topics": [
+        "perception.events.dlq",
+        "perception.signals.dlq"
+      ],
+      "trigger_after_recovery": true,
+      "max_records": 1000,
+      "rate_limit_per_second": 100,
+      "success_rate_slo": 93
+    },
+    "scaling_validation": {
+      "enabled": true,
+      "namespace": "perception",
+      "metrics": [
+        "cpu_utilization",
+        "memory_utilization",
+        "kafka_consumer_lag",
+        "event_processing_latency_p95_ms"
+      ],
+      "validate_hpa_reaction": true,
+      "reaction_timeout_minutes": 2
+    },
+    "circuit_breaker_monitoring": {
+      "enabled": true,
+      "expected_state_during_outage": "OPEN",
+      "expected_state_after_recovery": "CLOSED",
+      "recovery_timeout_seconds": 60
+    }
+  },
+  "steps": [
+    {
+      "name": "capture-baseline-metrics",
+      "type": "metrics",
+      "action": "capture_baseline",
+      "description": "Record baseline metrics before chaos injection",
+      "metrics": {
+        "prometheus_queries": [
+          {
+            "name": "cpu_utilization",
+            "query": "avg(rate(container_cpu_usage_seconds_total{namespace=\"perception\"}[5m])) * 100"
+          },
+          {
+            "name": "kafka_consumer_lag",
+            "query": "sum(kafka_consumer_group_lag{consumer_group=~\"perception-.*\"})"
+          },
+          {
+            "name": "dlq_depth",
+            "query": "sum(kafka_consumer_group_lag{topic=~\".*dlq.*\"})"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verify-initial-health",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "name": "inject-capsule-outage",
+      "type": "chaos",
+      "action": "service_unavailable",
+      "service": "capsule",
+      "config": {
+        "http_status": 503,
+        "response_body": {
+          "error": "capsule_unavailable",
+          "message": "CAPSULE API intentionally offline for chaos testing"
+        }
+      }
+    },
+    {
+      "name": "publish-events-during-outage",
+      "type": "load",
+      "action": "kafka_publish_batch",
+      "topic": "perception.events",
+      "count": 100,
+      "interval_ms": 100,
+      "template": {
+        "header": {
+          "eventId": "{{uuid}}",
+          "timestamp": "{{now}}",
+          "sourceSystem": "perception-chaos-test"
+        },
+        "detectionResult": {
+          "detectorId": "chaos-detector",
+          "detectionType": "ANOMALY",
+          "entities": ["rim:chaos:capsule:{{sequence}}"],
+          "metadata": {"chaos_test": true}
+        }
+      }
+    },
+    {
+      "name": "nexus-temporal-query-during-outage",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/temporal/slice",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "chaos-test"
+      },
+      "body": {
+        "entityId": "rim:entity:chaos:gov-loop",
+        "timeframe": {
+          "lookback": "PT1H",
+          "lookahead": "PT10M"
+        },
+        "includeSources": ["perception", "capsule"],
+        "requireGovernanceView": true
+      },
+      "expect": {
+        "status": [200, 206, 503],
+        "body": {
+          "coherenceScore": {"$gte": 0.1}
+        }
+      },
+      "optional": true,
+      "capture": {
+        "degraded_response": "$"
+      }
+    },
+    {
+      "name": "verify-circuit-breaker-opens",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/actuator/health/circuitBreakers",
+      "expect": {
+        "status": [200],
+        "body": {
+          "components.capsule-detection.status": {"$in": ["OPEN", "HALF_OPEN"]}
+        }
+      },
+      "optional": true
+    },
+    {
+      "name": "check-dlq-accumulation",
+      "type": "metrics",
+      "action": "query",
+      "description": "Verify DLQ is receiving failed messages",
+      "query": "sum(kafka_consumer_group_lag{topic=~\".*dlq.*\"})",
+      "expect": {
+        "value": {"$gte": 50}
+      },
+      "optional": true
+    },
+    {
+      "name": "wait-for-outage-duration",
+      "type": "wait",
+      "duration_seconds": 30,
+      "description": "Allow outage effects to propagate"
+    },
+    {
+      "name": "remove-capsule-outage",
+      "type": "chaos",
+      "action": "restore",
+      "service": "capsule"
+    },
+    {
+      "name": "wait-for-recovery",
+      "type": "wait",
+      "duration_seconds": 15,
+      "description": "Allow CAPSULE to recover"
+    },
+    {
+      "name": "verify-capsule-recovers",
+      "service": "capsule",
+      "method": "GET",
+      "endpoint": "/actuator/health",
+      "expect": {
+        "status": 200
+      },
+      "retries": 3,
+      "retry_delay_seconds": 5
+    },
+    {
+      "name": "trigger-automated-dlq-replay",
+      "type": "dlq_replay",
+      "action": "trigger",
+      "description": "Automatically replay DLQ messages after recovery",
+      "config": {
+        "perception_url": "{{perception_url}}",
+        "topics": ["perception.events.dlq", "perception.signals.dlq"],
+        "target": "RAW",
+        "dry_run": false,
+        "max_records": 500,
+        "rate_limit_per_second": 50,
+        "operator": "chaos-test-automation",
+        "ticket": "CHAOS-CAPSULE-OUTAGE-{{timestamp}}",
+        "reason": "Automated DLQ replay after CAPSULE outage recovery"
+      },
+      "expect": {
+        "success_rate": {"$gte": 93}
+      }
+    },
+    {
+      "name": "wait-for-dlq-processing",
+      "type": "wait",
+      "duration_seconds": 20,
+      "description": "Allow DLQ replay to complete"
+    },
+    {
+      "name": "verify-circuit-breaker-closes",
+      "service": "nexus",
+      "method": "GET",
+      "endpoint": "/actuator/health/circuitBreakers",
+      "expect": {
+        "status": [200],
+        "body": {
+          "components.capsule-detection.status": "CLOSED"
+        }
+      },
+      "optional": true,
+      "retries": 5,
+      "retry_delay_seconds": 10
+    },
+    {
+      "name": "validate-scaling-metrics",
+      "type": "scaling_validation",
+      "action": "validate",
+      "description": "Verify scaling reactions met SLOs",
+      "config": {
+        "prometheus_url": "{{prometheus_url}}",
+        "namespace": "perception",
+        "checks": [
+          {
+            "metric": "kafka_consumer_lag",
+            "expect": {"$lte": 100},
+            "description": "Consumer lag returned to normal"
+          },
+          {
+            "metric": "circuit_breakers_open",
+            "expect": {"$eq": 0},
+            "description": "All circuit breakers closed"
+          }
+        ]
+      }
+    },
+    {
+      "name": "verify-dlq-drained",
+      "type": "metrics",
+      "action": "query",
+      "description": "Verify DLQ was successfully drained",
+      "query": "sum(kafka_consumer_group_lag{topic=~\".*dlq.*\"})",
+      "expect": {
+        "value": {"$lte": 10}
+      },
+      "optional": true
+    },
+    {
+      "name": "capture-final-metrics",
+      "type": "metrics",
+      "action": "capture_final",
+      "description": "Record final metrics after recovery"
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      {
+        "description": "NEXUS surfaces partial data with CAPSULE offline",
+        "step": "nexus-temporal-query-during-outage",
+        "condition": "status in [200,206]"
+      },
+      {
+        "description": "CAPSULE health returns to UP state within 60s",
+        "step": "verify-capsule-recovers",
+        "condition": "status == 200"
+      },
+      {
+        "description": "DLQ replay achieves >= 93% success rate",
+        "step": "trigger-automated-dlq-replay",
+        "condition": "success_rate >= 93"
+      },
+      {
+        "description": "Circuit breaker recovers to CLOSED state",
+        "step": "verify-circuit-breaker-closes",
+        "condition": "components.capsule-detection.status == CLOSED"
+      }
+    ],
+    "resilience_targets": {
+      "dlq_active": true,
+      "dlq_success_rate_slo": 93,
+      "message_loss_rate_slo": 1,
+      "nexus_fallback_enabled": true,
+      "capsule_recovery_seconds_slo": 60,
+      "circuit_breaker_recovery_seconds": 60,
+      "scaling_reaction_minutes": 2
+    },
+    "slo": {
+      "recovery_time_seconds": 60,
+      "dlq_replay_success_rate": 93,
+      "message_loss_percent": 1,
+      "circuit_breaker_recovery_seconds": 60
+    }
+  },
+  "teardown": {
+    "clear_faults": true,
+    "cleanup_dlq": false,
+    "restore_circuit_breakers": true
+  },
+  "reporting": {
+    "include_metrics_diff": true,
+    "include_dlq_stats": true,
+    "include_scaling_analysis": true,
+    "export_prometheus_metrics": true
+  }
+}
