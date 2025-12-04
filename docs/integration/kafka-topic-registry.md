@@ -65,6 +65,20 @@ The BUTTERFLY ecosystem uses Apache Kafka for event-driven communication between
 | `plato.specs` | `PlatoEvent.avsc` | PLATO | 90d | 6 | Governance specifications and updates |
 | `plato.decisions` | `PlatoEvent.avsc` | PLATO | 90d | 6 | Governance decision outcomes |
 | `plato.validations` | `PlatoEvent.avsc` | PLATO | 30d | 6 | Validation results from PLATO rules |
+| `plato.plan.execution.feedback` | JSON | PLATO | 30d | 6 | Plan execution feedback with conditions, actions, and metrics |
+
+### SYNAPSE Topics
+
+| Topic | Schema | Owner | Retention | Partitions | Description |
+|-------|--------|-------|-----------|------------|-------------|
+| `synapse.action.execution.feedback` | JSON | SYNAPSE | 30d | 6 | Action execution feedback with decision context and metrics |
+
+### Policy Learning Topics (Cross-System)
+
+| Topic | Schema | Owner | Retention | Partitions | Description |
+|-------|--------|-------|-----------|------------|-------------|
+| `nexus.policy.parameterizations` | JSON | NEXUS | 30d | 6 | Learned policy parameter suggestions from NEXUS to PLATO |
+| `nexus.experiment.designs` | JSON | NEXUS | 30d | 6 | A/B test design suggestions from NEXUS to PLATO |
 
 ## Schema Registry
 
@@ -115,10 +129,14 @@ DLQ messages include error context:
 | `nexus-perception-consumer` | NEXUS | `perception.*` |
 | `nexus-capsule-consumer` | NEXUS | `capsule.*` |
 | `nexus-odyssey-consumer` | NEXUS | `odyssey.*` |
+| `nexus-plato-execution-feedback-consumer` | NEXUS | `plato.plan.execution.feedback` |
+| `nexus-synapse-execution-feedback-consumer` | NEXUS | `synapse.action.execution.feedback` |
 | `perception-rim-consumer` | PERCEPTION | `rim.fast-path` |
 | `capsule-events-consumer` | CAPSULE | `perception.events.*` |
 | `odyssey-paths-consumer` | ODYSSEY | `nexus.temporal.*` |
 | `plato-governance-consumer` | PLATO | `nexus.synthesis.options`, `nexus.reasoning.hypotheses` |
+| `plato-nexus-parameterizations` | PLATO | `nexus.policy.parameterizations` |
+| `plato-nexus-experiments` | PLATO | `nexus.experiment.designs` |
 
 ## Idempotency Configuration
 
