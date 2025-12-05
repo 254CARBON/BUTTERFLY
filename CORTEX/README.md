@@ -71,11 +71,21 @@ CORTEX is the AI agent orchestration layer for the BUTTERFLY ecosystem. It provi
 
 ### Safety Features
 
-- Token budget enforcement per task/conversation
+- Token budget enforcement per task/conversation/daily limits
+- Execution quota management (per user, agent, namespace)
 - Output validation and guardrails
 - PII detection and content filtering
 - Tool call sandboxing with timeouts
 - Governance checks via PLATO
+- Automatic rate limiting
+
+### Agent Service Capabilities
+
+- Full agent lifecycle management (create, update, delete, suspend/activate)
+- Task submission with streaming thought support via Reactor Sinks
+- Conversation management with episodic memory integration
+- Real-time WebSocket streaming of agent reasoning
+- Kafka-based async task processing for high-throughput scenarios
 
 ## Quick Start
 
@@ -142,7 +152,48 @@ export CAPSULE_URL=http://localhost:8081
 
 ### WebSocket
 
-Connect to `/ws/agents/{taskId}` for real-time thought streaming.
+Connect to `/ws/agents` for real-time agent interaction and thought streaming.
+
+#### Message Types
+
+**Client → Server:**
+```json
+// Subscribe to task updates
+{ "type": "subscribe", "taskId": "task-123" }
+
+// Unsubscribe from task
+{ "type": "unsubscribe", "taskId": "task-123" }
+
+// Execute a task
+{ "type": "execute", "agentId": "agent-456", "input": "What is 2+2?", "conversationId": "conv-789" }
+
+// Cancel a running task
+{ "type": "cancel", "taskId": "task-123" }
+
+// Heartbeat
+{ "type": "ping" }
+```
+
+**Server → Client:**
+```json
+// Task started
+{ "type": "task_started", "taskId": "task-123", "data": { "agentId": "agent-456" } }
+
+// Agent thought (reasoning, tool call, etc.)
+{ "type": "thought", "taskId": "task-123", "data": { "type": "REASONING", "content": "..." } }
+
+// Task completed
+{ "type": "task_completed", "taskId": "task-123" }
+
+// Error
+{ "type": "error", "error": "Error message" }
+
+// Acknowledgment
+{ "type": "ack", "data": { "message": "Subscribed to task: task-123" } }
+
+// Heartbeat response
+{ "type": "pong", "timestamp": "2024-01-15T10:30:00Z" }
+```
 
 ### Kafka Topics
 
@@ -208,12 +259,40 @@ mvn clean package
 ### Testing
 
 ```bash
-# Unit tests
+# Run all unit tests
 mvn test
 
-# Integration tests
+# Run integration tests (requires Docker for Testcontainers)
 mvn verify -Pintegration-tests
+
+# Run a specific test class
+mvn test -Dtest=AgentServiceImplTest
+
+# Run tests with coverage report
+mvn verify -Pcoverage
 ```
+
+#### Test Coverage
+
+CORTEX includes comprehensive test coverage:
+
+**Unit Tests:**
+- `AgentServiceImplTest` - Agent lifecycle, task execution, conversation management
+- `AgentResultProducerTest` - Kafka message production, metrics validation
+- `TokenBudgetEnforcerTest` - Budget creation, checking, usage recording
+- `ExecutionQuotaManagerTest` - User/agent/namespace quotas, rate limiting
+
+**Integration Tests:**
+- `AgentControllerIntegrationTest` - REST API validation with WebTestClient
+- `AgentWebSocketHandlerTest` - WebSocket message routing, streaming
+
+**Test Configuration:**
+- `CortexTestConfiguration` - Testcontainers setup for Redis, Kafka
+- `application-test.yml` - Test-specific configuration
+
+All integration tests use Testcontainers for:
+- Redis (episodic memory, quotas, rate limiting)
+- Kafka (async task processing, result publishing)
 
 ### Code Style
 
