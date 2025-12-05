@@ -1,5 +1,6 @@
 package com.z254.butterfly.aurora.stream;
 
+import com.z254.butterfly.aurora.domain.model.AnomalySignal;
 import lombok.Builder;
 import lombok.Data;
 
@@ -22,7 +23,7 @@ public class EnrichedAnomalyBatch {
     private String componentKey;
     
     /** Raw anomaly events */
-    private List<Object> anomalies;
+    private List<AnomalySignal> anomalies;
     
     /** Maximum severity across anomalies */
     private double maxSeverity;

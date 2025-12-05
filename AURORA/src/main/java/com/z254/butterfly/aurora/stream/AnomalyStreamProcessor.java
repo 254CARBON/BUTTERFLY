@@ -1,6 +1,10 @@
 package com.z254.butterfly.aurora.stream;
 
 import com.z254.butterfly.aurora.config.AuroraProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.z254.butterfly.aurora.domain.model.AnomalySignal;
 import com.z254.butterfly.aurora.observability.AuroraMetrics;
 import com.z254.butterfly.aurora.observability.AuroraStructuredLogger;
 import io.confluent.kafka.streams.serdes.avro.SpecificAvroSerde;
@@ -11,6 +15,7 @@ import org.apache.kafka.streams.kstream.*;
 import org.apache.kafka.streams.state.Stores;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+import org.springframework.kafka.support.serializer.JsonSerde;
 
 import java.time.Duration;
 import java.util.*;
@@ -34,6 +39,7 @@ public class AnomalyStreamProcessor {
     private final EnrichmentPipeline enrichmentPipeline;
     private final AuroraMetrics metrics;
     private final AuroraStructuredLogger logger;
+    private final IncidentIngestionService incidentIngestionService;
     private final Map<String, Object> serdeConfig;
 
     // State store names
@@ -44,11 +50,13 @@ public class AnomalyStreamProcessor {
                                    EnrichmentPipeline enrichmentPipeline,
                                    AuroraMetrics metrics,
                                    AuroraStructuredLogger logger,
+                                   IncidentIngestionService incidentIngestionService,
                                    Map<String, Object> serdeConfig) {
         this.auroraProperties = auroraProperties;
         this.enrichmentPipeline = enrichmentPipeline;
         this.metrics = metrics;
         this.logger = logger;
+        this.incidentIngestionService = incidentIngestionService;
         this.serdeConfig = serdeConfig;
     }
 
@@ -75,6 +83,9 @@ public class AnomalyStreamProcessor {
                         Serdes.String()
                 )
         );
+
+        JsonSerde<EnrichedAnomalyBatch> enrichedSerde = new JsonSerde<>(EnrichedAnomalyBatch.class);
+        enrichedSerde.deserializer().addTrustedPackages("*");
 
         // Source: Consume anomaly events from PERCEPTION
         KStream<String, Object> anomalyStream = builder
@@ -124,9 +135,9 @@ public class AnomalyStreamProcessor {
 
         // Step 7: Output to enriched topic for RCA
         enrichedStream
-                .mapValues(this::toAvroFormat)
-                .to(topics.getAnomaliesEnriched(), 
-                        Produced.with(Serdes.String(), anomalySerde)
+                .peek((key, batch) -> incidentIngestionService.process(batch))
+                .to(topics.getAnomaliesEnriched(),
+                        Produced.with(Serdes.String(), enrichedSerde)
                                 .withName("enriched-anomaly-sink"));
 
         // Error handling: DLQ for failed processing
@@ -140,63 +151,36 @@ public class AnomalyStreamProcessor {
      * Groups by component to correlate related anomalies.
      */
     private String extractGroupKey(Object anomalyEvent) {
-        try {
-            // Use reflection or Avro-specific access to get rimNodeId
-            // In production, this would use the generated Avro class
-            if (anomalyEvent instanceof org.apache.avro.generic.GenericRecord record) {
-                Object rimNodeId = record.get("rimNodeId");
-                if (rimNodeId != null) {
-                    return rimNodeId.toString();
-                }
+        if (anomalyEvent instanceof org.apache.avro.generic.GenericRecord record) {
+            Object rimNodeId = record.get("rimNodeId");
+            if (rimNodeId != null) {
+                return rimNodeId.toString();
             }
-            return "unknown";
-        } catch (Exception e) {
-            log.warn("Failed to extract group key from anomaly event", e);
-            return "unknown";
         }
-    }
-
-    /**
-     * Convert enriched batch to Avro format for output.
-     */
-    private Object toAvroFormat(EnrichedAnomalyBatch batch) {
-        // Convert to Avro record format
-        // In production, use generated Avro classes
-        return batch;
+        return "unknown";
     }
 
     /**
      * Aggregator for windowed anomalies.
      */
     public static class AnomalyAggregate {
-        private final List<Object> anomalies = new ArrayList<>();
+        private final List<AnomalySignal> anomalies = new ArrayList<>();
         private double maxSeverity = 0.0;
         private Set<String> affectedComponents = new HashSet<>();
         private long firstTimestamp = Long.MAX_VALUE;
         private long lastTimestamp = 0;
 
         public AnomalyAggregate add(Object anomaly) {
-            anomalies.add(anomaly);
-            
-            // Extract severity and update max
             if (anomaly instanceof org.apache.avro.generic.GenericRecord record) {
-                Object severity = record.get("severity");
-                if (severity instanceof Number) {
-                    maxSeverity = Math.max(maxSeverity, ((Number) severity).doubleValue());
-                }
-                
-                Object components = record.get("affectedComponents");
-                if (components instanceof List<?> list) {
-                    list.forEach(c -> affectedComponents.add(c.toString()));
-                }
-                
-                Object timestamp = record.get("timestamp");
-                if (timestamp instanceof Long ts) {
-                    firstTimestamp = Math.min(firstTimestamp, ts);
-                    lastTimestamp = Math.max(lastTimestamp, ts);
+                AnomalySignal signal = AnomalySignal.fromRecord(record);
+                if (signal != null) {
+                    anomalies.add(signal);
+                    maxSeverity = Math.max(maxSeverity, signal.getSeverity());
+                    affectedComponents.addAll(signal.getAffectedComponents());
+                    firstTimestamp = Math.min(firstTimestamp, signal.getTimestamp());
+                    lastTimestamp = Math.max(lastTimestamp, signal.getTimestamp());
                 }
             }
-            
             return this;
         }
 
@@ -204,7 +188,7 @@ public class AnomalyStreamProcessor {
             return anomalies.size();
         }
 
-        public List<Object> getAnomalies() {
+        public List<AnomalySignal> getAnomalies() {
             return anomalies;
         }
 
@@ -232,18 +216,34 @@ public class AnomalyStreamProcessor {
 
     // Placeholder serializers - would be properly implemented in production
     public static class AnomalyAggregateSerializer implements org.apache.kafka.common.serialization.Serializer<AnomalyAggregate> {
+        private static final ObjectMapper MAPPER = new ObjectMapper().registerModule(new JavaTimeModule());
+
         @Override
         public byte[] serialize(String topic, AnomalyAggregate data) {
-            // Implement proper serialization
-            return new byte[0];
+            if (data == null) {
+                return null;
+            }
+            try {
+                return MAPPER.writeValueAsBytes(data);
+            } catch (JsonProcessingException e) {
+                throw new org.apache.kafka.common.errors.SerializationException("Failed to serialize aggregate", e);
+            }
         }
     }
 
     public static class AnomalyAggregateDeserializer implements org.apache.kafka.common.serialization.Deserializer<AnomalyAggregate> {
+        private static final ObjectMapper MAPPER = new ObjectMapper().registerModule(new JavaTimeModule());
+
         @Override
         public AnomalyAggregate deserialize(String topic, byte[] data) {
-            // Implement proper deserialization
-            return new AnomalyAggregate();
+            if (data == null || data.length == 0) {
+                return new AnomalyAggregate();
+            }
+            try {
+                return MAPPER.readValue(data, AnomalyAggregate.class);
+            } catch (Exception e) {
+                throw new org.apache.kafka.common.errors.SerializationException("Failed to deserialize aggregate", e);
+            }
         }
     }
 }

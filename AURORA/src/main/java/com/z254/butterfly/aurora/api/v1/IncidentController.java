@@ -5,6 +5,7 @@ import com.z254.butterfly.aurora.api.dto.IncidentListResponse;
 import com.z254.butterfly.aurora.api.mapper.IncidentMapper;
 import com.z254.butterfly.aurora.domain.model.Incident;
 import com.z254.butterfly.aurora.domain.model.RcaHypothesis;
+import com.z254.butterfly.aurora.domain.service.IncidentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -15,7 +16,6 @@ import reactor.core.publisher.Mono;
 
 import java.time.Instant;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * REST API controller for incident management.
@@ -26,8 +26,11 @@ import java.util.concurrent.ConcurrentHashMap;
 @Tag(name = "Incidents", description = "Incident management and querying")
 public class IncidentController {
 
-    // In-memory storage (replace with repository in production)
-    private final Map<String, Incident> incidents = new ConcurrentHashMap<>();
+    private final IncidentService incidentService;
+
+    public IncidentController(IncidentService incidentService) {
+        this.incidentService = incidentService;
+    }
 
     @GetMapping
     @Operation(summary = "List incidents", description = "List incidents with optional filters")
@@ -44,23 +47,16 @@ public class IncidentController {
             @RequestParam(defaultValue = "20") int size) {
 
         return Mono.fromCallable(() -> {
-            List<Incident> filtered = incidents.values().stream()
-                    .filter(i -> status == null || i.getStatus().name().equals(status))
-                    .filter(i -> component == null || 
-                            i.getPrimaryComponent().contains(component) ||
-                            i.getAffectedComponents().stream().anyMatch(c -> c.contains(component)))
-                    .filter(i -> priority == null || i.getPriority() == priority)
-                    .sorted(Comparator.comparing(Incident::getCreatedAt).reversed())
+            List<Incident> filtered = incidentService.listIncidents(status, component, priority);
+
+            long total = filtered.size();
+            List<Incident> paged = filtered.stream()
                     .skip((long) page * size)
                     .limit(size)
                     .toList();
 
-            long total = incidents.values().stream()
-                    .filter(i -> status == null || i.getStatus().name().equals(status))
-                    .count();
-
             return ResponseEntity.ok(IncidentListResponse.builder()
-                    .incidents(filtered.stream().map(IncidentMapper::toDto).toList())
+                    .incidents(paged.stream().map(IncidentMapper::toDto).toList())
                     .total(total)
                     .page(page)
                     .size(size)
@@ -73,7 +69,7 @@ public class IncidentController {
     public Mono<ResponseEntity<IncidentDto>> getIncident(
             @Parameter(description = "Incident ID") @PathVariable String id) {
 
-        return Mono.justOrEmpty(incidents.get(id))
+        return Mono.justOrEmpty(incidentService.getIncident(id))
                 .map(IncidentMapper::toDto)
                 .map(ResponseEntity::ok)
                 .defaultIfEmpty(ResponseEntity.notFound().build());
@@ -84,7 +80,7 @@ public class IncidentController {
     public Mono<ResponseEntity<List<RcaHypothesis>>> getIncidentRca(
             @Parameter(description = "Incident ID") @PathVariable String id) {
 
-        return Mono.justOrEmpty(incidents.get(id))
+        return Mono.justOrEmpty(incidentService.getIncident(id))
                 .map(incident -> ResponseEntity.ok(incident.getHypotheses()))
                 .defaultIfEmpty(ResponseEntity.notFound().build());
     }
@@ -95,7 +91,7 @@ public class IncidentController {
     public Mono<ResponseEntity<List<Incident.RemediationRecord>>> getIncidentRemediations(
             @Parameter(description = "Incident ID") @PathVariable String id) {
 
-        return Mono.justOrEmpty(incidents.get(id))
+        return Mono.justOrEmpty(incidentService.getIncident(id))
                 .map(incident -> ResponseEntity.ok(incident.getRemediationHistory()))
                 .defaultIfEmpty(ResponseEntity.notFound().build());
     }
@@ -105,7 +101,7 @@ public class IncidentController {
     public Mono<ResponseEntity<List<Incident.TimelineEvent>>> getIncidentTimeline(
             @Parameter(description = "Incident ID") @PathVariable String id) {
 
-        return Mono.justOrEmpty(incidents.get(id))
+        return Mono.justOrEmpty(incidentService.getIncident(id))
                 .map(incident -> ResponseEntity.ok(incident.getTimeline()))
                 .defaultIfEmpty(ResponseEntity.notFound().build());
     }
@@ -116,11 +112,9 @@ public class IncidentController {
             @Parameter(description = "Incident ID") @PathVariable String id,
             @RequestBody ResolveRequest request) {
 
-        return Mono.justOrEmpty(incidents.get(id))
-                .map(incident -> {
-                    incident.resolve(request.getResolution());
-                    return ResponseEntity.ok(IncidentMapper.toDto(incident));
-                })
+        return incidentService.resolveIncident(id, request.getResolution())
+                .map(IncidentMapper::toDto)
+                .map(ResponseEntity::ok)
                 .defaultIfEmpty(ResponseEntity.notFound().build());
     }
 
@@ -130,13 +124,9 @@ public class IncidentController {
             @Parameter(description = "Incident ID") @PathVariable String id,
             @RequestBody EscalateRequest request) {
 
-        return Mono.justOrEmpty(incidents.get(id))
-                .map(incident -> {
-                    incident.setStatus(Incident.IncidentStatus.ESCALATED);
-                    incident.addTimelineEvent(Incident.TimelineEventType.ESCALATED, 
-                            request.getReason());
-                    return ResponseEntity.ok(IncidentMapper.toDto(incident));
-                })
+        return incidentService.escalateIncident(id, request.getReason())
+                .map(IncidentMapper::toDto)
+                .map(ResponseEntity::ok)
                 .defaultIfEmpty(ResponseEntity.notFound().build());
     }
 
@@ -146,18 +136,10 @@ public class IncidentController {
             @Parameter(description = "Incident ID") @PathVariable String id,
             @RequestBody CommentRequest request) {
 
-        return Mono.justOrEmpty(incidents.get(id))
-                .map(incident -> {
-                    incident.addTimelineEvent(Incident.TimelineEventType.COMMENT, 
-                            request.getComment());
-                    return ResponseEntity.ok(IncidentMapper.toDto(incident));
-                })
+        return incidentService.addComment(id, request.getComment())
+                .map(IncidentMapper::toDto)
+                .map(ResponseEntity::ok)
                 .defaultIfEmpty(ResponseEntity.notFound().build());
-    }
-
-    // Internal method to store incidents (called by stream processor)
-    public void storeIncident(Incident incident) {
-        incidents.put(incident.getId(), incident);
     }
 
     // ========== Request DTOs ==========

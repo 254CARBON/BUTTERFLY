@@ -1,5 +1,6 @@
 package com.z254.butterfly.aurora.rca;
 
+import com.z254.butterfly.aurora.domain.model.AnomalySignal;
 import com.z254.butterfly.aurora.stream.DependencyContext;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +30,7 @@ public class CausalGraph {
      * @param dependencyContext topology and dependency information
      * @return the constructed component graph
      */
-    public ComponentGraph buildFromAnomalies(List<Object> anomalies, 
+    public ComponentGraph buildFromAnomalies(List<AnomalySignal> anomalies, 
                                               DependencyContext dependencyContext) {
         ComponentGraph graph = new ComponentGraph();
 
@@ -62,47 +63,28 @@ public class CausalGraph {
     /**
      * Extract all affected components from anomalies.
      */
-    private Set<String> extractAffectedComponents(List<Object> anomalies) {
+    private Set<String> extractAffectedComponents(List<AnomalySignal> anomalies) {
         Set<String> components = new HashSet<>();
-        
-        for (Object anomaly : anomalies) {
-            if (anomaly instanceof org.apache.avro.generic.GenericRecord record) {
-                // Get primary component
-                Object rimNodeId = record.get("rimNodeId");
-                if (rimNodeId != null) {
-                    components.add(rimNodeId.toString());
-                }
-                
-                // Get affected components array
-                Object affected = record.get("affectedComponents");
-                if (affected instanceof List<?> list) {
-                    for (Object item : list) {
-                        if (item != null) {
-                            components.add(item.toString());
-                        }
-                    }
-                }
+        for (AnomalySignal signal : anomalies) {
+            if (signal.getRimNodeId() != null) {
+                components.add(signal.getRimNodeId());
             }
+            components.addAll(signal.getAffectedComponents());
         }
-        
         return components;
     }
 
     /**
      * Count anomalies for a specific component.
      */
-    private int countAnomaliesForComponent(List<Object> anomalies, String component) {
+    private int countAnomaliesForComponent(List<AnomalySignal> anomalies, String component) {
         int count = 0;
-        for (Object anomaly : anomalies) {
-            if (anomaly instanceof org.apache.avro.generic.GenericRecord record) {
-                Object rimNodeId = record.get("rimNodeId");
-                if (component.equals(String.valueOf(rimNodeId))) {
-                    count++;
-                }
-                Object affected = record.get("affectedComponents");
-                if (affected instanceof List<?> list && list.contains(component)) {
-                    count++;
-                }
+        for (AnomalySignal signal : anomalies) {
+            if (component.equals(signal.getRimNodeId())) {
+                count++;
+            }
+            if (signal.getAffectedComponents().contains(component)) {
+                count++;
             }
         }
         return count;
@@ -111,17 +93,11 @@ public class CausalGraph {
     /**
      * Get maximum severity for a component.
      */
-    private double getMaxSeverityForComponent(List<Object> anomalies, String component) {
+    private double getMaxSeverityForComponent(List<AnomalySignal> anomalies, String component) {
         double maxSeverity = 0.0;
-        for (Object anomaly : anomalies) {
-            if (anomaly instanceof org.apache.avro.generic.GenericRecord record) {
-                Object rimNodeId = record.get("rimNodeId");
-                if (component.equals(String.valueOf(rimNodeId))) {
-                    Object severity = record.get("severity");
-                    if (severity instanceof Number) {
-                        maxSeverity = Math.max(maxSeverity, ((Number) severity).doubleValue());
-                    }
-                }
+        for (AnomalySignal signal : anomalies) {
+            if (component.equals(signal.getRimNodeId())) {
+                maxSeverity = Math.max(maxSeverity, signal.getSeverity());
             }
         }
         return maxSeverity;
@@ -157,16 +133,11 @@ public class CausalGraph {
     /**
      * Add edges based on temporal ordering of anomalies.
      */
-    private void addTemporalEdges(ComponentGraph graph, List<Object> anomalies) {
-        // Sort anomalies by timestamp
+    private void addTemporalEdges(ComponentGraph graph, List<AnomalySignal> anomalies) {
         List<AnomalyTiming> timings = new ArrayList<>();
-        for (Object anomaly : anomalies) {
-            if (anomaly instanceof org.apache.avro.generic.GenericRecord record) {
-                Object timestamp = record.get("timestamp");
-                Object rimNodeId = record.get("rimNodeId");
-                if (timestamp instanceof Long && rimNodeId != null) {
-                    timings.add(new AnomalyTiming(rimNodeId.toString(), (Long) timestamp));
-                }
+        for (AnomalySignal signal : anomalies) {
+            if (signal.getRimNodeId() != null) {
+                timings.add(new AnomalyTiming(signal.getRimNodeId(), signal.getTimestamp()));
             }
         }
         

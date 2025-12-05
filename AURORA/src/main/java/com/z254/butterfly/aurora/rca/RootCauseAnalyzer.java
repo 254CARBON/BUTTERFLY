@@ -63,9 +63,25 @@ public class RootCauseAnalyzer {
      */
     public Flux<RcaHypothesis> analyze(EnrichedAnomalyBatch batch) {
         String incidentId = batch.getIncidentId();
+        return Mono.fromCallable(() -> analyzeBlocking(batch))
+                .flatMapMany(Flux::fromIterable)
+                .doOnComplete(() -> log.debug("RCA analysis completed for incident: {}", incidentId))
+                .doOnError(error -> {
+                    logger.logRcaEvent(incidentId, null,
+                            AuroraStructuredLogger.RcaEventType.ANALYSIS_FAILED,
+                            "RCA analysis failed: " + error.getMessage(),
+                            Map.of("error", error.getClass().getSimpleName()));
+                });
+    }
+
+    /**
+     * Blocking variant used by the streaming ingestion pipeline.
+     */
+    public List<RcaHypothesis> analyzeBlocking(EnrichedAnomalyBatch batch) {
+        String incidentId = batch.getIncidentId();
         Timer.Sample timerSample = metrics.startRcaTimer();
-        
-        logger.logRcaEvent(incidentId, null, 
+
+        logger.logRcaEvent(incidentId, null,
                 AuroraStructuredLogger.RcaEventType.ANALYSIS_STARTED,
                 "Starting RCA analysis",
                 Map.of(
@@ -74,16 +90,12 @@ public class RootCauseAnalyzer {
                         "affectedComponents", batch.getAffectedComponents().size()
                 ));
 
-        return Mono.fromCallable(() -> performAnalysis(batch, incidentId, timerSample))
-                .flatMapMany(Flux::fromIterable)
-                .doOnComplete(() -> log.debug("RCA analysis completed for incident: {}", incidentId))
-                .doOnError(error -> {
-                    metrics.recordRcaFailed(timerSample);
-                    logger.logRcaEvent(incidentId, null,
-                            AuroraStructuredLogger.RcaEventType.ANALYSIS_FAILED,
-                            "RCA analysis failed: " + error.getMessage(),
-                            Map.of("error", error.getClass().getSimpleName()));
-                });
+        try {
+            return performAnalysis(batch, incidentId, timerSample);
+        } catch (RuntimeException ex) {
+            metrics.recordRcaFailed(timerSample);
+            throw ex;
+        }
     }
 
     /**

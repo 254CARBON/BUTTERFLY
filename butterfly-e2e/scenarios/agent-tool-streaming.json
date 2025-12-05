@@ -1,0 +1,94 @@
+{
+  "name": "Agent Tool Streaming (SSE)",
+  "description": "Validates streaming execution guardrails for the CORTEX ↔ SYNAPSE agent bridge.",
+  "tags": ["agent-tools", "streaming", "synapse", "plan4"],
+  "setup": {
+    "services": ["synapse"],
+    "timeout": 60000
+  },
+  "steps": [
+    {
+      "name": "Start SSE streaming session",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/execute-stream?executionMode=SANDBOX",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Accept": "text/event-stream",
+          "X-Cortex-Agent-ID": "e2e-stream-agent",
+          "X-Cortex-Session-ID": "session-${TIMESTAMP}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "header",
+          "name": "Content-Type",
+          "condition": "contains",
+          "expected": "text/event-stream"
+        },
+        {
+          "type": "sse",
+          "eventType": "started",
+          "condition": "received",
+          "timeout": 10000
+        },
+        {
+          "type": "sse",
+          "eventType": "heartbeat",
+          "condition": "received",
+          "timeout": 15000
+        },
+        {
+          "type": "sse",
+          "eventType": "completed",
+          "condition": "received",
+          "timeout": 30000
+        }
+      ]
+    },
+    {
+      "name": "Streaming execution via POST body",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/execute-stream",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream",
+          "X-Cortex-Agent-ID": "e2e-stream-agent"
+        },
+        "body": {
+          "toolId": "${TEST_TOOL_ID}",
+          "executionMode": "DRY_RUN",
+          "streaming": true,
+          "parameters": {
+            "requestAgentValidation": true
+          }
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "sse",
+          "eventType": "started",
+          "condition": "received",
+          "timeout": 10000
+        },
+        {
+          "type": "sse",
+          "eventType": "completed",
+          "condition": "received",
+          "timeout": 30000
+        }
+      ]
+    }
+  ],
+  "cleanup": {}
+}

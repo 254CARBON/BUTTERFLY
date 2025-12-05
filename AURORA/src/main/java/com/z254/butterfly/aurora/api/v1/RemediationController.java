@@ -2,6 +2,7 @@ package com.z254.butterfly.aurora.api.v1;
 
 import com.z254.butterfly.aurora.config.AuroraProperties;
 import com.z254.butterfly.aurora.domain.model.RcaHypothesis;
+import com.z254.butterfly.aurora.domain.service.IncidentService;
 import com.z254.butterfly.aurora.remediation.AutoRemediator;
 import com.z254.butterfly.aurora.remediation.RemediationPlaybook;
 import io.swagger.v3.oas.annotations.Operation;
@@ -28,6 +29,7 @@ public class RemediationController {
     private final AutoRemediator autoRemediator;
     private final RemediationPlaybook playbookService;
     private final AuroraProperties auroraProperties;
+    private final IncidentService incidentService;
 
     // In-memory storage for remediation results
     private final Map<String, AutoRemediator.RemediationResult> remediations = 
@@ -35,10 +37,12 @@ public class RemediationController {
 
     public RemediationController(AutoRemediator autoRemediator,
                                   RemediationPlaybook playbookService,
-                                  AuroraProperties auroraProperties) {
+                                  AuroraProperties auroraProperties,
+                                  IncidentService incidentService) {
         this.autoRemediator = autoRemediator;
         this.playbookService = playbookService;
         this.auroraProperties = auroraProperties;
+        this.incidentService = incidentService;
     }
 
     @PostMapping("/execute")
@@ -48,6 +52,10 @@ public class RemediationController {
 
         log.info("Manual remediation requested: incidentId={}, actionType={}",
                 request.getIncidentId(), request.getActionType());
+
+        if (incidentService.getIncident(request.getIncidentId()).isEmpty()) {
+            return Mono.just(ResponseEntity.notFound().build());
+        }
 
         // Build hypothesis from request
         RcaHypothesis hypothesis = RcaHypothesis.builder()

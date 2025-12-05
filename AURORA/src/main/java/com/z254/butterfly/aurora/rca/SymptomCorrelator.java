@@ -1,6 +1,7 @@
 package com.z254.butterfly.aurora.rca;
 
 import com.z254.butterfly.aurora.config.AuroraProperties;
+import com.z254.butterfly.aurora.domain.model.AnomalySignal;
 import lombok.Builder;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -36,7 +37,7 @@ public class SymptomCorrelator {
      * @param potentialRoots potential root cause components
      * @return symptom cluster with correlation information
      */
-    public SymptomCluster correlate(List<Object> anomalies, Set<String> potentialRoots) {
+    public SymptomCluster correlate(List<AnomalySignal> anomalies, Set<String> potentialRoots) {
         log.debug("Correlating symptoms from {} anomalies across {} potential roots",
                 anomalies.size(), potentialRoots.size());
 
@@ -132,23 +133,19 @@ public class SymptomCorrelator {
 
     // ========== Private Helper Methods ==========
 
-    private List<Symptom> extractSymptoms(List<Object> anomalies) {
+    private List<Symptom> extractSymptoms(List<AnomalySignal> anomalies) {
         List<Symptom> symptoms = new ArrayList<>();
-        
-        for (Object anomaly : anomalies) {
-            if (anomaly instanceof org.apache.avro.generic.GenericRecord record) {
-                Symptom symptom = Symptom.builder()
-                        .anomalyId(getStringField(record, "anomalyId"))
-                        .componentId(getStringField(record, "rimNodeId"))
-                        .anomalyType(getStringField(record, "anomalyType"))
-                        .severity(getDoubleField(record, "severity"))
-                        .timestamp(getLongField(record, "timestamp"))
-                        .metrics(getMapField(record, "metrics"))
-                        .build();
-                symptoms.add(symptom);
-            }
+        for (AnomalySignal signal : anomalies) {
+            Symptom symptom = Symptom.builder()
+                    .anomalyId(signal.getAnomalyId())
+                    .componentId(signal.getRimNodeId())
+                    .anomalyType(signal.getAnomalyType())
+                    .severity(signal.getSeverity())
+                    .timestamp(signal.getTimestamp())
+                    .metrics(signal.getMetrics())
+                    .build();
+            symptoms.add(symptom);
         }
-        
         return symptoms;
     }
 
@@ -220,37 +217,6 @@ public class SymptomCorrelator {
         long max = symptoms.stream().mapToLong(Symptom::getTimestamp).max().orElse(0);
         
         return max - min;
-    }
-
-    // Field extraction helpers
-    private String getStringField(org.apache.avro.generic.GenericRecord record, String field) {
-        Object value = record.get(field);
-        return value != null ? value.toString() : "";
-    }
-
-    private double getDoubleField(org.apache.avro.generic.GenericRecord record, String field) {
-        Object value = record.get(field);
-        return value instanceof Number ? ((Number) value).doubleValue() : 0.0;
-    }
-
-    private long getLongField(org.apache.avro.generic.GenericRecord record, String field) {
-        Object value = record.get(field);
-        return value instanceof Number ? ((Number) value).longValue() : 0L;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Double> getMapField(org.apache.avro.generic.GenericRecord record, String field) {
-        Object value = record.get(field);
-        if (value instanceof Map) {
-            Map<String, Double> result = new HashMap<>();
-            ((Map<?, ?>) value).forEach((k, v) -> {
-                if (v instanceof Number) {
-                    result.put(k.toString(), ((Number) v).doubleValue());
-                }
-            });
-            return result;
-        }
-        return Collections.emptyMap();
     }
 
     // ========== Data Classes ==========

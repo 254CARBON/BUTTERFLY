@@ -45,7 +45,7 @@ public class Incident {
 
     /** Related anomaly IDs */
     @Builder.Default
-    private List<Object> relatedAnomalies = new ArrayList<>();
+    private List<AnomalySignal> relatedAnomalies = new ArrayList<>();
 
     /** RCA hypotheses generated */
     @Builder.Default

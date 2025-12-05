@@ -21,6 +21,7 @@ The BUTTERFLY ecosystem uses Apache Kafka for event-driven communication between
 | Topic | Schema | Owner | Retention | Partitions | Description |
 |-------|--------|-------|-----------|------------|-------------|
 | `aurora.remediation.requests` | `AuroraRemediationRequest.avsc` | AURORA | 14d | 6 | Self-healing remediation requests |
+| `aurora.remediation.actions` | `AuroraRemediationAction.avsc` | AURORA | 14d | 6 | Autonomous healing actions routed to SYNAPSE connectors |
 | `aurora.remediation.results` | `AuroraRemediationResult.avsc` | AURORA | 30d | 6 | Remediation execution outcomes |
 | `aurora.anomaly.detection` | `AuroraAnomalyDetection.avsc` | AURORA | 14d | 6 | Anomaly detection events |
 
@@ -90,6 +91,7 @@ The BUTTERFLY ecosystem uses Apache Kafka for event-driven communication between
 | Topic | Schema | Owner | Retention | Partitions | Description |
 |-------|--------|-------|-----------|------------|-------------|
 | `synapse.action.execution.feedback` | JSON | SYNAPSE | 30d | 6 | Action execution feedback with decision context and metrics |
+| `synapse.healing.results` | `HealingResult.avsc` | SYNAPSE | 30d | 6 | Healing connector execution results streamed back to AURORA/CORTEX |
 
 ### Policy Learning Topics (Cross-System)
 
@@ -240,4 +242,3 @@ For replaying messages from DLQ:
 | 2024-02-01 | Froze v1 schema set | BUTTERFLY Team |
 | 2024-12-05 | Added CORTEX and AURORA topics | BUTTERFLY Team |
 | 2024-12-05 | Added simulation results and multimodal ingestion topics | BUTTERFLY Team |
-

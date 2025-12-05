@@ -3,6 +3,7 @@ package com.z254.butterfly.aurora.api.v1;
 import com.z254.butterfly.aurora.config.AuroraProperties;
 import com.z254.butterfly.aurora.domain.model.Incident;
 import com.z254.butterfly.aurora.domain.model.RcaHypothesis;
+import com.z254.butterfly.aurora.domain.service.IncidentService;
 import com.z254.butterfly.aurora.rca.RootCauseAnalyzer;
 import com.z254.butterfly.aurora.stream.EnrichedAnomalyBatch;
 import io.swagger.v3.oas.annotations.Operation;
@@ -15,8 +16,12 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 /**
  * REST API controller for Root Cause Analysis operations.
@@ -29,14 +34,14 @@ public class RcaController {
 
     private final RootCauseAnalyzer rootCauseAnalyzer;
     private final AuroraProperties auroraProperties;
-
-    // In-memory storage for hypotheses
-    private final Map<String, RcaHypothesis> hypotheses = new ConcurrentHashMap<>();
+    private final IncidentService incidentService;
 
     public RcaController(RootCauseAnalyzer rootCauseAnalyzer,
-                         AuroraProperties auroraProperties) {
+                         AuroraProperties auroraProperties,
+                         IncidentService incidentService) {
         this.rootCauseAnalyzer = rootCauseAnalyzer;
         this.auroraProperties = auroraProperties;
+        this.incidentService = incidentService;
     }
 
     @PostMapping("/analyze")
@@ -56,12 +61,15 @@ public class RcaController {
                 .correlationId(request.getCorrelationId())
                 .build();
 
+        Optional<Incident> incidentOpt = incidentService.getIncident(request.getIncidentId());
+        if (incidentOpt.isEmpty()) {
+            return Mono.just(ResponseEntity.notFound().build());
+        }
+
         return rootCauseAnalyzer.analyze(batch)
                 .collectList()
                 .map(hyps -> {
-                    // Store hypotheses
-                    hyps.forEach(h -> hypotheses.put(h.getHypothesisId(), h));
-
+                    incidentService.attachHypotheses(request.getIncidentId(), hyps);
                     return ResponseEntity.ok(AnalysisResponse.builder()
                             .incidentId(request.getIncidentId())
                             .hypothesesCount(hyps.size())
@@ -94,12 +102,16 @@ public class RcaController {
             @RequestParam(defaultValue = "20") int size) {
 
         return Mono.fromCallable(() -> {
-            double threshold = minConfidence != null ? minConfidence : 
+            double threshold = minConfidence != null ? minConfidence :
                     auroraProperties.getRca().getMinConfidenceThreshold();
 
-            List<RcaHypothesis> filtered = hypotheses.values().stream()
+            List<RcaHypothesis> all = incidentService.listIncidents(null, null, null).stream()
+                    .flatMap(incident -> incident.getHypotheses().stream())
+                    .collect(Collectors.toList());
+
+            List<RcaHypothesis> filtered = all.stream()
                     .filter(h -> incidentId == null || h.getIncidentId().equals(incidentId))
-                    .filter(h -> component == null || 
+                    .filter(h -> component == null ||
                             h.getRootCauseComponent().contains(component))
                     .filter(h -> h.getConfidence() >= threshold)
                     .sorted(Comparator.comparingDouble(RcaHypothesis::getConfidence).reversed())
@@ -121,7 +133,7 @@ public class RcaController {
     public Mono<ResponseEntity<RcaHypothesis>> getHypothesis(
             @Parameter(description = "Hypothesis ID") @PathVariable String id) {
 
-        return Mono.justOrEmpty(hypotheses.get(id))
+        return Mono.justOrEmpty(findHypothesisById(id))
                 .map(ResponseEntity::ok)
                 .defaultIfEmpty(ResponseEntity.notFound().build());
     }
@@ -142,9 +154,11 @@ public class RcaController {
                 .build()));
     }
 
-    // Internal method to store hypotheses
-    public void storeHypothesis(RcaHypothesis hypothesis) {
-        hypotheses.put(hypothesis.getHypothesisId(), hypothesis);
+    private Optional<RcaHypothesis> findHypothesisById(String id) {
+        return incidentService.listIncidents(null, null, null).stream()
+                .flatMap(incident -> incident.getHypotheses().stream())
+                .filter(h -> h.getHypothesisId().equals(id))
+                .findFirst();
     }
 
     // ========== Request/Response DTOs ==========

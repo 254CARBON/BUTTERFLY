@@ -1,6 +1,7 @@
 package com.z254.butterfly.aurora.rca;
 
 import com.z254.butterfly.aurora.config.AuroraProperties;
+import com.z254.butterfly.aurora.domain.model.AnomalySignal;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -110,8 +111,8 @@ public class FaultPropagationModel {
     /**
      * Detect cascade pattern and find origin.
      */
-    public CascadeAnalysis analyzeCascade(CausalGraph.ComponentGraph graph, 
-                                           List<Object> anomalies) {
+    public CascadeAnalysis analyzeCascade(CausalGraph.ComponentGraph graph,
+                                           List<AnomalySignal> anomalies) {
         CascadeAnalysis.Builder builder = CascadeAnalysis.builder();
 
         // Extract temporal sequence
@@ -196,21 +197,15 @@ public class FaultPropagationModel {
         return (depthFactor * 0.6) + (impactFactor * 0.4);
     }
 
-    private List<TimedAnomaly> extractTimedAnomalies(List<Object> anomalies) {
+    private List<TimedAnomaly> extractTimedAnomalies(List<AnomalySignal> anomalies) {
         List<TimedAnomaly> timed = new ArrayList<>();
-        for (Object anomaly : anomalies) {
-            if (anomaly instanceof org.apache.avro.generic.GenericRecord record) {
-                Object timestamp = record.get("timestamp");
-                Object rimNodeId = record.get("rimNodeId");
-                Object severity = record.get("severity");
-                
-                if (timestamp instanceof Long && rimNodeId != null) {
-                    timed.add(new TimedAnomaly(
-                            rimNodeId.toString(),
-                            (Long) timestamp,
-                            severity instanceof Number ? ((Number) severity).doubleValue() : 0.0
-                    ));
-                }
+        for (AnomalySignal signal : anomalies) {
+            if (signal.getRimNodeId() != null) {
+                timed.add(new TimedAnomaly(
+                        signal.getRimNodeId(),
+                        signal.getTimestamp(),
+                        signal.getSeverity()
+                ));
             }
         }
         return timed;

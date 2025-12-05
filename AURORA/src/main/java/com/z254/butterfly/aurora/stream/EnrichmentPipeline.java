@@ -2,6 +2,7 @@ package com.z254.butterfly.aurora.stream;
 
 import com.z254.butterfly.aurora.client.CapsuleEvidenceClient;
 import com.z254.butterfly.aurora.config.AuroraProperties;
+import com.z254.butterfly.aurora.domain.model.AnomalySignal;
 import com.z254.butterfly.aurora.observability.AuroraStructuredLogger;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -46,7 +47,7 @@ public class EnrichmentPipeline {
      * @param aggregate the anomaly aggregate
      * @return enriched anomaly batch
      */
-    public EnrichedAnomalyBatch enrich(String componentKey, 
+    public EnrichedAnomalyBatch enrich(String componentKey,
                                         AnomalyStreamProcessor.AnomalyAggregate aggregate) {
         log.debug("Enriching anomaly batch for component: {}, count: {}", 
                 componentKey, aggregate.getCount());
