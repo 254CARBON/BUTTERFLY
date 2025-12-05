@@ -260,6 +260,12 @@ public class AgentServiceImpl implements AgentService {
                 });
     }
 
+    @Override
+    public Mono<Void> deleteConversation(String conversationId) {
+        log.info("Deleting conversation: {}", conversationId);
+        return conversationRepository.deleteById(conversationId);
+    }
+
     // --------------------------------------------------------------------------------------------
     // Internal helpers
     // --------------------------------------------------------------------------------------------

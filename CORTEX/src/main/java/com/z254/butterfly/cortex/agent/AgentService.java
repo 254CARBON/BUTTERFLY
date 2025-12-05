@@ -163,4 +163,12 @@ public interface AgentService {
      * @return the updated conversation
      */
     Mono<Conversation> archiveConversation(String conversationId);
+
+    /**
+     * Delete a conversation permanently.
+     *
+     * @param conversationId the conversation ID
+     * @return completion signal
+     */
+    Mono<Void> deleteConversation(String conversationId);
 }
