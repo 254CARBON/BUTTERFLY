@@ -12,6 +12,14 @@
 
 AURORA is the self-healing layer of the BUTTERFLY ecosystem. It provides intelligent root cause analysis (RCA), governed auto-remediation, and chaos immunization capabilities.
 
+### Processing Flow
+
+1. **PERCEPTION** publishes `aurora.anomalies.detected` events.
+2. **Kafka Streams** correlates anomalies, enriches context, and hands batches to the `IncidentIngestionService`.
+3. **IncidentIngestionService** persists/updates incidents, runs the RCA engine, emits hypotheses to Kafka, and triggers governed auto-remediation when confidence exceeds configured thresholds.
+4. **AutoRemediator** publishes remediation actions for audit/SYNAPSE delivery, executes the playbook, and records outcomes/rollback context.
+5. **ChaosImmunizer** learns from successful remediations and emits `aurora.chaos.learnings` for PLATO/CAPSULE consumers.
+
 ### Key Capabilities
 
 | Capability | Description |

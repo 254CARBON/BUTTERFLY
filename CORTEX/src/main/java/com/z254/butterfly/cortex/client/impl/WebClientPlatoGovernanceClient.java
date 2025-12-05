@@ -10,7 +10,6 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.util.retry.Retry as ReactorRetry;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -147,7 +146,7 @@ public class WebClientPlatoGovernanceClient implements PlatoGovernanceClient {
                             status.updatedAt()
                     ));
                 })
-                .retryWhen(ReactorRetry.backoff(config.getApprovalPollMaxRetries(), 
+                .retryWhen(reactor.util.retry.Retry.backoff(config.getApprovalPollMaxRetries(), 
                         Duration.ofSeconds(5))
                         .maxBackoff(Duration.ofMinutes(1))
                         .filter(e -> e.getMessage().contains("pending")))

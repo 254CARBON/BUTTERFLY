@@ -1,5 +1,6 @@
 package com.z254.butterfly.aurora.kafka;
 
+import com.z254.butterfly.aurora.avro.AuroraChaosLearning;
 import com.z254.butterfly.aurora.config.AuroraProperties;
 import com.z254.butterfly.aurora.domain.model.ImmunityRule;
 import com.z254.butterfly.aurora.domain.model.Incident;
@@ -36,25 +37,28 @@ public class ChaosLearningProducer {
                      ResiliencePatternLearner.ResiliencePattern pattern) {
         String topic = auroraProperties.getKafka().getTopics().getChaosLearnings();
 
-        Map<String, Object> event = new HashMap<>();
-        event.put("learningId", UUID.randomUUID().toString());
-        event.put("incidentId", incident.getId());
-        event.put("ruleId", rule.getRuleId());
-        event.put("patternType", pattern.getPatternType().name());
-        event.put("component", rule.getComponent());
-        event.put("anomalyType", rule.getAnomalyType());
-        event.put("confidence", pattern.getConfidence());
-        event.put("recommendedAction", rule.getRecommendedAction());
-        event.put("parameters", rule.getActionParameters());
-        event.put("validFrom", rule.getValidFrom().toEpochMilli());
-        event.put("validUntil", rule.getValidUntil() != null ? 
-                rule.getValidUntil().toEpochMilli() : null);
-        event.put("mttrMs", incident.getMttrMs());
-        event.put("timestamp", Instant.now().toEpochMilli());
-        event.put("correlationId", incident.getCorrelationId());
-        event.put("tenantId", incident.getTenantId());
+        AuroraChaosLearning avro = AuroraChaosLearning.newBuilder()
+                .setSchemaVersion("1.0.0")
+                .setLearningId(UUID.randomUUID().toString())
+                .setIncidentId(incident.getId())
+                .setTimestamp(Instant.now().toEpochMilli())
+                .setPatternType(pattern.getPatternType().name())
+                .setComponent(rule.getComponent())
+                .setAnomalyType(rule.getAnomalyType())
+                .setImmunityRule(buildRuleRecord(rule))
+                .setConfidence(pattern.getConfidence())
+                .setEffectiveness(rule.getEffectivenessRate())
+                .setAppliedCount(rule.getAppliedCount())
+                .setSuccessCount(rule.getSuccessCount())
+                .setSourcePattern(buildSourcePattern(pattern, incident))
+                .setValidFrom(rule.getValidFrom().toEpochMilli())
+                .setValidUntil(rule.getValidUntil() != null ? rule.getValidUntil().toEpochMilli() : null)
+                .setCorrelationId(incident.getCorrelationId())
+                .setTenantId(incident.getTenantId())
+                .setMetadata(new HashMap<>())
+                .build();
 
-        kafkaTemplate.send(topic, rule.getComponent(), event)
+        kafkaTemplate.send(topic, rule.getComponent(), avro)
                 .whenComplete((result, ex) -> {
                     if (ex != null) {
                         log.error("Failed to emit chaos learning event: ruleId={}, error={}",
@@ -65,5 +69,27 @@ public class ChaosLearningProducer {
                                 result.getRecordMetadata().partition());
                     }
                 });
+    }
+
+    private AuroraChaosLearning.ImmunityRule buildRuleRecord(ImmunityRule rule) {
+        return AuroraChaosLearning.ImmunityRule.newBuilder()
+                .setRuleId(rule.getRuleId())
+                .setCondition(rule.getTriggerCondition())
+                .setAction(rule.getRecommendedAction())
+                .setParameters(rule.getActionParameters())
+                .setPriority(rule.getPriority())
+                .setCooldownMs(rule.getCooldownMs())
+                .build();
+    }
+
+    private AuroraChaosLearning.SourcePattern buildSourcePattern(ResiliencePatternLearner.ResiliencePattern pattern,
+                                                                 Incident incident) {
+        return AuroraChaosLearning.SourcePattern.newBuilder()
+                .setIncidentTimeline(Collections.emptyList())
+                .setRemediationsTried(Collections.emptyList())
+                .setSuccessfulRemediation(pattern.getRecommendedAction())
+                .setMttrMs(incident.getMttrMs() != null ? incident.getMttrMs() : 0)
+                .setRecurrenceCount(0)
+                .build();
     }
 }

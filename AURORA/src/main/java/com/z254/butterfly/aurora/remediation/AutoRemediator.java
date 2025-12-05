@@ -3,8 +3,10 @@ package com.z254.butterfly.aurora.remediation;
 import com.z254.butterfly.aurora.config.AuroraProperties;
 import com.z254.butterfly.aurora.domain.model.Incident;
 import com.z254.butterfly.aurora.domain.model.RcaHypothesis;
+import com.z254.butterfly.aurora.domain.service.IncidentService;
 import com.z254.butterfly.aurora.governance.RemediationPlanSubmitter;
 import com.z254.butterfly.aurora.health.AuroraHealthIndicator;
+import com.z254.butterfly.aurora.kafka.RemediationActionProducer;
 import com.z254.butterfly.aurora.observability.AuroraMetrics;
 import com.z254.butterfly.aurora.observability.AuroraStructuredLogger;
 import io.micrometer.core.instrument.Timer;
@@ -39,6 +41,8 @@ public class AutoRemediator {
     private final RemediationPlanSubmitter planSubmitter;
     private final HealingConnectorClient healingClient;
     private final RollbackManager rollbackManager;
+    private final IncidentService incidentService;
+    private final RemediationActionProducer remediationActionProducer;
     private final AuroraProperties auroraProperties;
     private final AuroraMetrics metrics;
     private final AuroraStructuredLogger logger;
@@ -52,6 +56,8 @@ public class AutoRemediator {
                           RemediationPlanSubmitter planSubmitter,
                           HealingConnectorClient healingClient,
                           RollbackManager rollbackManager,
+                          IncidentService incidentService,
+                          RemediationActionProducer remediationActionProducer,
                           AuroraProperties auroraProperties,
                           AuroraMetrics metrics,
                           AuroraStructuredLogger logger,
@@ -61,6 +67,8 @@ public class AutoRemediator {
         this.planSubmitter = planSubmitter;
         this.healingClient = healingClient;
         this.rollbackManager = rollbackManager;
+        this.incidentService = incidentService;
+        this.remediationActionProducer = remediationActionProducer;
         this.auroraProperties = auroraProperties;
         this.metrics = metrics;
         this.logger = logger;
@@ -94,7 +102,7 @@ public class AutoRemediator {
                     if (!safetyResult.isSafe()) {
                         return handleSafetyBlock(remediationId, incidentId, safetyResult, timerSample);
                     }
-                    return selectAndExecutePlaybook(hypothesis, mode, remediationId, timerSample);
+                    return selectAndExecutePlaybook(hypothesis, mode, remediationId, timerSample, safetyResult);
                 })
                 .onErrorResume(error -> handleRemediationError(remediationId, incidentId, 
                         error, timerSample));
@@ -179,7 +187,8 @@ public class AutoRemediator {
     private Mono<RemediationResult> selectAndExecutePlaybook(RcaHypothesis hypothesis,
                                                               AuroraProperties.ExecutionMode mode,
                                                               String remediationId,
-                                                              Timer.Sample timerSample) {
+                                                              Timer.Sample timerSample,
+                                                              SafetyGuard.SafetyResult safetyResult) {
         return playbookSelector.selectPlaybook(hypothesis)
                 .flatMap(playbook -> {
                     log.info("Selected playbook {} for remediation {}", 
@@ -191,8 +200,8 @@ public class AutoRemediator {
                                     return handleApprovalRejection(remediationId, 
                                             hypothesis.getIncidentId(), approval, timerSample);
                                 }
-                                return executePlaybook(hypothesis, playbook, mode, 
-                                        remediationId, approval, timerSample);
+                                return executePlaybook(hypothesis, playbook, mode,
+                                        remediationId, approval, timerSample, safetyResult);
                             });
                 });
     }
@@ -248,7 +257,8 @@ public class AutoRemediator {
                                                      AuroraProperties.ExecutionMode mode,
                                                      String remediationId,
                                                      ApprovalResult approval,
-                                                     Timer.Sample timerSample) {
+                                                     Timer.Sample timerSample,
+                                                     SafetyGuard.SafetyResult safetyResult) {
         String incidentId = hypothesis.getIncidentId();
         
         logger.logRemediationEvent(remediationId, incidentId,
@@ -289,6 +299,11 @@ public class AutoRemediator {
                 .correlationId(hypothesis.getCorrelationId())
                 .build();
 
+        remediationActionProducer.publish(request,
+                safetyResult.getEstimatedBlastRadius(),
+                approval.getRiskScore(),
+                approval.getRiskScore() >= auroraProperties.getSafety().getRequireApprovalAbove());
+
         return healingClient.execute(request)
                 .flatMap(healingResult -> {
                     if (healingResult.isSuccess()) {
@@ -328,8 +343,8 @@ public class AutoRemediator {
         return rollbackManager.startHealthMonitoring(active.getRollbackContext())
                 .map(monitoringResult -> {
                     activeRemediations.remove(remediationId);
-                    
-                    return RemediationResult.builder()
+
+                    RemediationResult result = RemediationResult.builder()
                             .remediationId(remediationId)
                             .incidentId(incidentId)
                             .status(RemediationStatus.COMPLETED)
@@ -337,6 +352,9 @@ public class AutoRemediator {
                             .timestamp(Instant.now())
                             .details(healingResult.getDetails())
                             .build();
+
+                    incidentService.recordRemediationResult(incidentId, result);
+                    return result;
                 });
     }
 
@@ -352,13 +370,16 @@ public class AutoRemediator {
                 "Remediation failed",
                 Map.of("error", healingResult.getErrorMessage()));
 
-        return Mono.just(RemediationResult.builder()
+        RemediationResult result = RemediationResult.builder()
                 .remediationId(remediationId)
                 .incidentId(incidentId)
                 .status(RemediationStatus.FAILED)
                 .reason(healingResult.getErrorMessage())
                 .timestamp(Instant.now())
-                .build());
+                .build();
+
+        incidentService.recordRemediationResult(incidentId, result);
+        return Mono.just(result);
     }
 
     private Mono<RemediationResult> handleRemediationError(String remediationId,
@@ -373,13 +394,16 @@ public class AutoRemediator {
                 "Remediation error: " + error.getMessage(),
                 Map.of("errorType", error.getClass().getSimpleName()));
 
-        return Mono.just(RemediationResult.builder()
+        RemediationResult result = RemediationResult.builder()
                 .remediationId(remediationId)
                 .incidentId(incidentId)
                 .status(RemediationStatus.FAILED)
                 .reason(error.getMessage())
                 .timestamp(Instant.now())
-                .build());
+                .build();
+
+        incidentService.recordRemediationResult(incidentId, result);
+        return Mono.just(result);
     }
 
     private String generateRemediationId(RcaHypothesis hypothesis) {
