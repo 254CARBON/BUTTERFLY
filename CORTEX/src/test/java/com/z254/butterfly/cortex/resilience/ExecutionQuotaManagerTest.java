@@ -23,6 +23,7 @@ import java.time.Duration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -294,21 +295,24 @@ class ExecutionQuotaManagerTest {
             when(redisTemplate.opsForValue()).thenReturn(valueOperations);
             when(valueOperations.get(anyString())).thenAnswer(inv -> {
                 String key = inv.getArgument(0);
-                if (key.contains("user")) {
-                    return Mono.just("95"); // 5 remaining
+                // Rate limit key contains both "rate" and user ID, check it first
+                if (key.contains("rate")) {
+                    return Mono.just("20"); // rate limit: 10 remaining (out of 30)
+                } else if (key.contains("user")) {
+                    return Mono.just("95"); // 5 remaining (out of 100)
                 } else if (key.contains("agent")) {
-                    return Mono.just("490"); // 10 remaining
+                    return Mono.just("490"); // 10 remaining (out of 500)
                 } else if (key.contains("namespace")) {
-                    return Mono.just("985"); // 15 remaining
+                    return Mono.just("985"); // 15 remaining (out of 1000)
                 } else {
-                    return Mono.just("20"); // rate limit: 10 remaining
+                    return Mono.just("0");
                 }
             });
 
             StepVerifier.create(quotaManager.checkQuota("user-1", "agent-1", "namespace-1"))
                     .assertNext(result -> {
                         assertThat(result.isAllowed()).isTrue();
-                        assertThat(result.getRemaining()).isEqualTo(5); // Minimum
+                        assertThat(result.getRemaining()).isEqualTo(5); // Minimum (user quota)
                     })
                     .verifyComplete();
         }
@@ -329,9 +333,9 @@ class ExecutionQuotaManagerTest {
                     .verifyComplete();
 
             // Verify increment was called for user, agent, namespace, and rate limit
-            verify(valueOperations).increment(org.mockito.ArgumentMatchers.contains("user"));
-            verify(valueOperations).increment(org.mockito.ArgumentMatchers.contains("agent"));
-            verify(valueOperations).increment(org.mockito.ArgumentMatchers.contains("namespace"));
+            verify(valueOperations, atLeast(1)).increment(org.mockito.ArgumentMatchers.contains("user"));
+            verify(valueOperations, atLeast(1)).increment(org.mockito.ArgumentMatchers.contains("agent"));
+            verify(valueOperations, atLeast(1)).increment(org.mockito.ArgumentMatchers.contains("namespace"));
         }
 
         @Test
@@ -344,7 +348,7 @@ class ExecutionQuotaManagerTest {
             StepVerifier.create(quotaManager.recordExecution("user-1", "agent-1", "namespace-1"))
                     .verifyComplete();
 
-            verify(redisTemplate).expire(anyString(), any(Duration.class));
+            verify(redisTemplate, atLeast(1)).expire(anyString(), any(Duration.class));
         }
     }
 

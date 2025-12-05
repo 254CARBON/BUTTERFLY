@@ -102,14 +102,14 @@ class AgentControllerIntegrationTest {
             request.setNamespace("production");
 
             // Set memory config
-            AgentRequest.MemoryConfig memConfig = new AgentRequest.MemoryConfig();
+            Agent.MemoryConfig memConfig = new Agent.MemoryConfig();
             memConfig.setEpisodicEnabled(true);
             memConfig.setMaxEpisodes(50);
             memConfig.setSemanticEnabled(true);
             request.setMemoryConfig(memConfig);
 
             // Set LLM config
-            AgentRequest.LLMConfig llmConfig = new AgentRequest.LLMConfig();
+            Agent.LLMConfig llmConfig = new Agent.LLMConfig();
             llmConfig.setProviderId("openai");
             llmConfig.setModel("gpt-4-turbo");
             llmConfig.setTemperature(0.5);

@@ -316,7 +316,7 @@ class AgentServiceImplTest {
                     .thenReturn(Mono.just(QuotaCheckResult.allowed(100)));
             when(quotaManager.recordExecution(anyString(), anyString(), anyString()))
                     .thenReturn(Mono.empty());
-            when(tokenBudgetEnforcer.createTaskBudget(anyInt()))
+            when(tokenBudgetEnforcer.createTaskBudget(any()))
                     .thenReturn(AgentContext.TokenBudget.builder()
                             .maxTokens(4000)
                             .usedTokens(0)
@@ -382,8 +382,6 @@ class AgentServiceImplTest {
                     .build();
 
             when(agentRepository.findById(agentId)).thenReturn(Mono.just(agent));
-            when(quotaManager.checkQuota(any(), any(), any()))
-                    .thenReturn(Mono.just(QuotaCheckResult.allowed(100)));
 
             StepVerifier.create(agentService.executeTask(task))
                     .expectErrorMatches(e -> e instanceof IllegalStateException &&

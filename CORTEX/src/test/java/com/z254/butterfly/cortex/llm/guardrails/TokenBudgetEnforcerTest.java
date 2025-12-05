@@ -21,6 +21,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -91,8 +92,9 @@ class TokenBudgetEnforcerTest {
         @DisplayName("should allow request within task budget")
         void allowRequestWithinTaskBudget() {
             AgentContext context = createContext(1000, 4000);
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.get(anyString())).thenReturn(Mono.empty());
+            // These may not be called since task budget check might short-circuit
+            lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+            lenient().when(valueOperations.get(anyString())).thenReturn(Mono.empty());
 
             StepVerifier.create(enforcer.checkBudget(context, 500))
                     .assertNext(result -> {
@@ -121,8 +123,8 @@ class TokenBudgetEnforcerTest {
         @DisplayName("should warn when approaching budget limit")
         void warnWhenApproachingBudgetLimit() {
             AgentContext context = createContext(3300, 4000); // 82.5% used
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.get(anyString())).thenReturn(Mono.empty());
+            lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+            lenient().when(valueOperations.get(anyString())).thenReturn(Mono.empty());
 
             StepVerifier.create(enforcer.checkBudget(context, 100))
                     .assertNext(result -> {
@@ -253,9 +255,12 @@ class TokenBudgetEnforcerTest {
                                     .build()
                     ))
                     .tools(List.of(
-                            LLMRequest.ToolDefinition.builder()
-                                    .name("calculator")
-                                    .description("Performs calculations")
+                            LLMRequest.Tool.builder()
+                                    .type("function")
+                                    .function(LLMRequest.Function.builder()
+                                            .name("calculator")
+                                            .description("Performs calculations")
+                                            .build())
                                     .build()
                     ))
                     .maxTokens(1000)
