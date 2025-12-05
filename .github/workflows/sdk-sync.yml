@@ -1,0 +1,288 @@
+name: SDK Sync
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'PERCEPTION/perception-api/src/main/resources/openapi/**'
+      - 'PERCEPTION/perception-api/src/main/java/**/api/**'
+  workflow_dispatch:
+    inputs:
+      languages:
+        description: 'Languages to regenerate (comma-separated: python,typescript,java or all)'
+        required: false
+        default: 'all'
+      create_pr:
+        description: 'Create pull request with changes'
+        required: false
+        default: 'true'
+  schedule:
+    # Weekly check on Sundays at 00:00 UTC
+    - cron: '0 0 * * 0'
+
+env:
+  JAVA_VERSION: '21'
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+  OPENAPI_GENERATOR_VERSION: '7.2.0'
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      spec_changed: ${{ steps.check.outputs.spec_changed }}
+      spec_hash: ${{ steps.check.outputs.spec_hash }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          
+      - name: Check for OpenAPI spec changes
+        id: check
+        run: |
+          SPEC_FILE="PERCEPTION/perception-api/src/main/resources/openapi/perception-api.yaml"
+          
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "spec_changed=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "spec_changed=true" >> $GITHUB_OUTPUT
+          else
+            # Check if spec file changed
+            if git diff --name-only HEAD~1 | grep -q "$SPEC_FILE"; then
+              echo "spec_changed=true" >> $GITHUB_OUTPUT
+            else
+              echo "spec_changed=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+          
+          # Calculate spec hash
+          if [[ -f "$SPEC_FILE" ]]; then
+            HASH=$(sha256sum "$SPEC_FILE" | cut -d' ' -f1 | head -c 12)
+            echo "spec_hash=$HASH" >> $GITHUB_OUTPUT
+          else
+            echo "spec_hash=missing" >> $GITHUB_OUTPUT
+          fi
+
+  generate-sdks:
+    runs-on: ubuntu-latest
+    needs: check-changes
+    if: needs.check-changes.outputs.spec_changed == 'true'
+    
+    strategy:
+      matrix:
+        include:
+          - language: python
+            profile: generate-sdk
+            output_dir: clients/python
+            test_cmd: pip install -e ".[dev]" && pytest tests/ -v
+          - language: typescript
+            profile: generate-sdk-typescript
+            output_dir: clients/typescript
+            test_cmd: npm ci && npm test
+          - language: java
+            profile: generate-sdk-java
+            output_dir: clients/java
+            test_cmd: mvn test
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Check if language should be generated
+        id: should-run
+        run: |
+          INPUT_LANGUAGES="${{ github.event.inputs.languages || 'all' }}"
+          CURRENT_LANG="${{ matrix.language }}"
+          
+          if [[ "$INPUT_LANGUAGES" == "all" ]] || [[ "$INPUT_LANGUAGES" == *"$CURRENT_LANG"* ]]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Set up Java
+        if: steps.should-run.outputs.run == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+          
+      - name: Set up Python
+        if: steps.should-run.outputs.run == 'true' && matrix.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: Set up Node.js
+        if: steps.should-run.outputs.run == 'true' && matrix.language == 'typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: PERCEPTION/${{ matrix.output_dir }}/package-lock.json
+          
+      - name: Generate ${{ matrix.language }} SDK
+        if: steps.should-run.outputs.run == 'true'
+        working-directory: PERCEPTION
+        run: |
+          echo "Generating ${{ matrix.language }} SDK..."
+          mvn -P${{ matrix.profile }} generate-resources -pl perception-api -DskipTests
+          
+      - name: Update SDK metadata
+        if: steps.should-run.outputs.run == 'true'
+        run: |
+          SPEC_FILE="PERCEPTION/perception-api/src/main/resources/openapi/perception-api.yaml"
+          SDK_DIR="PERCEPTION/${{ matrix.output_dir }}"
+          
+          # Extract version from OpenAPI spec
+          SPEC_VERSION=$(grep -E "^  version:" "$SPEC_FILE" | head -1 | awk '{print $2}' | tr -d '"')
+          SPEC_HASH="${{ needs.check-changes.outputs.spec_hash }}"
+          
+          # Create metadata file
+          cat > "$SDK_DIR/.sdk-metadata.json" << EOF
+          {
+            "generatedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "generatorVersion": "${{ env.OPENAPI_GENERATOR_VERSION }}",
+            "openApiSpecHash": "$SPEC_HASH",
+            "openApiSpecVersion": "$SPEC_VERSION",
+            "language": "${{ matrix.language }}",
+            "commitSha": "${{ github.sha }}"
+          }
+          EOF
+          
+          echo "SDK metadata updated:"
+          cat "$SDK_DIR/.sdk-metadata.json"
+          
+      - name: Test ${{ matrix.language }} SDK
+        if: steps.should-run.outputs.run == 'true'
+        working-directory: PERCEPTION/${{ matrix.output_dir }}
+        run: ${{ matrix.test_cmd }}
+        continue-on-error: true
+        
+      - name: Upload SDK artifact
+        if: steps.should-run.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ matrix.language }}
+          path: PERCEPTION/${{ matrix.output_dir }}/
+          retention-days: 7
+
+  create-pr:
+    runs-on: ubuntu-latest
+    needs: [check-changes, generate-sdks]
+    if: |
+      needs.check-changes.outputs.spec_changed == 'true' && 
+      (github.event.inputs.create_pr != 'false')
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Download Python SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-python
+          path: PERCEPTION/clients/python/
+        continue-on-error: true
+        
+      - name: Download TypeScript SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-typescript
+          path: PERCEPTION/clients/typescript/
+        continue-on-error: true
+        
+      - name: Download Java SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-java
+          path: PERCEPTION/clients/java/
+        continue-on-error: true
+        
+      - name: Check for changes
+        id: check-changes
+        run: |
+          if [[ -n $(git status --porcelain PERCEPTION/clients/) ]]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Create Pull Request
+        if: steps.check-changes.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            chore(sdk): regenerate client SDKs from OpenAPI spec
+            
+            OpenAPI spec hash: ${{ needs.check-changes.outputs.spec_hash }}
+            Triggered by: ${{ github.event_name }}
+            Commit: ${{ github.sha }}
+          branch: sdk-sync/${{ needs.check-changes.outputs.spec_hash }}
+          delete-branch: true
+          title: 'chore(sdk): Regenerate client SDKs from OpenAPI spec'
+          body: |
+            ## SDK Regeneration
+            
+            This PR was automatically generated by the `sdk-sync` workflow.
+            
+            ### Changes
+            
+            - Regenerated client SDKs from updated OpenAPI specification
+            - Updated SDK metadata files
+            
+            ### Details
+            
+            | Property | Value |
+            |----------|-------|
+            | OpenAPI Spec Hash | `${{ needs.check-changes.outputs.spec_hash }}` |
+            | Trigger | `${{ github.event_name }}` |
+            | Source Commit | `${{ github.sha }}` |
+            | Generator Version | `${{ env.OPENAPI_GENERATOR_VERSION }}` |
+            
+            ### Languages Regenerated
+            
+            - [ ] Python
+            - [ ] TypeScript
+            - [ ] Java
+            
+            ### Testing
+            
+            SDK tests were run as part of the generation process. Review the workflow logs for test results.
+            
+            ### Review Checklist
+            
+            - [ ] Version numbers are correct
+            - [ ] Breaking changes are documented
+            - [ ] SDK tests pass
+            - [ ] Changelog updated if needed
+          labels: |
+            sdk
+            automation
+            dependencies
+          assignees: |
+            ${{ github.actor }}
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [check-changes, generate-sdks, create-pr]
+    if: always() && needs.check-changes.outputs.spec_changed == 'true'
+    
+    steps:
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::SDK sync workflow failed. Check the logs for details."
+          # Add Slack/Teams notification here if configured
+          
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "SDK sync completed successfully."
+          echo "Spec hash: ${{ needs.check-changes.outputs.spec_hash }}"
