@@ -1,0 +1,65 @@
+server:
+  port: 0
+
+spring:
+  main:
+    allow-bean-definition-overriding: true
+  data:
+    redis:
+      host: ${spring.data.redis.host:localhost}
+      port: ${spring.data.redis.port:6379}
+  kafka:
+    bootstrap-servers: ${spring.kafka.bootstrap-servers:localhost:9092}
+    consumer:
+      auto-offset-reset: earliest
+      group-id: cortex-test
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+  cassandra:
+    schema-action: none
+
+cortex:
+  llm:
+    default-provider: mock
+    openai:
+      enabled: false
+    anthropic:
+      enabled: false
+    ollama:
+      enabled: false
+  memory:
+    episodic:
+      max-episodes: 10
+      retention-period: PT1H
+    semantic:
+      vector-store: in-memory
+  safety:
+    enabled: true
+    token-budget:
+      max-per-task: 4000
+      max-per-conversation: 16000
+      max-per-day: 100000
+      warning-threshold: 0.8
+    quotas:
+      max-tasks-per-user-per-day: 100
+      max-tasks-per-agent-per-day: 500
+      max-tasks-per-namespace-per-day: 1000
+      max-requests-per-minute: 60
+    tool-sandbox:
+      enabled: true
+      max-calls-per-task: 20
+      max-consecutive-same-tool-calls: 3
+  clients:
+    synapse:
+      base-url: http://localhost:8085
+    plato:
+      base-url: http://localhost:8083
+    capsule:
+      base-url: http://localhost:8081
+
+logging:
+  level:
+    com.z254.butterfly.cortex: DEBUG
+    org.springframework.kafka: WARN
+    org.testcontainers: WARN
