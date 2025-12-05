@@ -209,6 +209,102 @@ groups:
           summary: "Tenant {{ $labels.tenantId }} P95 latency exceeds SLO"
           description: "Tenant {{ $labels.tenantId }} P95 latency is {{ $value | humanizeDuration }}"
 
+      # =========================================================================
+      # Drift Remediation SLO Alerts
+      # =========================================================================
+
+      - alert: DriftRemediationLatencySLOBreach
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(perception_drift_remediation_duration_seconds_bucket[15m])) by (le)
+          ) > 30
+        for: 5m
+        labels:
+          severity: warning
+          service: perception
+          slo: drift-remediation
+          category: drift
+        annotations:
+          summary: "Drift remediation loop P95 latency exceeds SLO target (30s)"
+          description: "Drift detection to canary start P95 latency is {{ $value | humanizeDuration }}, exceeding target of 30s."
+          runbook_url: "https://docs.butterfly.io/runbooks/drift-remediation-loop"
+
+      - alert: DriftRemediationPersistentHighSeverity
+        expr: |
+          (
+            perception_drift_model_severity > 0.8
+          ) unless on(model, version) (
+            perception_models_deployment_canary_active > 0
+          )
+        for: 30m
+        labels:
+          severity: critical
+          service: perception
+          category: drift
+        annotations:
+          summary: "Critical drift for {{ $labels.model }} without remediation plan"
+          description: "Model {{ $labels.model }} version {{ $labels.version }} has drift severity {{ $value | humanize }} but no active canary deployment exists. Investigate drift cause and initiate remediation."
+          runbook_url: "https://docs.butterfly.io/runbooks/drift-remediation-loop"
+
+      - alert: DriftRemediationRepeatedFailures
+        expr: |
+          increase(perception_models_deployment_canary_rollback_total[1h]) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: perception
+          category: drift
+        annotations:
+          summary: "Repeated canary rollbacks for model {{ $labels.model }}"
+          description: "Model {{ $labels.model }} has experienced {{ $value | humanize }} canary rollbacks in the last hour. Review model quality and training data."
+          runbook_url: "https://docs.butterfly.io/runbooks/drift-remediation-loop"
+
+      - alert: DriftDetectionRateSpike
+        expr: |
+          (
+            sum(rate(perception_drift_model_detected_total[5m])) by (model)
+            /
+            sum(rate(perception_drift_model_detected_total[1h])) by (model)
+          ) > 3
+        for: 10m
+        labels:
+          severity: warning
+          service: perception
+          category: drift
+        annotations:
+          summary: "Spike in drift detection rate for {{ $labels.model }}"
+          description: "Model {{ $labels.model }} drift detection rate is {{ $value | humanize }}x higher than baseline. May indicate data pipeline issues or concept shift."
+
+      - alert: CanaryDeploymentStalled
+        expr: |
+          (
+            perception_models_deployment_canary_active > 0
+          ) and on(model, version) (
+            time() - perception_models_deployment_canary_last_advance_timestamp > 7200
+          )
+        for: 15m
+        labels:
+          severity: warning
+          service: perception
+          category: drift
+        annotations:
+          summary: "Canary deployment stalled for {{ $labels.model }}"
+          description: "Canary deployment for model {{ $labels.model }} version {{ $labels.version }} has not advanced in over 2 hours. Check evaluation metrics or consider manual intervention."
+          runbook_url: "https://docs.butterfly.io/runbooks/drift-remediation-loop"
+
+      - alert: DriftRemediationPlanExecutionFailure
+        expr: |
+          increase(synapse_decisions_failed_total{plan_type="DRIFT_REMEDIATION"}[30m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: synapse
+          category: drift
+        annotations:
+          summary: "Drift remediation plan execution failed"
+          description: "A DRIFT_REMEDIATION plan failed execution in SYNAPSE. Check PLATO plan status and SYNAPSE action logs."
+          runbook_url: "https://docs.butterfly.io/runbooks/drift-remediation-loop"
+
   # Recording rules for SLO calculations
   - name: butterfly-slo-recordings
     interval: 1m

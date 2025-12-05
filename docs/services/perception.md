@@ -2,7 +2,7 @@
 
 > Sensory and Interpretation Layer for the BUTTERFLY Ecosystem
 
-**Last Updated**: 2025-12-03  
+**Last Updated**: 2025-12-05  
 **Service Port**: 8080  
 **Full Documentation**: [PERCEPTION README](../../PERCEPTION/README.md)
 
@@ -104,6 +104,24 @@ Maintain a coherent world model:
 - **CAPSULE Synchronization**: State persistence
 - **Ignorance Surface**: Track knowledge gaps
 
+### 6. Model Drift Detection
+
+Monitor ML models for distribution shifts:
+- **PSI Analysis**: Population Stability Index for prediction drift
+- **KL Divergence**: Measure distribution divergence from baseline
+- **Feature Drift**: Per-feature distribution monitoring
+- **Auto-Remediation**: Trigger canary deployments on drift detection
+
+See [Drift Governance](../../PERCEPTION/docs/DRIFT_GOVERNANCE.md) for thresholds and event schemas.
+
+### 7. Model Registry & Deployment
+
+Manage ML model lifecycle:
+- **Version Registry**: Track model versions and metadata
+- **Canary Deployments**: Progressive traffic rollout
+- **A/B Testing**: Compare model performance
+- **Automatic Rollback**: Revert on health degradation
+
 ---
 
 ## Module Structure
@@ -117,6 +135,8 @@ Maintain a coherent world model:
 | `perception-signals` | Weak signal processing |
 | `perception-rim` | Reality mesh maintenance |
 | `perception-monitoring` | Health and telemetry |
+| `perception-drift` | ML model drift detection (PSI, KL divergence) |
+| `perception-models` | Model registry and canary deployments |
 
 ---
 
@@ -227,4 +247,6 @@ curl http://localhost:8080/actuator/health
 | [API Reference](../../PERCEPTION/docs/api/) | API documentation |
 | [Operations Guide](../../PERCEPTION/docs/operations/) | Operational guides |
 | [Architecture](../../PERCEPTION/docs/architecture/) | Technical architecture |
+| [Drift Governance](../../PERCEPTION/docs/DRIFT_GOVERNANCE.md) | Drift detection thresholds and event schemas |
+| [Drift Remediation Runbook](../operations/runbooks/drift-remediation-loop.md) | Operational procedures for drift remediation |
 

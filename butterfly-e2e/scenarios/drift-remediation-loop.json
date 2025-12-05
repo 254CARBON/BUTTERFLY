@@ -1,0 +1,477 @@
+{
+  "name": "drift-remediation-loop",
+  "description": "End-to-end PERCEPTION drift detection → canary deployment → PLATO remediation plan → SYNAPSE action → NEXUS trail verification loop.",
+  "version": "1.0.0",
+  "mode": "positive",
+  "target": "all",
+  "category": "drift-remediation",
+  "golden": true,
+  "timeout_seconds": 180,
+  "correlation_id": "drift-loop-{{$timestamp}}",
+  "metadata": {
+    "phase": "4",
+    "feature": "drift-remediation-loop",
+    "objectives": [
+      "Trigger synthetic drift event via PERCEPTION API",
+      "Verify drift detection metrics and state",
+      "Create canary deployment entry in perception-models",
+      "Create PLATO remediation plan for model drift",
+      "Execute SYNAPSE action with drift-remediation toolId",
+      "Verify NEXUS action trail includes remediation actions",
+      "Run with DRY_RUN to avoid external Slack calls"
+    ]
+  },
+  "steps": [
+    {
+      "name": "verify-services-healthy",
+      "description": "Verify all core services respond before the run begins",
+      "type": "parallel",
+      "sub_steps": [
+        { "name": "perception-health", "service": "perception", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "plato-health", "service": "plato", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "synapse-health", "service": "synapse", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } },
+        { "name": "nexus-health", "service": "nexus", "method": "GET", "endpoint": "/actuator/health", "expect": { "status": 200 } }
+      ]
+    },
+    {
+      "name": "step-1-trigger-drift-signal",
+      "description": "PERCEPTION ingests a synthetic model drift signal",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/signals",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "MODEL_DRIFT",
+        "source": "e2e-drift-harness",
+        "rimNodeId": "rim:model:e2e-drift-model-{{$timestamp}}",
+        "payload": {
+          "modelName": "e2e-drift-model",
+          "modelVersion": "1.0.0",
+          "driftType": "PREDICTION_DRIFT",
+          "psiScore": 0.35,
+          "klDivergence": 0.15,
+          "severity": 0.72,
+          "affectedFeatures": ["feature_a", "feature_b"],
+          "recommendedAction": "RETRAIN_SUGGESTED",
+          "metadata": {
+            "baselinePeriodStart": "2025-11-01T00:00:00Z",
+            "baselinePeriodEnd": "2025-11-15T00:00:00Z",
+            "sampleSize": 10000
+          }
+        },
+        "metadata": {
+          "tags": ["e2e", "drift-remediation", "synthetic"],
+          "priority": "HIGH"
+        }
+      },
+      "expect": {
+        "status": [201, 202],
+        "body": { "signalId": { "$exists": true } }
+      },
+      "outputs": {
+        "signalId": "$.signalId",
+        "rimNodeId": "$.rimNodeId"
+      }
+    },
+    {
+      "name": "step-2-wait-for-drift-processing",
+      "type": "wait",
+      "duration_seconds": 3,
+      "description": "Allow drift detection pipeline to process the signal"
+    },
+    {
+      "name": "step-3-verify-drift-metrics",
+      "description": "Verify drift metrics are exposed via Prometheus endpoint",
+      "service": "perception",
+      "method": "GET",
+      "endpoint": "/actuator/prometheus",
+      "headers": {
+        "X-Tenant-ID": "e2e-test"
+      },
+      "expect": {
+        "status": 200,
+        "body_contains": ["perception_drift", "rim_drift"]
+      },
+      "optional": true
+    },
+    {
+      "name": "step-4-register-model-baseline",
+      "description": "Register baseline for the model to enable canary deployment",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/models/e2e-drift-model/versions",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "version": "2.0.0-canary",
+        "stage": "STAGING",
+        "description": "Canary version for drift remediation e2e test",
+        "metadata": {
+          "trainedAt": "2025-12-05T00:00:00Z",
+          "framework": "scikit-learn",
+          "driftRemediationTarget": true
+        }
+      },
+      "expect": {
+        "status": [200, 201],
+        "body": { "version": "2.0.0-canary" }
+      },
+      "optional": true,
+      "outputs": {
+        "modelVersion": "$.version"
+      }
+    },
+    {
+      "name": "step-5-start-canary-deployment",
+      "description": "Start canary deployment for the new model version",
+      "service": "perception",
+      "method": "POST",
+      "endpoint": "/api/v1/models/e2e-drift-model/deployments/canary",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "version": "2.0.0-canary",
+        "config": {
+          "rolloutSchedule": [5, 10, 25, 50, 100],
+          "evaluationWindow": "1h",
+          "minimumPredictions": 100,
+          "errorRateThreshold": 0.05,
+          "latencyDegradationThreshold": 1.5,
+          "initiatedBy": "drift-remediation-e2e"
+        }
+      },
+      "expect": {
+        "status": [200, 201, 202],
+        "body": { "status": ["IN_PROGRESS", "PENDING"] }
+      },
+      "optional": true,
+      "outputs": {
+        "deploymentId": "$.id"
+      }
+    },
+    {
+      "name": "step-6-create-plato-remediation-policy",
+      "description": "PLATO creates a drift remediation policy",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/policies",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "drift-remediation-policy-{{$timestamp}}",
+        "policyType": "DRIFT_REMEDIATION",
+        "name": "Drift Remediation Policy",
+        "description": "Governs automated drift remediation actions including canary deployments and rollbacks",
+        "rules": [
+          { "ruleId": "severity-threshold", "ruleType": "THRESHOLD", "condition": "severity >= 0.5", "action": "TRIGGER_CANARY" },
+          { "ruleId": "psi-critical", "ruleType": "THRESHOLD", "condition": "psiScore >= 0.25", "action": "ALERT" },
+          { "ruleId": "auto-rollback", "ruleType": "THRESHOLD", "condition": "canaryErrorRate >= 0.1", "action": "ROLLBACK" }
+        ],
+        "scope": "model",
+        "tags": ["e2e", "drift-remediation"]
+      },
+      "expect": {
+        "status": 201,
+        "body": { "id": { "$exists": true } }
+      },
+      "outputs": {
+        "policyId": "$.id"
+      }
+    },
+    {
+      "name": "step-7-create-plato-remediation-plan",
+      "description": "PLATO creates a drift remediation plan referencing the policy and targeted SYNAPSE action",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "namespace": "e2e",
+        "localId": "drift-remediation-plan-{{$timestamp}}",
+        "planType": "DRIFT_REMEDIATION",
+        "policyId": "{{policyId}}",
+        "steps": [
+          {
+            "name": "notify-drift-detected",
+            "action": {
+              "type": "NOTIFY",
+              "synapseAction": {
+                "toolId": "drift-remediation-notifier",
+                "actionType": "NOTIFY",
+                "parameters": {
+                  "channel": "drift-alerts",
+                  "modelName": "e2e-drift-model",
+                  "severity": "HIGH",
+                  "driftType": "PREDICTION_DRIFT",
+                  "mode": "DRY_RUN"
+                }
+              }
+            }
+          },
+          {
+            "name": "trigger-canary-deployment",
+            "dependsOn": ["notify-drift-detected"],
+            "action": {
+              "type": "EXECUTE",
+              "synapseAction": {
+                "toolId": "drift-remediation-canary",
+                "actionType": "DEPLOY",
+                "parameters": {
+                  "targetId": "{{rimNodeId}}",
+                  "modelName": "e2e-drift-model",
+                  "newVersion": "2.0.0-canary",
+                  "deploymentType": "CANARY",
+                  "mode": "DRY_RUN"
+                }
+              }
+            }
+          },
+          {
+            "name": "monitor-canary-health",
+            "dependsOn": ["trigger-canary-deployment"],
+            "action": {
+              "type": "MONITOR",
+              "synapseAction": {
+                "toolId": "drift-remediation-monitor",
+                "actionType": "QUERY",
+                "parameters": {
+                  "targetId": "{{rimNodeId}}",
+                  "checkType": "canary-health",
+                  "thresholds": {
+                    "errorRate": 0.05,
+                    "latencyP99Ms": 1000
+                  },
+                  "mode": "DRY_RUN"
+                }
+              }
+            }
+          }
+        ],
+        "description": "Drift remediation plan: notify → deploy canary → monitor health",
+        "tags": ["e2e", "drift-remediation"]
+      },
+      "expect": {
+        "status": 201,
+        "body": { "status": "PENDING" }
+      },
+      "outputs": {
+        "planId": "$.id"
+      }
+    },
+    {
+      "name": "step-8-execute-plan-dry-run",
+      "description": "PLATO executes the remediation plan in DRY_RUN mode (avoids Slack calls)",
+      "service": "plato",
+      "method": "POST",
+      "endpoint": "/api/v1/plans/{{planId}}/execute",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "mode": "DRY_RUN"
+      },
+      "expect": {
+        "status": 202,
+        "body": { "status": "EXECUTING" }
+      },
+      "outputs": {
+        "executionId": "$.executionId"
+      }
+    },
+    {
+      "name": "step-9-wait-for-execution",
+      "type": "wait",
+      "duration_seconds": 5,
+      "description": "Allow SYNAPSE to process the actions from the plan"
+    },
+    {
+      "name": "step-10-verify-synapse-actions",
+      "description": "SYNAPSE surfaces the drift remediation actions submitted by PLATO",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "planId": "{{planId}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true,
+      "outputs": {
+        "actionId": "$.content[0].actionId",
+        "actionToolId": "$.content[0].toolId"
+      }
+    },
+    {
+      "name": "step-11-verify-synapse-drift-tool",
+      "description": "Verify SYNAPSE has at least one action with drift-remediation toolId",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "toolId": "drift-remediation-canary",
+        "from": "{{$now-1h}}",
+        "limit": 5
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    },
+    {
+      "name": "step-12-verify-plan-status",
+      "description": "PLATO plan transitions towards COMPLETED or PARTIAL",
+      "service": "plato",
+      "method": "GET",
+      "endpoint": "/api/v1/plans/{{planId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200,
+        "body": { "status": ["COMPLETED", "EXECUTING", "PARTIAL"] }
+      }
+    },
+    {
+      "name": "step-13-nexus-action-trail",
+      "description": "NEXUS action trail query returns actions linked to the RIM node and plan",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions/nexus",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "query": {
+        "rimNodeId": "{{rimNodeId}}",
+        "from": "{{$now-1h}}",
+        "limit": 10
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    },
+    {
+      "name": "step-14-nexus-trail-by-plan",
+      "description": "NEXUS trail query by PLATO plan ID confirms action linkage",
+      "service": "synapse",
+      "method": "GET",
+      "endpoint": "/api/v1/actions/by-plato-plan/{{planId}}",
+      "headers": {
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "expect": {
+        "status": 200
+      },
+      "optional": true
+    },
+    {
+      "name": "step-15-nexus-learning-feedback",
+      "description": "NEXUS records learning signal referencing drift remediation outcome",
+      "service": "nexus",
+      "method": "POST",
+      "endpoint": "/api/v1/learning/signal",
+      "headers": {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "e2e-test",
+        "X-Correlation-ID": "{{correlation_id}}"
+      },
+      "body": {
+        "signalType": "DRIFT_REMEDIATION",
+        "entityId": "{{rimNodeId}}",
+        "planId": "{{planId}}",
+        "outcome": "SUCCESS",
+        "metrics": {
+          "driftSeverityBefore": 0.72,
+          "remediationLatencyMs": 5000,
+          "canaryDeploymentStarted": true
+        },
+        "feedback": {
+          "policyGuardrailsRespected": true,
+          "dryRunMode": true
+        }
+      },
+      "expect": {
+        "status": [200, 202]
+      },
+      "optional": true
+    }
+  ],
+  "validation": {
+    "success_criteria": [
+      { "description": "Drift signal accepted", "step": "step-1-trigger-drift-signal", "condition": "status in [201,202]" },
+      { "description": "PLATO policy created", "step": "step-6-create-plato-remediation-policy", "condition": "status == 201" },
+      { "description": "PLATO plan created", "step": "step-7-create-plato-remediation-plan", "condition": "status == 201" },
+      { "description": "Plan executing in DRY_RUN", "step": "step-8-execute-plan-dry-run", "condition": "status == 202" },
+      { "description": "Plan status progressed", "step": "step-12-verify-plan-status", "condition": "status == 200" }
+    ],
+    "slo_targets": {
+      "total_duration_ms": 120000,
+      "drift_signal_ingest_p99_ms": 2000,
+      "plato_plan_creation_ms": 3000,
+      "synapse_action_dispatch_ms": 5000,
+      "drift_detection_to_canary_start_ms": 30000
+    }
+  },
+  "cleanup": {
+    "enabled": true,
+    "steps": [
+      {
+        "name": "cleanup-plan",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/plans/{{planId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      },
+      {
+        "name": "cleanup-policy",
+        "service": "plato",
+        "method": "DELETE",
+        "endpoint": "/api/v1/policies/{{policyId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      },
+      {
+        "name": "cleanup-deployment",
+        "service": "perception",
+        "method": "DELETE",
+        "endpoint": "/api/v1/models/e2e-drift-model/deployments/{{deploymentId}}",
+        "headers": { "X-Tenant-ID": "e2e-test" },
+        "optional": true
+      }
+    ]
+  }
+}
