@@ -66,6 +66,12 @@ public class Agent {
     private GovernanceConfig governanceConfig;
 
     /**
+     * Specialization defining the agent's domain expertise and capabilities.
+     * Used for intelligent task routing in multi-agent orchestration.
+     */
+    private AgentSpecialization specialization;
+
+    /**
      * Current status of the agent.
      */
     private AgentStatus status;
@@ -197,5 +203,47 @@ public class Agent {
      */
     public boolean requiresApproval() {
         return governanceConfig != null && governanceConfig.isApprovalRequired();
+    }
+
+    /**
+     * Check if this agent has specialization defined.
+     */
+    public boolean hasSpecialization() {
+        return specialization != null;
+    }
+
+    /**
+     * Check if this agent specializes in a given domain.
+     */
+    public boolean hasDomain(String domain) {
+        return specialization != null && specialization.hasDomain(domain);
+    }
+
+    /**
+     * Check if this agent has a specific capability.
+     */
+    public boolean hasCapability(String capability) {
+        return specialization != null && specialization.hasCapability(capability);
+    }
+
+    /**
+     * Calculate match score for given requirements.
+     * Returns 0.5 (neutral) if no specialization is defined.
+     */
+    public double calculateMatchScore(java.util.Set<String> requiredDomains, 
+                                       java.util.Set<String> requiredCapabilities) {
+        if (specialization == null) {
+            return 0.5; // Neutral match
+        }
+        return specialization.calculateMatchScore(requiredDomains, requiredCapabilities);
+    }
+
+    /**
+     * Update the agent's domain score based on task outcome.
+     */
+    public void updateDomainScore(String domain, double score) {
+        if (specialization != null) {
+            specialization.updateDomainScore(domain, score);
+        }
     }
 }

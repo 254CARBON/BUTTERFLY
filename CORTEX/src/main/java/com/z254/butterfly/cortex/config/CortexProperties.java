@@ -22,6 +22,7 @@ public class CortexProperties {
     private MemoryProperties memory = new MemoryProperties();
     private SafetyProperties safety = new SafetyProperties();
     private AgentProperties agent = new AgentProperties();
+    private MultiAgentProperties multiAgent = new MultiAgentProperties();
     private KafkaProperties kafka = new KafkaProperties();
     private ClientProperties clients = new ClientProperties();
     private SecurityProperties security = new SecurityProperties();
@@ -202,6 +203,92 @@ public class CortexProperties {
         }
     }
 
+    /**
+     * Multi-agent orchestration properties.
+     */
+    @Data
+    public static class MultiAgentProperties {
+        /**
+         * Whether multi-agent orchestration is enabled.
+         */
+        private boolean enabled = true;
+
+        /**
+         * Maximum number of agents in a team.
+         */
+        private int maxTeamSize = 10;
+
+        /**
+         * Maximum number of subtasks per team task.
+         */
+        private int maxSubTasks = 20;
+
+        /**
+         * Maximum number of debate rounds.
+         */
+        private int maxDebateRounds = 5;
+
+        /**
+         * Consensus threshold for debate teams (0.0 - 1.0).
+         */
+        private double consensusThreshold = 0.7;
+
+        /**
+         * Default timeout for team tasks.
+         */
+        private Duration teamTaskTimeout = Duration.ofMinutes(10);
+
+        /**
+         * Default timeout for subtasks.
+         */
+        private Duration subTaskTimeout = Duration.ofMinutes(3);
+
+        /**
+         * Maximum concurrent subtasks per team.
+         */
+        private int maxConcurrentSubTasks = 5;
+
+        /**
+         * Token budget for team tasks.
+         */
+        private int tokenBudget = 50000;
+
+        /**
+         * Token budget per agent per task.
+         */
+        private int tokenBudgetPerAgent = 10000;
+
+        /**
+         * Default coordination pattern.
+         */
+        private String defaultPattern = "HIERARCHICAL";
+
+        /**
+         * Maximum messages in a team conversation.
+         */
+        private int maxMessages = 100;
+
+        /**
+         * Whether to deduplicate similar messages.
+         */
+        private boolean deduplicateMessages = true;
+
+        /**
+         * Whether to enable critic review by default.
+         */
+        private boolean enableCriticReview = true;
+
+        /**
+         * Whether to require governance approval for team tasks.
+         */
+        private boolean requireGovernanceApproval = false;
+
+        /**
+         * Whether to persist team conversations to CAPSULE.
+         */
+        private boolean persistToCapsule = true;
+    }
+
     @Data
     public static class KafkaProperties {
         private String schemaRegistryUrl = "http://localhost:8081";
@@ -214,6 +301,12 @@ public class CortexProperties {
             private String agentThoughts = "cortex.agent.thoughts";
             private String conversations = "cortex.conversations";
             private String dlq = "cortex.dlq";
+            
+            // Multi-agent team topics
+            private String teamTasks = "cortex.team.tasks";
+            private String teamResults = "cortex.team.results";
+            private String teamThoughts = "cortex.team.thoughts";
+            private String agentMessages = "cortex.agent.messages";
         }
     }
 

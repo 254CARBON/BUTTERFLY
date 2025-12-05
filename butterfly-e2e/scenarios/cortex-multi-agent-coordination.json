@@ -1,96 +1,281 @@
 {
   "name": "cortex-multi-agent-coordination",
-  "description": "Multiple agents collaborating on a complex task with coordination events",
-  "version": "1.0.0",
+  "description": "Multi-agent team coordination using hierarchical, debate, chain, and parallel patterns",
+  "version": "2.0.0",
   "target": "cortex",
   "setup": {
     "services": ["cortex", "plato", "synapse", "capsule"],
-    "kafka_topics": ["cortex.agent.thoughts", "cortex.agent.episodes", "cortex.coordination"],
+    "kafka_topics": [
+      "cortex.team.tasks",
+      "cortex.team.results",
+      "cortex.team.thoughts",
+      "cortex.agent.messages"
+    ],
     "agents": [
-      {"agentId": "analyst-agent", "type": "analyzer"},
-      {"agentId": "executor-agent", "type": "executor"},
-      {"agentId": "validator-agent", "type": "validator"}
+      {
+        "agentId": "orchestrator-001",
+        "name": "Task Orchestrator",
+        "type": "PLAN_AND_EXECUTE",
+        "specialization": {
+          "domains": ["orchestration", "planning"],
+          "capabilities": ["decomposition", "synthesis", "coordination"]
+        }
+      },
+      {
+        "agentId": "analyst-001",
+        "name": "Data Analyst",
+        "type": "REACT",
+        "specialization": {
+          "domains": ["analysis", "data"],
+          "capabilities": ["analysis", "research", "insights"]
+        }
+      },
+      {
+        "agentId": "developer-001",
+        "name": "Developer",
+        "type": "REACT",
+        "specialization": {
+          "domains": ["code", "software"],
+          "capabilities": ["generation", "review", "debugging"]
+        }
+      },
+      {
+        "agentId": "critic-001",
+        "name": "Quality Critic",
+        "type": "REACT",
+        "specialization": {
+          "domains": ["review", "quality"],
+          "capabilities": ["review", "validation", "critique"]
+        }
+      }
     ]
   },
   "steps": [
     {
-      "name": "submit_collaborative_task",
+      "name": "create_hierarchical_team",
       "action": "http_post",
-      "endpoint": "/api/v1/tasks/collaborative",
+      "endpoint": "/api/v1/teams",
       "payload": {
-        "taskId": "collab-task-001",
-        "description": "Perform root cause analysis and remediation for high latency",
-        "phases": [
-          {"name": "analysis", "assignedAgent": "analyst-agent"},
-          {"name": "execution", "assignedAgent": "executor-agent"},
-          {"name": "validation", "assignedAgent": "validator-agent"}
+        "name": "Analysis Team",
+        "description": "Hierarchical team for complex analysis tasks",
+        "teamType": "HIERARCHICAL",
+        "orchestratorAgentId": "orchestrator-001",
+        "members": [
+          {
+            "agentId": "orchestrator-001",
+            "role": "ORCHESTRATOR",
+            "canDelegate": true,
+            "canApprove": true,
+            "priority": 100
+          },
+          {
+            "agentId": "analyst-001",
+            "role": "SPECIALIST",
+            "specializations": ["analysis", "research"],
+            "priority": 50
+          },
+          {
+            "agentId": "developer-001",
+            "role": "SPECIALIST",
+            "specializations": ["code", "implementation"],
+            "priority": 50
+          },
+          {
+            "agentId": "critic-001",
+            "role": "CRITIC",
+            "canApprove": true,
+            "priority": 75
+          }
         ],
-        "coordinationMode": "sequential_handoff"
+        "coordinationConfig": {
+          "pattern": "HIERARCHICAL",
+          "maxSubTasks": 10,
+          "enableCriticReview": true,
+          "consensusThreshold": 0.7,
+          "taskTimeout": "PT10M"
+        }
       },
       "expect": {
-        "status": 202
+        "status": 201,
+        "body": {
+          "status": "DRAFT"
+        }
+      },
+      "store": {
+        "teamId": "$.id"
       }
     },
     {
-      "name": "verify_analyst_starts",
-      "action": "kafka_consume",
-      "topic": "cortex.agent.episodes",
-      "timeout_seconds": 15,
-      "filter": {"agentId": "analyst-agent"},
-      "expect": {
-        "status": "IN_PROGRESS"
-      }
-    },
-    {
-      "name": "verify_handoff_to_executor",
-      "action": "kafka_consume",
-      "topic": "cortex.coordination",
-      "timeout_seconds": 60,
-      "expect": {
-        "coordinationType": "HANDOFF",
-        "sourceAgentId": "analyst-agent",
-        "targetAgentIds_contains": ["executor-agent"]
-      }
-    },
-    {
-      "name": "verify_executor_receives",
-      "action": "kafka_consume",
-      "topic": "cortex.agent.episodes",
-      "timeout_seconds": 15,
-      "filter": {"agentId": "executor-agent"},
-      "expect": {
-        "status": "IN_PROGRESS"
-      }
-    },
-    {
-      "name": "verify_handoff_to_validator",
-      "action": "kafka_consume",
-      "topic": "cortex.coordination",
-      "timeout_seconds": 60,
-      "expect": {
-        "coordinationType": "HANDOFF",
-        "sourceAgentId": "executor-agent",
-        "targetAgentIds_contains": ["validator-agent"]
-      }
-    },
-    {
-      "name": "verify_all_complete",
-      "action": "http_get",
-      "endpoint": "/api/v1/tasks/collab-task-001/status",
-      "retry": {"max_attempts": 12, "interval_seconds": 5},
+      "name": "activate_team",
+      "action": "http_post",
+      "endpoint": "/api/v1/teams/${teamId}/activate",
       "expect": {
         "status": 200,
         "body": {
-          "overallStatus": "COMPLETED",
-          "phases_all_completed": true
+          "status": "ACTIVE"
         }
+      }
+    },
+    {
+      "name": "submit_team_task",
+      "action": "http_post",
+      "endpoint": "/api/v1/teams/${teamId}/tasks",
+      "payload": {
+        "input": "Analyze the recent system performance data and provide recommendations for optimization. Include code snippets for any suggested changes.",
+        "context": {
+          "priority": "high",
+          "domain": "system-optimization"
+        },
+        "tokenBudget": 50000
+      },
+      "expect": {
+        "status": 201,
+        "body": {
+          "status": "PENDING"
+        }
+      },
+      "store": {
+        "taskId": "$.id"
+      }
+    },
+    {
+      "name": "execute_team_task",
+      "action": "http_post",
+      "endpoint": "/api/v1/teams/${teamId}/tasks/execute",
+      "payload": {
+        "input": "Analyze the recent system performance data and provide recommendations for optimization. Include code snippets for any suggested changes.",
+        "context": {
+          "priority": "high",
+          "domain": "system-optimization"
+        }
+      },
+      "timeout_seconds": 300,
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": "COMPLETED"
+        }
+      },
+      "store": {
+        "resultTaskId": "$.teamTaskId"
+      }
+    },
+    {
+      "name": "verify_task_decomposition",
+      "action": "kafka_consume",
+      "topic": "cortex.team.thoughts",
+      "timeout_seconds": 60,
+      "filter": {
+        "teamTaskId": "${resultTaskId}",
+        "type": "TASK_DECOMPOSING"
+      },
+      "expect": {
+        "agentRole": "ORCHESTRATOR"
+      }
+    },
+    {
+      "name": "verify_agent_execution",
+      "action": "kafka_consume",
+      "topic": "cortex.team.thoughts",
+      "timeout_seconds": 120,
+      "filter": {
+        "teamTaskId": "${resultTaskId}",
+        "type": "TASK_COMPLETED"
+      },
+      "expect_count_gte": 2
+    },
+    {
+      "name": "verify_critic_review",
+      "action": "kafka_consume",
+      "topic": "cortex.team.thoughts",
+      "timeout_seconds": 60,
+      "filter": {
+        "teamTaskId": "${resultTaskId}",
+        "type": "CRITIQUE_GIVEN"
+      },
+      "expect": {
+        "agentRole": "CRITIC"
+      }
+    },
+    {
+      "name": "verify_final_output",
+      "action": "kafka_consume",
+      "topic": "cortex.team.thoughts",
+      "timeout_seconds": 60,
+      "filter": {
+        "teamTaskId": "${resultTaskId}",
+        "type": "FINAL_OUTPUT"
+      },
+      "expect": {
+        "confidence_gte": 0.6
+      }
+    },
+    {
+      "name": "verify_inter_agent_messages",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.messages",
+      "timeout_seconds": 30,
+      "filter": {
+        "teamTaskId": "${resultTaskId}"
+      },
+      "expect_count_gte": 1
+    },
+    {
+      "name": "get_task_result",
+      "action": "http_get",
+      "endpoint": "/api/v1/teams/${teamId}/tasks/${resultTaskId}/result",
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": "COMPLETED",
+          "agentCount_gte": 3,
+          "successfulSubTasks_gte": 1
+        }
+      }
+    },
+    {
+      "name": "get_task_messages",
+      "action": "http_get",
+      "endpoint": "/api/v1/teams/${teamId}/tasks/${resultTaskId}/messages",
+      "expect": {
+        "status": 200,
+        "body_array_length_gte": 1
+      }
+    },
+    {
+      "name": "get_team_stats",
+      "action": "http_get",
+      "endpoint": "/api/v1/teams/${teamId}/stats",
+      "expect": {
+        "status": 200,
+        "body": {
+          "totalTasks_gte": 1,
+          "successfulTasks_gte": 1
+        }
+      }
+    },
+    {
+      "name": "cleanup_team",
+      "action": "http_delete",
+      "endpoint": "/api/v1/teams/${teamId}",
+      "expect": {
+        "status": 204
       }
     }
   ],
   "assertions": {
-    "all_agents_participated": true,
-    "coordination_events_gte": 2,
-    "no_agent_failures": true,
-    "sequential_execution_maintained": true
+    "team_created_successfully": true,
+    "task_decomposed_into_subtasks": true,
+    "all_specialists_participated": true,
+    "critic_reviewed_outputs": true,
+    "final_result_synthesized": true,
+    "inter_agent_communication_occurred": true,
+    "no_timeout_errors": true,
+    "confidence_threshold_met": true
+  },
+  "slo": {
+    "total_execution_time_seconds_lte": 300,
+    "task_success_rate_gte": 0.9,
+    "average_subtask_duration_seconds_lte": 60
   }
 }
