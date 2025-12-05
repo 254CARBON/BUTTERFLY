@@ -1,0 +1,211 @@
+# Chaos Experiment: Multi-Agent Network Partition
+#
+# Purpose:
+#   - Validate CORTEX handles network partition between agent coordinators
+#   - Confirm task handoffs handle connectivity loss
+#   - Test agent isolation detection and recovery
+#   - Verify coordination event consistency
+#
+# Related Docs: docs/operations/runbooks/cortex-operations.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: multi-agent-partition
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: partition
+    chaos.butterfly.io/target: cortex
+    chaos.butterfly.io/severity: high
+spec:
+  entry: multi-agent-partition-workflow
+  templates:
+    - name: multi-agent-partition-workflow
+      templateType: Serial
+      deadline: 35m
+      children:
+        - capture-baseline
+        - start-multi-agent-task
+        - inject-partition
+        - verify-partition-detection
+        - verify-task-continuity
+        - release-partition
+        - verify-coordination-recovery
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline multi-agent coordination metrics..."
+              curl -s http://cortex:8080/actuator/prometheus | grep -E "coordination_|handoff_" || true
+              
+              # Check coordinator health
+              curl -s http://cortex:8080/api/v1/cortex/coordinators/health
+
+    - name: start-multi-agent-task
+      templateType: Task
+      task:
+        container:
+          name: start-task
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting multi-agent collaborative task..."
+              curl -s -X POST http://cortex:8080/api/v1/tasks/collaborative \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "taskId": "partition-test-task",
+                  "description": "Multi-phase analysis requiring agent coordination",
+                  "phases": [
+                    {"name": "data-collection", "assignedAgent": "collector-agent"},
+                    {"name": "analysis", "assignedAgent": "analyzer-agent"},
+                    {"name": "synthesis", "assignedAgent": "synthesizer-agent"}
+                  ],
+                  "coordinationMode": "sequential_handoff",
+                  "timeout": "20m"
+                }'
+              
+              sleep 10
+              echo "Task started, waiting for first handoff..."
+
+    - name: inject-partition
+      templateType: NetworkChaos
+      networkChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: cortex
+            app.kubernetes.io/component: coordinator
+        action: partition
+        mode: all
+        direction: both
+        duration: "10m"
+
+    - name: verify-partition-detection
+      templateType: Task
+      task:
+        container:
+          name: partition-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying partition detection..."
+              sleep 60
+              
+              # Check for partition detection events
+              curl -s http://cortex:8080/actuator/prometheus | grep "partition_detected" || true
+              
+              # Check coordinator status
+              curl -s http://cortex:8080/api/v1/cortex/coordinators/status
+              
+              # Check Kafka coordination topic for partition events
+              echo "Coordination events during partition:"
+              curl -s "http://cortex:8080/api/v1/coordination/events?taskId=partition-test-task&limit=10"
+
+    - name: verify-task-continuity
+      templateType: Task
+      task:
+        container:
+          name: task-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying task continuity during partition..."
+              sleep 45
+              
+              # Task should not be lost
+              curl -s "http://cortex:8080/api/v1/tasks/partition-test-task/status"
+              
+              # Individual agents should continue their phase
+              curl -s "http://cortex:8080/api/v1/agents/collector-agent/episodes/latest"
+              curl -s "http://cortex:8080/api/v1/agents/analyzer-agent/episodes/latest"
+              
+              # Check for handoff retry/queueing
+              curl -s http://cortex:8080/actuator/prometheus | grep "handoff_queued" || true
+
+    - name: release-partition
+      templateType: Task
+      task:
+        container:
+          name: release
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for NetworkChaos partition to heal..."
+              sleep 15
+
+    - name: verify-coordination-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying multi-agent coordination recovery..."
+              sleep 120
+              
+              # Coordinators should reconnect
+              curl -s http://cortex:8080/api/v1/cortex/coordinators/health
+              
+              # Queued handoffs should complete
+              curl -s http://cortex:8080/actuator/prometheus | grep "handoff_completed" || true
+              
+              # Task should progress or complete
+              curl -s "http://cortex:8080/api/v1/tasks/partition-test-task/status" | \
+                grep -E "status|completedPhases"
+              
+              # No duplicate work
+              curl -s http://cortex:8080/actuator/prometheus | grep "duplicate_task_execution" || true
+              
+              # Coordination consistency check
+              curl -s http://cortex:8080/api/v1/cortex/coordination/consistency-check
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: multi-agent-partition-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - Partition is detected within 30 seconds
+    - Individual agents continue their work
+    - Task state is preserved (not lost)
+    - Handoffs are queued, not dropped
+    - Coordination recovers after partition heals
+    - No duplicate task execution
+    - Event ordering is preserved
+
+  fail_criteria: |
+    - Task state is lost during partition
+    - Agents crash when coordination fails
+    - Duplicate work performed
+    - Handoffs dropped silently
+    - Coordination deadlock
+    - Event ordering corrupted
+
+  remediation: |
+    1. Review coordinator heartbeat intervals
+    2. Check handoff queue persistence settings
+    3. Verify Kafka partition tolerance
+    4. Review agent isolation detection thresholds
+    5. Check consensus algorithm timeouts
+    6. Review task state persistence

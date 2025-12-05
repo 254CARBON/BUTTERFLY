@@ -1,0 +1,338 @@
+{
+  "name": "perception-multimodal-ingestion",
+  "description": "E2E test scenario for multi-modal content ingestion pipeline",
+  "version": "1.0.0",
+  "timeout": "PT10M",
+  "tags": ["perception", "multimodal", "ingestion", "e2e"],
+  "prerequisites": [
+    {
+      "name": "perception-multimodal-service",
+      "type": "service",
+      "healthEndpoint": "/actuator/health",
+      "timeout": "PT30S"
+    },
+    {
+      "name": "kafka",
+      "type": "infrastructure",
+      "topics": [
+        "perception.multimodal.vision",
+        "perception.multimodal.audio",
+        "perception.multimodal.documents"
+      ]
+    },
+    {
+      "name": "vector-store",
+      "type": "service",
+      "healthEndpoint": "/health"
+    }
+  ],
+  "testData": {
+    "documents": [
+      {
+        "id": "test-pdf-001",
+        "type": "PDF",
+        "path": "test-data/sample-document.pdf",
+        "expectedTables": 2,
+        "expectedTextLength": 5000
+      },
+      {
+        "id": "test-docx-001",
+        "type": "DOCX",
+        "path": "test-data/sample-report.docx",
+        "expectedTextLength": 3000
+      }
+    ],
+    "images": [
+      {
+        "id": "test-image-001",
+        "type": "JPEG",
+        "path": "test-data/sample-image.jpg",
+        "expectOCR": true,
+        "expectedMetadata": ["width", "height", "format"]
+      },
+      {
+        "id": "test-image-002",
+        "type": "PNG",
+        "path": "test-data/chart-image.png",
+        "expectOCR": false
+      }
+    ],
+    "audio": [
+      {
+        "id": "test-audio-001",
+        "type": "MP3",
+        "path": "test-data/sample-audio.mp3",
+        "durationSeconds": 30,
+        "expectTranscription": true
+      }
+    ]
+  },
+  "steps": [
+    {
+      "name": "ingest-pdf-document",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/perception/ingest",
+      "contentType": "multipart/form-data",
+      "body": {
+        "file": "${testData.documents[0].path}",
+        "metadata": {
+          "source": "e2e-test",
+          "documentType": "report"
+        }
+      },
+      "assertions": [
+        {
+          "type": "STATUS_CODE",
+          "expected": 202
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.status",
+          "expected": "PROCESSING"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.contentId",
+          "expected": "NOT_NULL"
+        }
+      ],
+      "saveAs": "pdfIngestionResult"
+    },
+    {
+      "name": "wait-for-pdf-processing",
+      "action": "POLL",
+      "endpoint": "/api/v1/perception/content/${pdfIngestionResult.contentId}/status",
+      "interval": "PT2S",
+      "timeout": "PT60S",
+      "condition": {
+        "type": "JSON_PATH",
+        "path": "$.status",
+        "expected": "COMPLETED"
+      }
+    },
+    {
+      "name": "verify-pdf-extraction",
+      "action": "HTTP_GET",
+      "endpoint": "/api/v1/perception/content/${pdfIngestionResult.contentId}",
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.modality",
+          "expected": "PDF"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.textContent",
+          "matcher": "LENGTH_GREATER_THAN",
+          "expected": 1000
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.tables.length()",
+          "expected": 2
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.metadata.pageCount",
+          "matcher": "GREATER_THAN",
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "verify-kafka-document-event",
+      "action": "KAFKA_CONSUME",
+      "topic": "perception.multimodal.documents",
+      "timeout": "PT30S",
+      "filter": {
+        "contentId": "${pdfIngestionResult.contentId}"
+      },
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.modality",
+          "expected": "PDF"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.processingSuccess",
+          "expected": true
+        }
+      ]
+    },
+    {
+      "name": "ingest-image-with-ocr",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/perception/ingest",
+      "contentType": "multipart/form-data",
+      "body": {
+        "file": "${testData.images[0].path}",
+        "metadata": {
+          "source": "e2e-test",
+          "enableOCR": true
+        }
+      },
+      "assertions": [
+        {
+          "type": "STATUS_CODE",
+          "expected": 202
+        }
+      ],
+      "saveAs": "imageIngestionResult"
+    },
+    {
+      "name": "wait-for-image-processing",
+      "action": "POLL",
+      "endpoint": "/api/v1/perception/content/${imageIngestionResult.contentId}/status",
+      "interval": "PT2S",
+      "timeout": "PT60S",
+      "condition": {
+        "type": "JSON_PATH",
+        "path": "$.status",
+        "expected": "COMPLETED"
+      }
+    },
+    {
+      "name": "verify-image-extraction",
+      "action": "HTTP_GET",
+      "endpoint": "/api/v1/perception/content/${imageIngestionResult.contentId}",
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.modality",
+          "expected": "IMAGE"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.metadata.width",
+          "matcher": "GREATER_THAN",
+          "expected": 0
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.metadata.height",
+          "matcher": "GREATER_THAN",
+          "expected": 0
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.ocrText",
+          "expected": "NOT_NULL"
+        }
+      ]
+    },
+    {
+      "name": "verify-embedding-generated",
+      "action": "HTTP_GET",
+      "endpoint": "/api/v1/perception/content/${imageIngestionResult.contentId}/embedding",
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.dimension",
+          "matcher": "GREATER_THAN",
+          "expected": 100
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.vector",
+          "expected": "NOT_NULL"
+        }
+      ]
+    },
+    {
+      "name": "verify-vector-store-indexed",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/perception/search",
+      "body": {
+        "query": "test image",
+        "topK": 5
+      },
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.results.length()",
+          "matcher": "GREATER_THAN",
+          "expected": 0
+        }
+      ]
+    },
+    {
+      "name": "ingest-audio-file",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/perception/ingest",
+      "contentType": "multipart/form-data",
+      "body": {
+        "file": "${testData.audio[0].path}",
+        "metadata": {
+          "source": "e2e-test",
+          "enableTranscription": true
+        }
+      },
+      "assertions": [
+        {
+          "type": "STATUS_CODE",
+          "expected": 202
+        }
+      ],
+      "saveAs": "audioIngestionResult"
+    },
+    {
+      "name": "wait-for-audio-processing",
+      "action": "POLL",
+      "endpoint": "/api/v1/perception/content/${audioIngestionResult.contentId}/status",
+      "interval": "PT3S",
+      "timeout": "PT120S",
+      "condition": {
+        "type": "JSON_PATH",
+        "path": "$.status",
+        "expected": "COMPLETED"
+      }
+    },
+    {
+      "name": "verify-audio-metadata",
+      "action": "HTTP_GET",
+      "endpoint": "/api/v1/perception/content/${audioIngestionResult.contentId}",
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.modality",
+          "expected": "AUDIO"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.metadata.durationSeconds",
+          "matcher": "GREATER_THAN",
+          "expected": 0
+        }
+      ]
+    }
+  ],
+  "cleanup": [
+    {
+      "action": "HTTP_DELETE",
+      "endpoint": "/api/v1/perception/content/${pdfIngestionResult.contentId}"
+    },
+    {
+      "action": "HTTP_DELETE",
+      "endpoint": "/api/v1/perception/content/${imageIngestionResult.contentId}"
+    },
+    {
+      "action": "HTTP_DELETE",
+      "endpoint": "/api/v1/perception/content/${audioIngestionResult.contentId}"
+    }
+  ],
+  "metrics": {
+    "collect": [
+      "perception.ingestion.duration",
+      "perception.embeddings.generate",
+      "perception.vectorstore.index"
+    ],
+    "assertions": [
+      {
+        "metric": "perception.ingestion.duration",
+        "percentile": "p99",
+        "lessThan": 30000
+      }
+    ]
+  }
+}

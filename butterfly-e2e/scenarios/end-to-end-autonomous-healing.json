@@ -1,0 +1,194 @@
+{
+  "name": "end-to-end-autonomous-healing",
+  "description": "Full autonomous healing loop: detect → diagnose → plan → execute → verify → learn",
+  "version": "1.0.0",
+  "target": "all",
+  "golden": true,
+  "setup": {
+    "services": ["perception", "aurora", "cortex", "plato", "synapse", "capsule", "nexus", "odyssey"],
+    "kafka_topics": [
+      "perception.events.detected",
+      "aurora.anomaly.detection",
+      "aurora.remediation.requests",
+      "aurora.remediation.results",
+      "cortex.agent.episodes",
+      "plato.decisions"
+    ],
+    "target_system": {
+      "service": "order-service",
+      "initial_state": "healthy"
+    }
+  },
+  "steps": [
+    {
+      "name": "inject_failure",
+      "description": "Simulate a cascading failure in order-service",
+      "action": "inject_chaos",
+      "chaos_type": "resource_exhaustion",
+      "target_service": "order-service",
+      "parameters": {
+        "cpu_stress_percent": 95,
+        "memory_pressure_mb": 500,
+        "duration_seconds": 120
+      }
+    },
+    {
+      "name": "perception_detects",
+      "description": "PERCEPTION detects anomalous metrics",
+      "action": "kafka_consume",
+      "topic": "perception.events.detected",
+      "timeout_seconds": 30,
+      "expect": {
+        "eventType": "anomaly",
+        "affectedService": "order-service",
+        "severity_in": ["high", "critical"]
+      }
+    },
+    {
+      "name": "aurora_processes_anomaly",
+      "description": "AURORA receives and processes the anomaly",
+      "action": "kafka_consume",
+      "topic": "aurora.anomaly.detection",
+      "timeout_seconds": 15,
+      "expect": {
+        "anomalyType_in": ["RESOURCE_EXHAUSTION", "LATENCY_SPIKE"],
+        "confidence_gt": 0.8
+      },
+      "capture": {
+        "anomaly_id": "anomalyId"
+      }
+    },
+    {
+      "name": "cortex_diagnoses",
+      "description": "CORTEX agent performs root cause analysis",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.episodes",
+      "timeout_seconds": 60,
+      "filter": {"taskDescription_contains": "root cause"},
+      "expect": {
+        "status_in": ["IN_PROGRESS", "COMPLETED"],
+        "agentType": "diagnostic"
+      }
+    },
+    {
+      "name": "nexus_correlates",
+      "description": "NEXUS correlates with historical patterns",
+      "action": "http_post",
+      "endpoint": "/api/v1/nexus/correlate",
+      "payload": {
+        "anomalyId": "{anomaly_id}",
+        "lookbackHours": 168,
+        "includeRemediation": true
+      },
+      "expect": {
+        "status": 200,
+        "body": {
+          "correlations_found": true,
+          "recommended_actions_not_empty": true
+        }
+      }
+    },
+    {
+      "name": "plato_approves_plan",
+      "description": "PLATO evaluates and approves remediation plan",
+      "action": "kafka_consume",
+      "topic": "plato.decisions",
+      "timeout_seconds": 30,
+      "expect": {
+        "decision": "ALLOW",
+        "planType": "REMEDIATION",
+        "riskAssessment_not_null": true
+      }
+    },
+    {
+      "name": "synapse_executes",
+      "description": "SYNAPSE executes the remediation actions",
+      "action": "http_get",
+      "endpoint": "/api/v1/synapse/actions",
+      "query": {"anomalyId": "{anomaly_id}"},
+      "retry": {"max_attempts": 12, "interval_seconds": 5},
+      "expect": {
+        "status": 200,
+        "body": {
+          "actions_executed_gte": 1,
+          "all_successful": true
+        }
+      }
+    },
+    {
+      "name": "aurora_verifies_healing",
+      "description": "AURORA verifies system has healed",
+      "action": "kafka_consume",
+      "topic": "aurora.remediation.results",
+      "timeout_seconds": 60,
+      "expect": {
+        "success": true,
+        "healthCheckPassed": true,
+        "rollbackPerformed": false
+      }
+    },
+    {
+      "name": "capsule_records_history",
+      "description": "CAPSULE stores the incident record",
+      "action": "http_get",
+      "endpoint": "/api/v1/capsules/incidents/open",
+      "expect": {
+        "status": 200,
+        "body": {
+          "no_open_for_service": "order-service"
+        }
+      }
+    },
+    {
+      "name": "odyssey_simulates_prevention",
+      "description": "ODYSSEY runs simulation to prevent recurrence",
+      "action": "http_post",
+      "endpoint": "/api/v1/odyssey/simulate",
+      "payload": {
+        "scenario": "resource_exhaustion_prevention",
+        "targetService": "order-service",
+        "simulationType": "WHAT_IF",
+        "parameters": {
+          "preventive_scaling": true,
+          "alert_threshold_adjustment": true
+        }
+      },
+      "expect": {
+        "status": 202,
+        "body_contains": ["simulationId"]
+      }
+    },
+    {
+      "name": "verify_system_healthy",
+      "description": "Verify target system is back to healthy state",
+      "action": "http_get",
+      "endpoint": "/api/v1/health/order-service",
+      "retry": {"max_attempts": 6, "interval_seconds": 10},
+      "expect": {
+        "status": 200,
+        "body": {
+          "status": "healthy",
+          "cpu_lt_percent": 80,
+          "memory_lt_percent": 80
+        }
+      }
+    }
+  ],
+  "assertions": {
+    "full_loop_completed": true,
+    "detection_to_resolution_lt_minutes": 5,
+    "no_data_loss": true,
+    "no_cascading_failures": true,
+    "learning_recorded": true,
+    "autonomous_execution": true
+  },
+  "slo": {
+    "mttr_seconds": 300,
+    "detection_latency_seconds": 30,
+    "success_rate_percent": 99
+  },
+  "cleanup": {
+    "remove_chaos": true,
+    "preserve_history": true
+  }
+}

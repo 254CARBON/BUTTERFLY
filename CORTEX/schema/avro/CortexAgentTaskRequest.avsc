@@ -1,0 +1,90 @@
+{
+  "type": "record",
+  "name": "CortexAgentTaskRequest",
+  "namespace": "com.z254.butterfly.cortex.schema",
+  "doc": "Kafka message for agent task requests",
+  "fields": [
+    {
+      "name": "taskId",
+      "type": "string",
+      "doc": "Unique task identifier"
+    },
+    {
+      "name": "agentId",
+      "type": "string",
+      "doc": "Target agent identifier"
+    },
+    {
+      "name": "conversationId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Optional conversation context"
+    },
+    {
+      "name": "input",
+      "type": "string",
+      "doc": "User input/prompt"
+    },
+    {
+      "name": "correlationId",
+      "type": "string",
+      "doc": "Correlation ID for tracing"
+    },
+    {
+      "name": "idempotencyKey",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Idempotency key for deduplication"
+    },
+    {
+      "name": "userId",
+      "type": "string",
+      "doc": "User who submitted the task"
+    },
+    {
+      "name": "namespace",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Namespace for multi-tenancy"
+    },
+    {
+      "name": "priority",
+      "type": "int",
+      "default": 0,
+      "doc": "Task priority (higher = more important)"
+    },
+    {
+      "name": "timeoutSeconds",
+      "type": "long",
+      "default": 300,
+      "doc": "Task timeout in seconds"
+    },
+    {
+      "name": "platoPlanId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Optional PLATO plan ID for governance"
+    },
+    {
+      "name": "rimNodeId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Optional RIM node ID for context"
+    },
+    {
+      "name": "createdAt",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Task creation timestamp"
+    },
+    {
+      "name": "metadata",
+      "type": ["null", {
+        "type": "map",
+        "values": "string"
+      }],
+      "default": null,
+      "doc": "Additional metadata"
+    }
+  ]
+}

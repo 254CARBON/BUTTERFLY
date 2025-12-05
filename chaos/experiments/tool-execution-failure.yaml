@@ -1,0 +1,201 @@
+# Chaos Experiment: Agent Tool Execution Failure
+#
+# Purpose:
+#   - Validate CORTEX agents handle tool execution failures gracefully
+#   - Confirm retry logic and alternative tool selection
+#   - Test agent recovery and task continuation after tool failures
+#   - Verify SYNAPSE integration resilience
+#
+# Related Docs: docs/operations/runbooks/cortex-operations.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: tool-execution-failure
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: failure
+    chaos.butterfly.io/target: cortex,synapse
+    chaos.butterfly.io/severity: medium
+spec:
+  entry: tool-failure-workflow
+  templates:
+    - name: tool-failure-workflow
+      templateType: Serial
+      deadline: 30m
+      children:
+        - capture-baseline
+        - inject-synapse-failures
+        - submit-tool-heavy-task
+        - verify-retry-behavior
+        - verify-alternative-tools
+        - release-failures
+        - verify-recovery
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline tool execution metrics..."
+              curl -s http://synapse:8080/actuator/prometheus | grep "tool_execution" || true
+              curl -s http://cortex:8080/actuator/prometheus | grep "agent_tool" || true
+
+    - name: inject-synapse-failures
+      templateType: HTTPChaos
+      httpChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: synapse
+        mode: all
+        target: Response
+        port: 8080
+        path: /api/v1/actions/execute*
+        method: POST
+        response_body:
+          type: text/plain
+          value: '{"error":"Simulated tool execution failure","retryable":true}'
+        code: 503
+        duration: "10m"
+        percent: 70
+
+    - name: submit-tool-heavy-task
+      templateType: Task
+      task:
+        container:
+          name: agent-task
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Submitting tool-heavy agent task..."
+              STATUS=$(curl -s -o /tmp/task.json -w "%{http_code}" \
+                -X POST http://cortex:8080/api/v1/agents/tool-agent/tasks \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "taskId": "tool-chaos-task",
+                  "description": "Query system metrics and execute remediation",
+                  "requiredTools": ["metrics-query", "service-restart", "config-update"],
+                  "constraints": {
+                    "maxToolRetries": 3,
+                    "allowToolFallback": true
+                  }
+                }')
+              echo "Task status: $STATUS"
+
+    - name: verify-retry-behavior
+      templateType: Task
+      task:
+        container:
+          name: retry-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying tool retry behavior..."
+              sleep 45
+              
+              # Check agent thoughts for retry indicators
+              curl -s "http://cortex:8080/api/v1/agent-thoughts/recent/tool-agent?limit=10" | \
+                grep -c "TOOL_INVOCATION" || echo "0 tool invocations found"
+              
+              # Check retry metrics
+              curl -s http://cortex:8080/actuator/prometheus | grep "tool_retry" || true
+              
+              # Check SYNAPSE for failed action attempts
+              curl -s "http://synapse:8080/api/v1/actions?status=FAILED&limit=5"
+
+    - name: verify-alternative-tools
+      templateType: Task
+      task:
+        container:
+          name: alt-tool-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Checking for alternative tool selection..."
+              sleep 30
+              
+              # Check thoughts for alternative tool selection
+              curl -s "http://cortex:8080/api/v1/agent-thoughts/recent/tool-agent?limit=20" | \
+                grep -E "alternative|fallback|different tool" || echo "No alt tool selection"
+              
+              # Episode should still progress despite failures
+              curl -s "http://cortex:8080/api/v1/agents/tool-agent/episodes/latest" | \
+                grep -E "status|progress"
+
+    - name: release-failures
+      templateType: Task
+      task:
+        container:
+          name: release
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for HTTPChaos to expire..."
+              sleep 15
+
+    - name: verify-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying recovery after tool failures end..."
+              sleep 60
+              
+              # Both services should be healthy
+              curl -s http://cortex:8080/actuator/health
+              curl -s http://synapse:8080/actuator/health
+              
+              # Queued actions should start succeeding
+              curl -s "http://synapse:8080/api/v1/actions?status=COMPLETED&limit=3"
+              
+              # Agent should complete or make progress
+              curl -s "http://cortex:8080/api/v1/agents/tool-agent/episodes/latest"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tool-execution-failure-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - Agent retries failed tool invocations (up to configured limit)
+    - Agent considers alternative tools when primary fails
+    - Agent task doesn't crash - continues with degraded functionality
+    - Failed tool invocations are logged with context
+    - SYNAPSE maintains action queue during failures
+    - Recovery happens automatically when failures stop
+
+  fail_criteria: |
+    - Agent crashes on first tool failure
+    - No retry attempts observed
+    - Agent hangs indefinitely waiting for tool
+    - SYNAPSE loses queued actions
+    - Memory leak or resource exhaustion
+
+  remediation: |
+    1. Review tool retry configuration in agent settings
+    2. Verify SYNAPSE circuit breaker thresholds
+    3. Check tool fallback mappings
+    4. Increase tool execution timeout if needed
+    5. Review agent thought logs for failure patterns

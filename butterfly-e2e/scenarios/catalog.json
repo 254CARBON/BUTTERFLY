@@ -354,5 +354,62 @@
     "target": "perception,capsule",
     "category": "perception-capsule",
     "contractTest": true
+  },
+  {
+    "name": "cortex-agent-golden-path",
+    "file": "cortex-agent-golden-path.json",
+    "mode": "positive",
+    "description": "CORTEX agent golden path: task assignment → reasoning → tool invocation → completion",
+    "expect": "response",
+    "target": "cortex",
+    "category": "cortex-agent",
+    "golden": true
+  },
+  {
+    "name": "cortex-multi-agent-coordination",
+    "file": "cortex-multi-agent-coordination.json",
+    "mode": "positive",
+    "description": "Multiple agents collaborating on a complex task with coordination events",
+    "expect": "response",
+    "target": "cortex",
+    "category": "cortex-agent"
+  },
+  {
+    "name": "aurora-auto-remediation",
+    "file": "aurora-auto-remediation.json",
+    "mode": "positive",
+    "description": "AURORA auto-remediation: anomaly detection → diagnosis → remediation → verification",
+    "expect": "response",
+    "target": "aurora",
+    "category": "aurora-healing",
+    "golden": true
+  },
+  {
+    "name": "aurora-chaos-immunization",
+    "file": "aurora-chaos-immunization.json",
+    "mode": "positive",
+    "description": "System learns from chaos and builds immunity - repeat failure triggers faster response",
+    "expect": "response",
+    "target": "aurora",
+    "category": "aurora-healing"
+  },
+  {
+    "name": "perception-multimodal-ingestion",
+    "file": "perception-multimodal-ingestion.json",
+    "mode": "positive",
+    "description": "PERCEPTION multimodal data ingestion: text + image + structured data fusion",
+    "expect": "response",
+    "target": "perception",
+    "category": "perception-multimodal"
+  },
+  {
+    "name": "end-to-end-autonomous-healing",
+    "file": "end-to-end-autonomous-healing.json",
+    "mode": "positive",
+    "description": "Full autonomous healing loop: detect → diagnose → plan → execute → verify → learn",
+    "expect": "response",
+    "target": "all",
+    "category": "autonomous-healing",
+    "golden": true
   }
 ]

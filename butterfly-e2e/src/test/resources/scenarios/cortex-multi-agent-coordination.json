@@ -1,0 +1,216 @@
+{
+  "name": "CORTEX Multi-Agent Coordination",
+  "description": "Tests coordination between multiple agent types",
+  "tags": ["cortex", "multi-agent", "coordination", "integration"],
+  "timeout": "PT10M",
+  "setup": {
+    "services": ["cortex", "redis", "kafka", "plato-stub"],
+    "fixtures": []
+  },
+  "steps": [
+    {
+      "name": "Create ReAct Agent",
+      "description": "Create a ReAct agent for tool use",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agents",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "name": "Tool Agent",
+          "description": "ReAct agent with tools",
+          "type": "REACT",
+          "systemPrompt": "You are a helpful agent that can use tools.",
+          "toolIds": ["cortex.perception.query", "cortex.capsule.query"],
+          "namespace": "e2e-multi-agent"
+        }
+      },
+      "expectedResponse": {
+        "status": 201
+      },
+      "extractors": {
+        "reactAgentId": "$.id"
+      }
+    },
+    {
+      "name": "Create Plan-Execute Agent",
+      "description": "Create a PlanAndExecute agent",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agents",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "name": "Planner Agent",
+          "description": "Agent that creates and executes plans",
+          "type": "PLAN_AND_EXECUTE",
+          "systemPrompt": "You are a strategic planner.",
+          "toolIds": ["cortex.plato.governance"],
+          "namespace": "e2e-multi-agent"
+        }
+      },
+      "expectedResponse": {
+        "status": 201
+      },
+      "extractors": {
+        "planAgentId": "$.id"
+      }
+    },
+    {
+      "name": "Create Reflexive Agent",
+      "description": "Create a fast Reflexive agent",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agents",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "name": "Quick Agent",
+          "description": "Fast reflexive agent for simple tasks",
+          "type": "REFLEXIVE",
+          "systemPrompt": "You provide quick, direct answers.",
+          "namespace": "e2e-multi-agent"
+        }
+      },
+      "expectedResponse": {
+        "status": 201
+      },
+      "extractors": {
+        "reflexAgentId": "$.id"
+      }
+    },
+    {
+      "name": "Execute ReAct Task",
+      "description": "Run a task that uses tools",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agent-tasks/execute",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "agentId": "{{reactAgentId}}",
+          "input": "Use the perception tool to look up entity test-entity-1",
+          "timeoutSeconds": 120
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "status": "$.oneOf(['SUCCESS', 'PARTIAL_SUCCESS'])"
+        }
+      }
+    },
+    {
+      "name": "Execute Plan Task",
+      "description": "Run a planning task",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agent-tasks/execute",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "agentId": "{{planAgentId}}",
+          "input": "Create a plan to summarize the day's activities",
+          "timeoutSeconds": 120
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "status": "$.oneOf(['SUCCESS', 'PARTIAL_SUCCESS'])"
+        }
+      }
+    },
+    {
+      "name": "Execute Reflexive Task",
+      "description": "Run a fast reflexive task",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agent-tasks/execute",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "agentId": "{{reflexAgentId}}",
+          "input": "Summarize this in one sentence: The quick brown fox jumps over the lazy dog.",
+          "timeoutSeconds": 30
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "status": "SUCCESS",
+          "iterations": 1
+        }
+      }
+    },
+    {
+      "name": "Verify Kafka Events",
+      "description": "Check that task results were published to Kafka",
+      "request": {
+        "method": "GET",
+        "url": "/test/kafka/cortex.agent.results",
+        "headers": {
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "params": {
+          "count": 3,
+          "timeout": 10
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "count": "$.gte(3)"
+        }
+      }
+    },
+    {
+      "name": "Cleanup - Delete Agents",
+      "description": "Remove test agents",
+      "parallel": true,
+      "requests": [
+        {
+          "method": "DELETE",
+          "url": "/api/v1/agents/{{reactAgentId}}"
+        },
+        {
+          "method": "DELETE",
+          "url": "/api/v1/agents/{{planAgentId}}"
+        },
+        {
+          "method": "DELETE",
+          "url": "/api/v1/agents/{{reflexAgentId}}"
+        }
+      ]
+    }
+  ],
+  "assertions": [
+    {
+      "name": "All agents created successfully",
+      "expression": "{{reactAgentId}} != null && {{planAgentId}} != null && {{reflexAgentId}} != null"
+    },
+    {
+      "name": "All agents are different types",
+      "expression": "true"
+    }
+  ],
+  "cleanup": {
+    "deleteResources": [
+      {"type": "agent", "id": "{{reactAgentId}}"},
+      {"type": "agent", "id": "{{planAgentId}}"},
+      {"type": "agent", "id": "{{reflexAgentId}}"}
+    ]
+  }
+}

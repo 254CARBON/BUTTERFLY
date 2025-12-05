@@ -1,0 +1,213 @@
+# Chaos Experiment: LLM Provider Timeout
+#
+# Purpose:
+#   - Validate CORTEX agents gracefully handle LLM provider timeouts
+#   - Confirm fallback to local/cached models when primary LLM is unavailable
+#   - Verify token budget management during degraded operations
+#   - Test agent thought persistence despite LLM failures
+#
+# Related Docs: docs/operations/runbooks/cortex-operations.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: llm-timeout
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: timeout
+    chaos.butterfly.io/target: cortex
+    chaos.butterfly.io/severity: high
+spec:
+  entry: llm-timeout-workflow
+  templates:
+    - name: llm-timeout-workflow
+      templateType: Serial
+      deadline: 45m
+      children:
+        - capture-baseline
+        - inject-llm-timeout
+        - submit-agent-task
+        - verify-fallback-activated
+        - verify-thought-persistence
+        - release-timeout
+        - verify-recovery
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline CORTEX LLM metrics..."
+              curl -s http://cortex:8080/actuator/prometheus | grep -E "llm_requests|token_usage" || true
+              echo "Baseline agent health:"
+              curl -s http://cortex:8080/actuator/health
+
+    - name: inject-llm-timeout
+      templateType: NetworkChaos
+      networkChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: cortex
+        action: delay
+        mode: all
+        delay:
+          latency: "30000ms"
+          jitter: "5000ms"
+          correlation: "100"
+        direction: to
+        externalTargets:
+          - "api.openai.com"
+          - "api.anthropic.com"
+          - "generativelanguage.googleapis.com"
+        duration: "15m"
+
+    - name: submit-agent-task
+      templateType: Task
+      task:
+        container:
+          name: agent-task
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Submitting agent task during LLM timeout"
+              TASK_ID="task-chaos-llm-$(date +%s)"
+              STATUS=$(curl -s -o /tmp/task.json -w "%{http_code}" \
+                -X POST http://cortex:8080/api/v1/agents/chaos-test-agent/tasks \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "taskId": "'$TASK_ID'",
+                  "description": "Analyze system metrics and provide recommendations",
+                  "constraints": {
+                    "maxTokens": 2000,
+                    "timeoutSeconds": 120,
+                    "allowFallback": true
+                  }
+                }')
+              echo "Task submission status: $STATUS"
+              cat /tmp/task.json
+              
+              # Task should be accepted even with LLM issues
+              if [ "$STATUS" -lt "200" ] || [ "$STATUS" -ge "300" ]; then
+                echo "WARN: Task submission may have failed"
+              fi
+
+    - name: verify-fallback-activated
+      templateType: Task
+      task:
+        container:
+          name: fallback-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Checking for fallback model activation..."
+              sleep 30
+              
+              # Check fallback metrics
+              curl -s http://cortex:8080/actuator/prometheus | grep "llm_fallback_activations" || true
+              
+              # Check agent thoughts for fallback indicators
+              curl -s "http://cortex:8080/api/v1/agent-thoughts/recent/chaos-test-agent?limit=5" | \
+                grep -i "fallback\|local\|cached" || echo "No fallback indicators in thoughts"
+              
+              # Circuit breaker state
+              curl -s http://cortex:8080/actuator/health | grep -A5 "circuitBreaker"
+
+    - name: verify-thought-persistence
+      templateType: Task
+      task:
+        container:
+          name: thought-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying agent thoughts are being persisted despite LLM issues..."
+              sleep 15
+              
+              # Check Kafka topic for thoughts
+              echo "Thoughts should still be published to Kafka:"
+              curl -s "http://cortex:8080/api/v1/agent-thoughts/stream/chaos-test-agent" &
+              sleep 5
+              kill %1 2>/dev/null || true
+              
+              # Check CAPSULE for episode records
+              curl -s "http://capsule:8080/api/v1/capsules/episodes?agentId=chaos-test-agent&limit=1"
+
+    - name: release-timeout
+      templateType: Task
+      task:
+        container:
+          name: release
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for NetworkChaos to expire..."
+              sleep 20
+
+    - name: verify-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying CORTEX recovery post-LLM-timeout..."
+              sleep 90
+              
+              # Health check
+              curl -s http://cortex:8080/actuator/health
+              
+              # LLM circuit breaker should recover
+              curl -s http://cortex:8080/actuator/prometheus | grep "circuit_breaker_state" || true
+              
+              # Submit a new task to verify normal operation
+              curl -s -X POST http://cortex:8080/api/v1/agents/chaos-test-agent/tasks \
+                -H "Content-Type: application/json" \
+                -d '{"taskId":"recovery-test","description":"Simple health check task"}'
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-timeout-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - Agent task submission succeeds (returns 2xx) even with LLM timeout
+    - Fallback model is activated within 30 seconds of primary timeout
+    - Agent thoughts continue to be persisted to Kafka and CAPSULE
+    - Token budget tracking remains accurate
+    - Circuit breaker opens to prevent cascade
+    - Full recovery within 2 minutes of chaos ending
+
+  fail_criteria: |
+    - CORTEX crashes or becomes unresponsive
+    - Agent tasks are lost without any record
+    - No fallback activation (agents just hang)
+    - Token budget accounting corrupted
+    - Memory/resource leak during timeout handling
+
+  remediation: |
+    Reference docs/operations/runbooks/cortex-operations.md
+    1. Verify LLM fallback configuration in application.yml
+    2. Check circuit breaker thresholds for external LLM calls
+    3. Review token budget cache consistency
+    4. Scale CORTEX if request queue backs up
+    5. Engage LLM provider kill-switch if necessary

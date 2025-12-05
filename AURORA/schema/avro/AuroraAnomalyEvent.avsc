@@ -1,0 +1,145 @@
+{
+  "namespace": "com.z254.butterfly.aurora.avro",
+  "type": "record",
+  "name": "AuroraAnomalyEvent",
+  "doc": "Anomaly event detected by PERCEPTION and consumed by AURORA for RCA. Schema version 1.0.0",
+  "fields": [
+    {
+      "name": "schemaVersion",
+      "type": "string",
+      "default": "1.0.0",
+      "doc": "Schema version for compatibility tracking"
+    },
+    {
+      "name": "anomalyId",
+      "type": "string",
+      "doc": "Unique anomaly identifier"
+    },
+    {
+      "name": "rimNodeId",
+      "type": "string",
+      "doc": "Canonical RIM node identifier (rim:{type}:{namespace}:{localId})"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Anomaly detection timestamp (epoch ms)"
+    },
+    {
+      "name": "anomalyType",
+      "type": {
+        "type": "enum",
+        "name": "AnomalyType",
+        "doc": "Type of anomaly detected",
+        "symbols": [
+          "LATENCY_SPIKE",
+          "ERROR_RATE",
+          "RESOURCE_EXHAUSTION",
+          "DRIFT",
+          "THROUGHPUT_DROP",
+          "CONNECTION_FAILURE",
+          "TIMEOUT",
+          "MEMORY_LEAK",
+          "CPU_SATURATION",
+          "DISK_FULL",
+          "NETWORK_PARTITION",
+          "CUSTOM"
+        ]
+      },
+      "doc": "Type of anomaly detected"
+    },
+    {
+      "name": "severity",
+      "type": "double",
+      "doc": "Anomaly severity score (0.0 to 1.0)"
+    },
+    {
+      "name": "affectedComponents",
+      "type": {
+        "type": "array",
+        "items": "string"
+      },
+      "doc": "List of affected component identifiers"
+    },
+    {
+      "name": "metrics",
+      "type": {
+        "type": "map",
+        "values": "double"
+      },
+      "doc": "Key metrics associated with the anomaly"
+    },
+    {
+      "name": "correlationId",
+      "type": "string",
+      "doc": "Correlation ID for distributed tracing"
+    },
+    {
+      "name": "sourceService",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Service that detected the anomaly"
+    },
+    {
+      "name": "detectionMethod",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Method used for detection (e.g., ML model, threshold, pattern)"
+    },
+    {
+      "name": "detectionConfidence",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Confidence score of detection (0.0 to 1.0)"
+    },
+    {
+      "name": "baselineValue",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Expected baseline value"
+    },
+    {
+      "name": "observedValue",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Actual observed value"
+    },
+    {
+      "name": "deviationPercentage",
+      "type": ["null", "double"],
+      "default": null,
+      "doc": "Percentage deviation from baseline"
+    },
+    {
+      "name": "tenantId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Tenant identifier for multi-tenant isolation"
+    },
+    {
+      "name": "namespace",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Namespace scope"
+    },
+    {
+      "name": "tags",
+      "type": {
+        "type": "array",
+        "items": "string"
+      },
+      "default": [],
+      "doc": "Tags for categorization"
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "default": {},
+      "doc": "Additional metadata for extensibility"
+    }
+  ]
+}

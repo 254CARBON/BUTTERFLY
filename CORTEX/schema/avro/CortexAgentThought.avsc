@@ -1,0 +1,79 @@
+{
+  "type": "record",
+  "name": "CortexAgentThought",
+  "namespace": "com.z254.butterfly.cortex.schema",
+  "doc": "Kafka message for agent thoughts (streaming events)",
+  "fields": [
+    {
+      "name": "id",
+      "type": "string",
+      "doc": "Thought identifier"
+    },
+    {
+      "name": "taskId",
+      "type": "string",
+      "doc": "Task identifier"
+    },
+    {
+      "name": "agentId",
+      "type": "string",
+      "doc": "Agent identifier"
+    },
+    {
+      "name": "type",
+      "type": {
+        "type": "enum",
+        "name": "ThoughtType",
+        "symbols": ["ANALYSIS", "PLANNING", "REASONING", "TOOL_CALL", "OBSERVATION", "INTERMEDIATE", "FINAL_ANSWER", "ERROR"]
+      },
+      "doc": "Type of thought"
+    },
+    {
+      "name": "content",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Thought content"
+    },
+    {
+      "name": "iteration",
+      "type": "int",
+      "default": 0,
+      "doc": "Reasoning iteration number"
+    },
+    {
+      "name": "toolId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Tool ID if this is a tool call"
+    },
+    {
+      "name": "toolParameters",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Tool parameters as JSON"
+    },
+    {
+      "name": "toolResult",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Tool result if this is an observation"
+    },
+    {
+      "name": "tokenCount",
+      "type": ["null", "int"],
+      "default": null,
+      "doc": "Token count for this thought"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Thought timestamp"
+    },
+    {
+      "name": "correlationId",
+      "type": "string",
+      "doc": "Correlation ID for tracing"
+    }
+  ]
+}

@@ -1,0 +1,220 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aurora-service
+  namespace: butterfly
+  labels:
+    app: aurora-service
+    component: self-healing
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aurora-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: aurora-service
+        component: self-healing
+        tier: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      serviceAccountName: aurora-service
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: aurora-service
+          image: butterfly/aurora-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "kubernetes"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:+UseG1GC -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: aurora-config
+                  key: kafka.bootstrap-servers
+            - name: SCHEMA_REGISTRY_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aurora-config
+                  key: schema-registry.url
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: aurora-config
+                  key: redis.host
+            - name: CASSANDRA_CONTACT_POINTS
+              valueFrom:
+                configMapKeyRef:
+                  name: aurora-config
+                  key: cassandra.contact-points
+            - name: PLATO_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aurora-config
+                  key: plato.url
+            - name: SYNAPSE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aurora-config
+                  key: synapse.url
+            - name: CAPSULE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: aurora-config
+                  key: capsule.url
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "2Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: kafka-streams-state
+              mountPath: /var/kafka-streams
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: kafka-streams-state
+          emptyDir:
+            sizeLimit: 5Gi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: aurora-service
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: aurora-service
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aurora-service
+  namespace: butterfly
+  labels:
+    app: aurora-service
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app: aurora-service
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aurora-service
+  namespace: butterfly
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aurora-config
+  namespace: butterfly
+data:
+  kafka.bootstrap-servers: "kafka:9092"
+  schema-registry.url: "http://schema-registry:8081"
+  redis.host: "redis"
+  cassandra.contact-points: "cassandra"
+  plato.url: "http://plato-service"
+  synapse.url: "http://synapse-service"
+  capsule.url: "http://capsule-service"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aurora-service-hpa
+  namespace: butterfly
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aurora-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: aurora-service-pdb
+  namespace: butterfly
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: aurora-service

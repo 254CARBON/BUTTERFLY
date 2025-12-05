@@ -1,0 +1,106 @@
+{
+  "type": "record",
+  "name": "CortexAgentResult",
+  "namespace": "com.z254.butterfly.cortex.schema",
+  "doc": "Kafka message for agent task results",
+  "fields": [
+    {
+      "name": "taskId",
+      "type": "string",
+      "doc": "Task identifier"
+    },
+    {
+      "name": "agentId",
+      "type": "string",
+      "doc": "Agent that processed the task"
+    },
+    {
+      "name": "conversationId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Conversation context"
+    },
+    {
+      "name": "correlationId",
+      "type": "string",
+      "doc": "Correlation ID for tracing"
+    },
+    {
+      "name": "output",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Agent output/response"
+    },
+    {
+      "name": "status",
+      "type": {
+        "type": "enum",
+        "name": "ResultStatus",
+        "symbols": ["SUCCESS", "FAILURE", "PARTIAL_SUCCESS", "TIMEOUT", "CANCELLED"]
+      },
+      "doc": "Result status"
+    },
+    {
+      "name": "errorCode",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Error code if failed"
+    },
+    {
+      "name": "errorMessage",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Error message if failed"
+    },
+    {
+      "name": "iterations",
+      "type": "int",
+      "default": 0,
+      "doc": "Number of reasoning iterations"
+    },
+    {
+      "name": "inputTokens",
+      "type": "int",
+      "default": 0,
+      "doc": "Input tokens used"
+    },
+    {
+      "name": "outputTokens",
+      "type": "int",
+      "default": 0,
+      "doc": "Output tokens used"
+    },
+    {
+      "name": "durationMs",
+      "type": "long",
+      "doc": "Task duration in milliseconds"
+    },
+    {
+      "name": "startedAt",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Task start timestamp"
+    },
+    {
+      "name": "completedAt",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Task completion timestamp"
+    },
+    {
+      "name": "capsuleId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "CAPSULE ID for state storage"
+    },
+    {
+      "name": "metadata",
+      "type": ["null", {
+        "type": "map",
+        "values": "string"
+      }],
+      "default": null,
+      "doc": "Additional metadata"
+    }
+  ]
+}

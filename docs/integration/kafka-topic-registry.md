@@ -8,6 +8,22 @@ The BUTTERFLY ecosystem uses Apache Kafka for event-driven communication between
 
 ## Topic Registry
 
+### CORTEX Topics (AI Agent Platform)
+
+| Topic | Schema | Owner | Retention | Partitions | Description |
+|-------|--------|-------|-----------|------------|-------------|
+| `cortex.agent.thoughts` | `CortexAgentThought.avsc` | CORTEX | 7d | 6 | Agent reasoning steps and decisions for visualization |
+| `cortex.agent.episodes` | `CortexAgentEpisode.avsc` | CORTEX | 30d | 6 | Complete agent episode lifecycle events |
+| `cortex.coordination` | `CortexMultiAgentCoordination.avsc` | CORTEX | 14d | 6 | Multi-agent coordination events |
+
+### AURORA Topics (Self-Healing Platform)
+
+| Topic | Schema | Owner | Retention | Partitions | Description |
+|-------|--------|-------|-----------|------------|-------------|
+| `aurora.remediation.requests` | `AuroraRemediationRequest.avsc` | AURORA | 14d | 6 | Self-healing remediation requests |
+| `aurora.remediation.results` | `AuroraRemediationResult.avsc` | AURORA | 30d | 6 | Remediation execution outcomes |
+| `aurora.anomaly.detection` | `AuroraAnomalyDetection.avsc` | AURORA | 14d | 6 | Anomaly detection events |
+
 ### PERCEPTION Topics
 
 | Topic | Schema | Owner | Retention | Partitions | Description |
@@ -16,6 +32,7 @@ The BUTTERFLY ecosystem uses Apache Kafka for event-driven communication between
 | `perception.events.detected` | JSON | PERCEPTION | 14d | 6 | Entity detection events from the perception engine |
 | `perception.scenarios.proposed` | JSON | PERCEPTION | 14d | 6 | New scenarios proposed by the scenario engine |
 | `perception.rim.state-changes` | JSON | PERCEPTION | 7d | 6 | RIM node state change notifications |
+| `perception.multimodal.ingestion` | `PerceptionMultimodalIngestion.avsc` | PERCEPTION | 14d | 6 | Multimodal data ingestion events |
 
 ### CAPSULE Topics
 
@@ -34,6 +51,7 @@ The BUTTERFLY ecosystem uses Apache Kafka for event-driven communication between
 | `odyssey.world-state.updated` | JSON | ODYSSEY | 7d | 6 | World state model updates |
 | `odyssey.tipping-points.detected` | JSON | ODYSSEY | 14d | 6 | Detected tipping points approaching |
 | `odyssey.actors` | JSON | ODYSSEY | 14d | 6 | Actor model updates |
+| `odyssey.simulation.results` | `OdysseySimulationResult.avsc` | ODYSSEY | 30d | 6 | Simulation execution results |
 
 ### NEXUS Topics
 
@@ -98,6 +116,8 @@ Each topic has a corresponding DLQ topic for failed message handling:
 
 | Original Topic | DLQ Topic | Retention |
 |---------------|-----------|-----------|
+| `cortex.*` | `cortex.*.dlq` | 30d |
+| `aurora.*` | `aurora.*.dlq` | 30d |
 | `nexus.*` | `nexus.*.dlq` | 30d |
 | `perception.*` | `perception.*.dlq` | 30d |
 | `capsule.*` | `capsule.*.dlq` | 30d |
@@ -218,4 +238,6 @@ For replaying messages from DLQ:
 | 2024-01-15 | Initial registry documentation | BUTTERFLY Team |
 | 2024-01-20 | Added NEXUS topics | BUTTERFLY Team |
 | 2024-02-01 | Froze v1 schema set | BUTTERFLY Team |
+| 2024-12-05 | Added CORTEX and AURORA topics | BUTTERFLY Team |
+| 2024-12-05 | Added simulation results and multimodal ingestion topics | BUTTERFLY Team |
 

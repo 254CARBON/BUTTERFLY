@@ -1,0 +1,205 @@
+# Chaos Experiment: Root Cause Analysis Degradation
+#
+# Purpose:
+#   - Validate AURORA handles RCA service degradation gracefully
+#   - Confirm remediation proceeds with lower confidence when RCA is slow
+#   - Test fallback to rule-based diagnosis
+#   - Verify incident records capture degraded RCA state
+#
+# Related Docs: docs/operations/runbooks/aurora-operations.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: rca-degradation
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: degradation
+    chaos.butterfly.io/target: aurora
+    chaos.butterfly.io/severity: medium
+spec:
+  entry: rca-degradation-workflow
+  templates:
+    - name: rca-degradation-workflow
+      templateType: Serial
+      deadline: 35m
+      children:
+        - capture-baseline
+        - inject-rca-latency
+        - trigger-incident
+        - verify-degraded-diagnosis
+        - verify-remediation-proceeds
+        - release-latency
+        - verify-full-rca-recovery
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline RCA metrics..."
+              curl -s http://aurora:8080/actuator/prometheus | grep -E "rca_|diagnosis_" || true
+              echo "Current RCA health:"
+              curl -s http://aurora:8080/api/v1/aurora/rca/health
+
+    - name: inject-rca-latency
+      templateType: PodChaos
+      podChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: aurora
+            app.kubernetes.io/component: rca
+        mode: all
+        action: pod-stress
+        stressChaos:
+          stressors:
+            cpu:
+              workers: 4
+              load: 90
+        duration: "12m"
+
+    - name: trigger-incident
+      templateType: Task
+      task:
+        container:
+          name: incident
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Triggering test incident requiring RCA..."
+              curl -s -X POST http://aurora:8080/api/v1/aurora/test/inject-anomaly \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "anomalyType": "LATENCY_SPIKE",
+                  "affectedService": "order-service",
+                  "severity": "SEV2_HIGH",
+                  "requiresRca": true
+                }'
+              
+              sleep 5
+              echo "Incident injected, monitoring diagnosis..."
+
+    - name: verify-degraded-diagnosis
+      templateType: Task
+      task:
+        container:
+          name: diagnosis-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Checking diagnosis behavior under RCA degradation..."
+              sleep 60
+              
+              # Check for degraded RCA indicators
+              curl -s "http://aurora:8080/api/v1/aurora/incidents/open" | \
+                grep -E "rootCauseConfidence|analysisMethod"
+              
+              # Check if fallback to rule-based
+              curl -s http://aurora:8080/actuator/prometheus | grep "rca_fallback" || true
+              
+              # Diagnosis should still complete, possibly with lower confidence
+              curl -s "http://aurora:8080/api/v1/aurora/incidents/latest" | \
+                grep -E "status|rootCause|confidence"
+
+    - name: verify-remediation-proceeds
+      templateType: Task
+      task:
+        container:
+          name: remediation-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying remediation proceeds despite degraded RCA..."
+              sleep 45
+              
+              # Check remediation queue
+              curl -s "http://aurora:8080/api/v1/aurora/remediation/requests?limit=3"
+              
+              # Remediation should be triggered, possibly with semi-automatic mode
+              curl -s http://aurora:8080/actuator/prometheus | grep "remediation_" || true
+              
+              # CAPSULE should record the degraded state
+              curl -s "http://capsule:8080/api/v1/capsules/incidents?service=order-service&limit=1" | \
+                grep -E "rootCause|analysisMethod"
+
+    - name: release-latency
+      templateType: Task
+      task:
+        container:
+          name: release
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for PodChaos to expire..."
+              sleep 15
+
+    - name: verify-full-rca-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying full RCA capability recovery..."
+              sleep 90
+              
+              # RCA health should return to normal
+              curl -s http://aurora:8080/api/v1/aurora/rca/health
+              
+              # Trigger another test incident
+              curl -s -X POST http://aurora:8080/api/v1/aurora/test/inject-anomaly \
+                -H "Content-Type: application/json" \
+                -d '{"anomalyType":"ERROR_RATE_INCREASE","affectedService":"test-svc","severity":"SEV3_MEDIUM"}'
+              
+              sleep 30
+              
+              # This diagnosis should have full confidence
+              curl -s "http://aurora:8080/api/v1/aurora/incidents/latest" | \
+                grep "rootCauseConfidence"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rca-degradation-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - Diagnosis completes (possibly with lower confidence)
+    - Fallback to rule-based analysis activates
+    - Remediation proceeds with appropriate caution
+    - Incident records capture degraded RCA state
+    - Full RCA capability returns after chaos ends
+    - MTTR impact is documented
+
+  fail_criteria: |
+    - No diagnosis produced (incident hangs)
+    - Remediation blocked entirely
+    - RCA component crashes
+    - No fallback mechanism activates
+    - Incident data lost or corrupted
+
+  remediation: |
+    1. Review RCA timeout and fallback configuration
+    2. Verify rule-based fallback patterns are current
+    3. Check RCA resource limits
+    4. Consider horizontal scaling of RCA component
+    5. Update remediation confidence thresholds

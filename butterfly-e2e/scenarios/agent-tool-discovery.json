@@ -1,0 +1,225 @@
+{
+  "name": "Agent Tool Discovery",
+  "description": "Validates CORTEX agent tool discovery and schema retrieval",
+  "tags": ["agent-tools", "discovery", "synapse", "plan4"],
+  "setup": {
+    "services": ["synapse"],
+    "timeout": 30000
+  },
+  "steps": [
+    {
+      "name": "Discover all active tools",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/discover",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$",
+          "condition": "isArray"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$[0].schemaVersion",
+          "expected": "1.0.0"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$[0].toolId",
+          "condition": "isNotNull"
+        }
+      ]
+    },
+    {
+      "name": "Discover streaming-capable tools",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/discover?requireStreaming=true",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$[*].streaming.supportsStreaming",
+          "condition": "allTrue"
+        }
+      ]
+    },
+    {
+      "name": "Discover low-risk tools",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/low-risk",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$[*].safety.riskLevel",
+          "condition": "allMatch",
+          "expected": "LOW"
+        }
+      ]
+    },
+    {
+      "name": "Filter by capability",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/discover?requiredCapabilities=DRY_RUN_MODE",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$[*].capabilityIds",
+          "condition": "allContain",
+          "expected": "DRY_RUN_MODE"
+        }
+      ]
+    },
+    {
+      "name": "Get specific tool schema",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/schema",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.toolId",
+          "expected": "${TEST_TOOL_ID}"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.inputSchema",
+          "condition": "isNotNull"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.outputSchema",
+          "condition": "isNotNull"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.streaming",
+          "condition": "isNotNull"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.safety",
+          "condition": "isNotNull"
+        }
+      ]
+    },
+    {
+      "name": "Get tool capabilities",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/capabilities",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$",
+          "condition": "isArray"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$[0].id",
+          "condition": "isNotNull"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$[0].enabled",
+          "condition": "isBoolean"
+        }
+      ]
+    },
+    {
+      "name": "Search tools by text",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/search?q=database",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        }
+      ]
+    },
+    {
+      "name": "Get cache statistics",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/cache/stats",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.size",
+          "condition": "isNumber"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.hitRate",
+          "condition": "isNumber"
+        }
+      ]
+    }
+  ],
+  "cleanup": {
+    "invalidateCache": true
+  }
+}

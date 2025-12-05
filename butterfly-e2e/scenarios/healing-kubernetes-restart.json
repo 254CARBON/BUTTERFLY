@@ -1,0 +1,231 @@
+{
+  "name": "Kubernetes Healing - Pod Restart",
+  "description": "Validates Kubernetes healing connector pod restart operations",
+  "tags": ["healing", "kubernetes", "synapse", "plan4"],
+  "setup": {
+    "services": ["synapse", "kubernetes"],
+    "timeout": 120000,
+    "prerequisites": {
+      "kubernetes": {
+        "namespace": "e2e-test",
+        "deployment": "test-deployment"
+      }
+    }
+  },
+  "steps": [
+    {
+      "name": "Dry-run pod restart by name",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/kubernetes",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "restart_pod",
+          "parameters": {
+            "namespace": "e2e-test",
+            "podName": "test-pod-0"
+          },
+          "dryRun": true,
+          "correlationId": "e2e-k8s-restart-${TIMESTAMP}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "DRY_RUN_SUCCESS"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.dryRun",
+          "expected": true
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.output.dryRunDescription",
+          "condition": "contains",
+          "expected": "Would delete"
+        }
+      ]
+    },
+    {
+      "name": "Dry-run pod restart by label selector",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/kubernetes",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "restart_pod",
+          "parameters": {
+            "namespace": "e2e-test",
+            "labelSelector": "app=test-app"
+          },
+          "dryRun": true,
+          "maxBlastRadius": 5
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "DRY_RUN_SUCCESS"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.entitiesAffected",
+          "condition": "lessThanOrEqual",
+          "expected": 5
+        }
+      ]
+    },
+    {
+      "name": "Dry-run scale deployment",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/kubernetes",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "scale_deployment",
+          "parameters": {
+            "namespace": "e2e-test",
+            "deploymentName": "test-deployment",
+            "replicas": 3
+          },
+          "dryRun": true
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "DRY_RUN_SUCCESS"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.output.dryRunDescription",
+          "condition": "contains",
+          "expected": "scale"
+        }
+      ]
+    },
+    {
+      "name": "Dry-run rollout restart",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/kubernetes",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "rollout_restart",
+          "parameters": {
+            "namespace": "e2e-test",
+            "deploymentName": "test-deployment"
+          },
+          "dryRun": true
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "DRY_RUN_SUCCESS"
+        }
+      ]
+    },
+    {
+      "name": "Reject operation exceeding blast radius",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/kubernetes",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "restart_pod",
+          "parameters": {
+            "namespace": "e2e-test",
+            "labelSelector": "app=test-app"
+          },
+          "maxBlastRadius": 0
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "REJECTED"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.errorCode",
+          "expected": "REJECTED"
+        }
+      ]
+    },
+    {
+      "name": "Invalid operation",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/kubernetes",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "invalid_operation",
+          "parameters": {}
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "REJECTED"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.errorMessage",
+          "condition": "contains",
+          "expected": "Unsupported operation"
+        }
+      ]
+    }
+  ],
+  "cleanup": {}
+}

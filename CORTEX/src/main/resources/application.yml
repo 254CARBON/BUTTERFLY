@@ -1,0 +1,283 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: cortex-service
+  
+  # Redis Configuration
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 10s
+    
+    cassandra:
+      contact-points: ${CASSANDRA_CONTACT_POINTS:localhost}
+      port: ${CASSANDRA_PORT:9042}
+      keyspace-name: ${CASSANDRA_KEYSPACE:cortex}
+      local-datacenter: ${CASSANDRA_DATACENTER:datacenter1}
+      schema-action: create-if-not-exists
+
+  # Kafka Configuration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: cortex-service
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.z254.butterfly.*
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: all
+      retries: 3
+
+  # Security Configuration
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${JWT_ISSUER_URI:http://localhost:8080/realms/butterfly}
+
+# CORTEX Configuration
+cortex:
+  llm:
+    default-provider: openai
+    cache-enabled: true
+    cache-ttl: 60m
+    
+    providers:
+      openai:
+        enabled: true
+        api-key: ${OPENAI_API_KEY:}
+        base-url: https://api.openai.com/v1
+        model: gpt-4-turbo
+        embedding-model: text-embedding-3-small
+        max-tokens: 4096
+        temperature: 0.7
+        timeout: 120s
+        max-retries: 3
+      
+      anthropic:
+        enabled: true
+        api-key: ${ANTHROPIC_API_KEY:}
+        base-url: https://api.anthropic.com/v1
+        model: claude-3-sonnet-20240229
+        max-tokens: 4096
+        temperature: 0.7
+        timeout: 120s
+        max-retries: 3
+      
+      ollama:
+        enabled: false
+        base-url: ${OLLAMA_URL:http://localhost:11434}
+        model: llama3
+        embedding-model: nomic-embed-text
+        max-tokens: 4096
+        temperature: 0.7
+        timeout: 300s
+
+  memory:
+    episodic:
+      max-episodes: 100
+      retention-period: 168h  # 7 days
+      redis-key-prefix: "cortex:episodic:"
+      pruning-enabled: true
+      pruning-interval: 1h
+    
+    semantic:
+      vector-store: in-memory
+      embedding-dimension: 1536
+      top-k: 10
+      similarity-threshold: 0.7
+      compression-enabled: true
+      compression-threshold: 1000
+    
+    working:
+      max-entries: 100
+      entry-ttl: 24h
+    
+    capsule:
+      enabled: true
+      sync-on-complete: true
+      snapshot-interval: 5m
+
+  safety:
+    enabled: true
+    
+    token-budget:
+      max-per-task: 16000
+      max-per-conversation: 100000
+      max-per-day: 1000000
+      strict-enforcement: true
+      warning-threshold: 0.8
+    
+    guardrails:
+      pii-detection-enabled: true
+      content-filtering-enabled: true
+      output-validation-enabled: true
+    
+    quotas:
+      max-tasks-per-user: 100
+      max-tasks-per-namespace: 1000
+      max-concurrent-tasks: 10
+      quota-window: 1h
+    
+    tool-sandbox:
+      enabled: true
+      default-timeout: 30s
+      max-concurrent-calls: 5
+      max-calls-per-task: 20
+      mock-external-calls: false
+
+  agent:
+    react:
+      max-iterations: 10
+      max-tool-calls: 20
+      stream-thoughts: true
+      thinking-timeout: 60s
+    
+    plan-and-execute:
+      max-plan-steps: 20
+      require-approval: true
+      replan-on-failure: true
+      max-replans: 3
+    
+    reflexive:
+      max-tokens: 2048
+      escalate-on-complexity: true
+      complexity-threshold: 0.7
+    
+    execution:
+      thread-pool-size: 20
+      max-queue-size: 1000
+      default-timeout: 5m
+      metrics-enabled: true
+
+  kafka:
+    schema-registry-url: ${SCHEMA_REGISTRY_URL:http://localhost:8081}
+    topics:
+      agent-tasks: cortex.agent.tasks
+      agent-results: cortex.agent.results
+      agent-thoughts: cortex.agent.thoughts
+      conversations: cortex.conversations
+      dlq: cortex.dlq
+
+  clients:
+    synapse:
+      base-url: ${SYNAPSE_URL:http://localhost:8085}
+      timeout: 30s
+      max-retries: 3
+      circuit-breaker-enabled: true
+    
+    plato:
+      base-url: ${PLATO_URL:http://localhost:8083}
+      timeout: 30s
+      max-retries: 3
+      circuit-breaker-enabled: true
+    
+    capsule:
+      base-url: ${CAPSULE_URL:http://localhost:8081}
+      timeout: 30s
+      max-retries: 3
+      circuit-breaker-enabled: true
+    
+    perception:
+      base-url: ${PERCEPTION_URL:http://localhost:8080}
+      timeout: 30s
+      max-retries: 3
+    
+    odyssey:
+      base-url: ${ODYSSEY_URL:http://localhost:8082}
+      timeout: 30s
+      max-retries: 3
+
+# Actuator Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: cortex-service
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+        cortex.agent.execution: true
+        cortex.llm.call: true
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    com.z254.butterfly.cortex: DEBUG
+    org.springframework.kafka: WARN
+    org.apache.kafka: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{correlationId}] %-5level %logger{36} - %msg%n"
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    instances:
+      synapse:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+      plato:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+      capsule:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+      openai:
+        slidingWindowSize: 5
+        failureRateThreshold: 60
+        waitDurationInOpenState: 60s
+        permittedNumberOfCallsInHalfOpenState: 2
+      anthropic:
+        slidingWindowSize: 5
+        failureRateThreshold: 60
+        waitDurationInOpenState: 60s
+        permittedNumberOfCallsInHalfOpenState: 2
+
+  retry:
+    instances:
+      llm:
+        maxAttempts: 3
+        waitDuration: 2s
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - java.io.IOException
+          - java.util.concurrent.TimeoutException
+
+  timelimiter:
+    instances:
+      llm:
+        timeoutDuration: 120s
+      tool:
+        timeoutDuration: 30s
+
+# OpenAPI Configuration
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method

@@ -1,0 +1,96 @@
+{
+  "name": "cortex-multi-agent-coordination",
+  "description": "Multiple agents collaborating on a complex task with coordination events",
+  "version": "1.0.0",
+  "target": "cortex",
+  "setup": {
+    "services": ["cortex", "plato", "synapse", "capsule"],
+    "kafka_topics": ["cortex.agent.thoughts", "cortex.agent.episodes", "cortex.coordination"],
+    "agents": [
+      {"agentId": "analyst-agent", "type": "analyzer"},
+      {"agentId": "executor-agent", "type": "executor"},
+      {"agentId": "validator-agent", "type": "validator"}
+    ]
+  },
+  "steps": [
+    {
+      "name": "submit_collaborative_task",
+      "action": "http_post",
+      "endpoint": "/api/v1/tasks/collaborative",
+      "payload": {
+        "taskId": "collab-task-001",
+        "description": "Perform root cause analysis and remediation for high latency",
+        "phases": [
+          {"name": "analysis", "assignedAgent": "analyst-agent"},
+          {"name": "execution", "assignedAgent": "executor-agent"},
+          {"name": "validation", "assignedAgent": "validator-agent"}
+        ],
+        "coordinationMode": "sequential_handoff"
+      },
+      "expect": {
+        "status": 202
+      }
+    },
+    {
+      "name": "verify_analyst_starts",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.episodes",
+      "timeout_seconds": 15,
+      "filter": {"agentId": "analyst-agent"},
+      "expect": {
+        "status": "IN_PROGRESS"
+      }
+    },
+    {
+      "name": "verify_handoff_to_executor",
+      "action": "kafka_consume",
+      "topic": "cortex.coordination",
+      "timeout_seconds": 60,
+      "expect": {
+        "coordinationType": "HANDOFF",
+        "sourceAgentId": "analyst-agent",
+        "targetAgentIds_contains": ["executor-agent"]
+      }
+    },
+    {
+      "name": "verify_executor_receives",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.episodes",
+      "timeout_seconds": 15,
+      "filter": {"agentId": "executor-agent"},
+      "expect": {
+        "status": "IN_PROGRESS"
+      }
+    },
+    {
+      "name": "verify_handoff_to_validator",
+      "action": "kafka_consume",
+      "topic": "cortex.coordination",
+      "timeout_seconds": 60,
+      "expect": {
+        "coordinationType": "HANDOFF",
+        "sourceAgentId": "executor-agent",
+        "targetAgentIds_contains": ["validator-agent"]
+      }
+    },
+    {
+      "name": "verify_all_complete",
+      "action": "http_get",
+      "endpoint": "/api/v1/tasks/collab-task-001/status",
+      "retry": {"max_attempts": 12, "interval_seconds": 5},
+      "expect": {
+        "status": 200,
+        "body": {
+          "overallStatus": "COMPLETED",
+          "phases_all_completed": true
+        }
+      }
+    }
+  ],
+  "assertions": {
+    "all_agents_participated": true,
+    "coordination_events_gte": 2,
+    "no_agent_failures": true,
+    "sequential_execution_maintained": true
+  }
+}

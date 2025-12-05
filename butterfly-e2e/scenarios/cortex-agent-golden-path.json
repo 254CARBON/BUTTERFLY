@@ -1,0 +1,124 @@
+{
+  "name": "cortex-agent-golden-path",
+  "description": "CORTEX agent golden path: task assignment → reasoning → tool invocation → completion",
+  "version": "1.0.0",
+  "target": "cortex",
+  "setup": {
+    "services": ["cortex", "plato", "synapse", "capsule"],
+    "kafka_topics": ["cortex.agent.thoughts", "cortex.agent.episodes"],
+    "mock_responses": {
+      "plato_policy": {
+        "decision": "ALLOW",
+        "autonomousAllowed": true,
+        "riskTier": "LOW"
+      }
+    }
+  },
+  "steps": [
+    {
+      "name": "submit_task",
+      "action": "http_post",
+      "endpoint": "/api/v1/agents/{agentId}/tasks",
+      "payload": {
+        "taskId": "task-e2e-001",
+        "description": "Analyze system health metrics and recommend optimizations",
+        "context": {
+          "targetServices": ["api-gateway", "order-service"],
+          "timeWindow": "24h",
+          "priority": "normal"
+        },
+        "constraints": {
+          "maxTokens": 4000,
+          "timeoutSeconds": 300,
+          "requireApproval": false
+        }
+      },
+      "expect": {
+        "status": 202,
+        "body_contains": ["taskId", "episodeId", "status"]
+      }
+    },
+    {
+      "name": "verify_episode_started",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.episodes",
+      "timeout_seconds": 10,
+      "expect": {
+        "status": "IN_PROGRESS",
+        "agentId": "{agentId}",
+        "taskId": "task-e2e-001"
+      }
+    },
+    {
+      "name": "verify_planning_thought",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.thoughts",
+      "timeout_seconds": 15,
+      "expect": {
+        "thoughtType": "PLANNING",
+        "taskId": "task-e2e-001",
+        "confidence_gte": 0.7
+      }
+    },
+    {
+      "name": "verify_tool_selection",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.thoughts",
+      "timeout_seconds": 30,
+      "expect": {
+        "thoughtType": "TOOL_SELECTION",
+        "toolId_not_null": true
+      }
+    },
+    {
+      "name": "verify_tool_invocation",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.thoughts",
+      "timeout_seconds": 30,
+      "expect": {
+        "thoughtType": "TOOL_INVOCATION",
+        "toolResult_not_null": true
+      }
+    },
+    {
+      "name": "verify_output",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.thoughts",
+      "timeout_seconds": 60,
+      "expect": {
+        "thoughtType": "OUTPUT"
+      }
+    },
+    {
+      "name": "verify_episode_completed",
+      "action": "kafka_consume",
+      "topic": "cortex.agent.episodes",
+      "timeout_seconds": 10,
+      "expect": {
+        "status": "COMPLETED",
+        "finalOutput_not_null": true,
+        "totalTokensUsed_gt": 0
+      }
+    },
+    {
+      "name": "verify_capsule_stored",
+      "action": "http_get",
+      "endpoint": "/api/v1/capsules/episodes/by-task/task-e2e-001",
+      "expect": {
+        "status": 200,
+        "body_contains": ["agentId", "status", "thoughts"]
+      }
+    }
+  ],
+  "assertions": {
+    "total_duration_lt_seconds": 120,
+    "thought_count_gte": 3,
+    "no_errors": true,
+    "plato_policy_evaluated": true,
+    "capsule_created": true
+  },
+  "cleanup": {
+    "delete_task": true,
+    "delete_episode": false
+  }
+}

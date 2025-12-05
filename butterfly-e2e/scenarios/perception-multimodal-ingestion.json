@@ -1,0 +1,137 @@
+{
+  "name": "perception-multimodal-ingestion",
+  "description": "PERCEPTION multimodal data ingestion: text + image + structured data fusion",
+  "version": "1.0.0",
+  "target": "perception",
+  "setup": {
+    "services": ["perception", "capsule", "nexus"],
+    "kafka_topics": ["perception.multimodal.ingestion", "perception.events.detected"],
+    "test_data": {
+      "text_document": "test-doc-001.txt",
+      "image_file": "test-chart-001.png",
+      "structured_data": "test-metrics-001.json"
+    }
+  },
+  "steps": [
+    {
+      "name": "ingest_text",
+      "action": "http_post",
+      "endpoint": "/api/v1/perception/ingest/text",
+      "payload": {
+        "sourceId": "doc-source-001",
+        "sourceType": "FILE_UPLOAD",
+        "content": "Q3 revenue increased by 15% YoY. Operating margins improved to 22.5%.",
+        "metadata": {
+          "documentType": "financial_report",
+          "timestamp": "2024-12-05T10:00:00Z"
+        }
+      },
+      "expect": {
+        "status": 202,
+        "body_contains": ["ingestionId"]
+      },
+      "capture": {
+        "text_ingestion_id": "ingestionId"
+      }
+    },
+    {
+      "name": "ingest_image",
+      "action": "http_post_multipart",
+      "endpoint": "/api/v1/perception/ingest/image",
+      "payload": {
+        "sourceId": "chart-source-001",
+        "sourceType": "FILE_UPLOAD",
+        "file": "@test-chart-001.png",
+        "metadata": {
+          "chartType": "revenue_trend",
+          "period": "Q1-Q3 2024"
+        }
+      },
+      "expect": {
+        "status": 202
+      },
+      "capture": {
+        "image_ingestion_id": "ingestionId"
+      }
+    },
+    {
+      "name": "ingest_structured",
+      "action": "http_post",
+      "endpoint": "/api/v1/perception/ingest/structured",
+      "payload": {
+        "sourceId": "metrics-source-001",
+        "sourceType": "API",
+        "data": {
+          "revenue_q3": 125000000,
+          "revenue_q2": 118000000,
+          "operating_margin": 0.225,
+          "yoy_growth": 0.15
+        },
+        "schema": "financial_metrics_v1"
+      },
+      "expect": {
+        "status": 202
+      },
+      "capture": {
+        "structured_ingestion_id": "ingestionId"
+      }
+    },
+    {
+      "name": "verify_text_processed",
+      "action": "kafka_consume",
+      "topic": "perception.multimodal.ingestion",
+      "filter": {"ingestionId": "{text_ingestion_id}"},
+      "timeout_seconds": 30,
+      "expect": {
+        "embeddingGenerated": true,
+        "detectedEntities_contains": ["revenue", "Q3"],
+        "qualityScore_gt": 0.7
+      }
+    },
+    {
+      "name": "verify_image_processed",
+      "action": "kafka_consume",
+      "topic": "perception.multimodal.ingestion",
+      "filter": {"ingestionId": "{image_ingestion_id}"},
+      "timeout_seconds": 45,
+      "expect": {
+        "modalities_contains": ["IMAGE"],
+        "imageDescriptions_not_empty": true
+      }
+    },
+    {
+      "name": "request_fusion",
+      "action": "http_post",
+      "endpoint": "/api/v1/perception/fusion",
+      "payload": {
+        "ingestionIds": ["{text_ingestion_id}", "{image_ingestion_id}", "{structured_ingestion_id}"],
+        "fusionType": "contextual_merge",
+        "outputFormat": "enriched_entity"
+      },
+      "expect": {
+        "status": 200,
+        "body_contains": ["fusionId", "mergedEntities"]
+      }
+    },
+    {
+      "name": "verify_rim_node_created",
+      "action": "http_get",
+      "endpoint": "/api/v1/perception/rim/entities",
+      "query": {"sourceIds": "doc-source-001,chart-source-001,metrics-source-001"},
+      "expect": {
+        "status": 200,
+        "body": {
+          "entities_gte": 1,
+          "multimodal_links": true
+        }
+      }
+    }
+  ],
+  "assertions": {
+    "all_modalities_processed": true,
+    "fusion_successful": true,
+    "embeddings_generated": true,
+    "rim_integration": true,
+    "processing_time_lt_seconds": 60
+  }
+}

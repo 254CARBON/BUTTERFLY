@@ -1,0 +1,186 @@
+{
+  "name": "CORTEX Agent Golden Path",
+  "description": "End-to-end test for basic agent creation and task execution",
+  "tags": ["cortex", "agent", "golden-path", "smoke"],
+  "timeout": "PT5M",
+  "setup": {
+    "services": ["cortex", "redis", "kafka"],
+    "fixtures": []
+  },
+  "steps": [
+    {
+      "name": "Create ReAct Agent",
+      "description": "Create a new ReAct agent",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agents",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "name": "E2E Test Agent",
+          "description": "Agent for E2E testing",
+          "type": "REACT",
+          "systemPrompt": "You are a helpful test agent. Answer questions concisely.",
+          "toolIds": [],
+          "llmConfig": {
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "temperature": 0.7,
+            "maxTokens": 500
+          },
+          "namespace": "e2e-test"
+        }
+      },
+      "expectedResponse": {
+        "status": 201,
+        "bodyMatchers": {
+          "id": "$.not.null",
+          "name": "E2E Test Agent",
+          "type": "REACT",
+          "status": "ACTIVE"
+        }
+      },
+      "extractors": {
+        "agentId": "$.id"
+      }
+    },
+    {
+      "name": "Verify Agent Created",
+      "description": "Get the created agent and verify",
+      "request": {
+        "method": "GET",
+        "url": "/api/v1/agents/{{agentId}}",
+        "headers": {
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "id": "{{agentId}}",
+          "name": "E2E Test Agent",
+          "status": "ACTIVE"
+        }
+      }
+    },
+    {
+      "name": "Execute Simple Task",
+      "description": "Submit and execute a simple task",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/agent-tasks/execute",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "agentId": "{{agentId}}",
+          "input": "What is 2 + 2? Answer with just the number.",
+          "timeoutSeconds": 60
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "taskId": "$.not.null",
+          "agentId": "{{agentId}}",
+          "status": "SUCCESS",
+          "output": "$.contains('4')"
+        }
+      },
+      "extractors": {
+        "taskId": "$.taskId"
+      }
+    },
+    {
+      "name": "Create Conversation",
+      "description": "Start a new conversation with the agent",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/chat/conversations",
+        "headers": {
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "params": {
+          "agentId": "{{agentId}}"
+        }
+      },
+      "expectedResponse": {
+        "status": 201,
+        "bodyMatchers": {
+          "id": "$.not.null",
+          "agentId": "{{agentId}}",
+          "status": "ACTIVE"
+        }
+      },
+      "extractors": {
+        "conversationId": "$.id"
+      }
+    },
+    {
+      "name": "Send Chat Message",
+      "description": "Send a message in the conversation",
+      "request": {
+        "method": "POST",
+        "url": "/api/v1/chat",
+        "headers": {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        },
+        "body": {
+          "conversationId": "{{conversationId}}",
+          "message": "Hello! What can you help me with?"
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "conversationId": "{{conversationId}}",
+          "taskId": "$.not.null",
+          "message": "$.not.empty",
+          "status": "SUCCESS"
+        }
+      }
+    },
+    {
+      "name": "Verify Conversation History",
+      "description": "Check conversation has messages",
+      "request": {
+        "method": "GET",
+        "url": "/api/v1/chat/conversations/{{conversationId}}",
+        "headers": {
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        }
+      },
+      "expectedResponse": {
+        "status": 200,
+        "bodyMatchers": {
+          "id": "{{conversationId}}",
+          "messageCount": "$.gte(2)"
+        }
+      }
+    },
+    {
+      "name": "Cleanup - Delete Agent",
+      "description": "Delete the test agent",
+      "request": {
+        "method": "DELETE",
+        "url": "/api/v1/agents/{{agentId}}",
+        "headers": {
+          "Authorization": "Bearer {{JWT_TOKEN}}"
+        }
+      },
+      "expectedResponse": {
+        "status": 204
+      }
+    }
+  ],
+  "cleanup": {
+    "deleteResources": [
+      {"type": "agent", "id": "{{agentId}}"},
+      {"type": "conversation", "id": "{{conversationId}}"}
+    ]
+  }
+}

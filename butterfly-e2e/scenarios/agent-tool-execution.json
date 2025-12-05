@@ -1,0 +1,172 @@
+{
+  "name": "Agent Tool Execution",
+  "description": "Validates CORTEX agent tool execution (sync and streaming)",
+  "tags": ["agent-tools", "execution", "synapse", "plan4"],
+  "setup": {
+    "services": ["synapse"],
+    "timeout": 60000
+  },
+  "steps": [
+    {
+      "name": "Execute tool synchronously (dry-run)",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/execute",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "e2e-test-sync-${TIMESTAMP}",
+          "X-Cortex-Agent-ID": "e2e-test-agent"
+        },
+        "body": {
+          "toolId": "${TEST_TOOL_ID}",
+          "parameters": {
+            "test": true
+          },
+          "executionMode": "DRY_RUN",
+          "cortexAgentId": "e2e-test-agent",
+          "priority": 5
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.actionId",
+          "condition": "isNotNull"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.outcomeStatus",
+          "condition": "isIn",
+          "expected": ["SUCCESS", "SKIPPED"]
+        }
+      ],
+      "capture": {
+        "actionId": "$.actionId"
+      }
+    },
+    {
+      "name": "Execute tool synchronously (sandbox)",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/execute",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "e2e-test-sandbox-${TIMESTAMP}",
+          "X-Cortex-Agent-ID": "e2e-test-agent"
+        },
+        "body": {
+          "toolId": "${TEST_TOOL_ID}",
+          "parameters": {
+            "test": true
+          },
+          "executionMode": "SANDBOX",
+          "cortexAgentId": "e2e-test-agent"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.executionMode",
+          "expected": "SANDBOX"
+        }
+      ]
+    },
+    {
+      "name": "Execute with streaming (GET)",
+      "request": {
+        "method": "GET",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/execute-stream?executionMode=DRY_RUN",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Accept": "text/event-stream",
+          "X-Cortex-Agent-ID": "e2e-test-agent"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "header",
+          "name": "Content-Type",
+          "condition": "contains",
+          "expected": "text/event-stream"
+        },
+        {
+          "type": "sse",
+          "eventType": "started",
+          "condition": "received"
+        },
+        {
+          "type": "sse",
+          "eventType": "completed",
+          "condition": "received",
+          "timeout": 30000
+        }
+      ]
+    },
+    {
+      "name": "Execute with invalid tool ID",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/non-existent-tool/execute",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "parameters": {}
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 404
+        }
+      ]
+    },
+    {
+      "name": "Execute with correlation ID propagation",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/agent-tools/${TEST_TOOL_ID}/execute",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json",
+          "X-Correlation-ID": "cortex-session-12345"
+        },
+        "body": {
+          "parameters": {},
+          "executionMode": "DRY_RUN",
+          "correlationId": "cortex-session-12345",
+          "cortexAgentId": "test-agent-001",
+          "cortexSessionId": "session-12345",
+          "auroraIncidentId": "incident-001"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.correlationId",
+          "expected": "cortex-session-12345"
+        }
+      ]
+    }
+  ],
+  "cleanup": {}
+}

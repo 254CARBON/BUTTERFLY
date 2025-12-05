@@ -1,0 +1,225 @@
+{
+  "scenarioId": "aurora-auto-remediation",
+  "name": "AURORA Auto-Remediation End-to-End",
+  "description": "Validates AURORA's auto-remediation pipeline from anomaly detection to incident resolution",
+  "version": "1.0.0",
+  "timeout": "PT10M",
+  "tags": ["aurora", "rca", "remediation", "golden-path"],
+  "sloTargets": {
+    "anomalyToRcaLatency": "PT30S",
+    "rcaToRemediationLatency": "PT60S",
+    "totalMttr": "PT5M",
+    "rcaConfidenceMin": 0.6,
+    "remediationSuccessRate": 0.95
+  },
+  "prerequisites": {
+    "services": ["aurora-service", "perception-service", "synapse-service", "plato-service"],
+    "kafkaTopics": ["aurora.anomalies.detected", "aurora.rca.hypotheses", "aurora.remediation.actions"],
+    "healthChecks": [
+      {"service": "aurora-service", "endpoint": "/actuator/health"},
+      {"service": "synapse-service", "endpoint": "/actuator/health"}
+    ]
+  },
+  "steps": [
+    {
+      "stepId": "step-1",
+      "name": "Setup: Ensure clean state",
+      "type": "HTTP",
+      "config": {
+        "method": "POST",
+        "url": "${AURORA_URL}/chaos/reset",
+        "expectedStatus": 200
+      },
+      "outputs": {}
+    },
+    {
+      "stepId": "step-2",
+      "name": "Inject anomaly via PERCEPTION",
+      "type": "KAFKA_PRODUCE",
+      "config": {
+        "topic": "aurora.anomalies.detected",
+        "key": "test-component-001",
+        "value": {
+          "anomalyId": "TEST-ANOMALY-${UUID}",
+          "rimNodeId": "rim:service:test-namespace:order-service",
+          "timestamp": "${NOW_MS}",
+          "anomalyType": "LATENCY_SPIKE",
+          "severity": 0.85,
+          "affectedComponents": ["order-service", "payment-service"],
+          "metrics": {
+            "p99_latency_ms": 5200,
+            "error_rate": 0.12
+          },
+          "correlationId": "e2e-test-${UUID}",
+          "metadata": {
+            "source": "e2e-test",
+            "environment": "test"
+          }
+        }
+      },
+      "wait": "PT5S",
+      "outputs": {
+        "anomalyId": "$.value.anomalyId",
+        "correlationId": "$.value.correlationId"
+      }
+    },
+    {
+      "stepId": "step-3",
+      "name": "Inject second correlated anomaly",
+      "type": "KAFKA_PRODUCE",
+      "config": {
+        "topic": "aurora.anomalies.detected",
+        "key": "test-component-001",
+        "value": {
+          "anomalyId": "TEST-ANOMALY-2-${UUID}",
+          "rimNodeId": "rim:service:test-namespace:payment-service",
+          "timestamp": "${NOW_MS}",
+          "anomalyType": "ERROR_RATE",
+          "severity": 0.72,
+          "affectedComponents": ["payment-service", "order-service"],
+          "metrics": {
+            "error_rate": 0.18,
+            "timeout_count": 45
+          },
+          "correlationId": "${outputs.step-2.correlationId}",
+          "metadata": {
+            "source": "e2e-test"
+          }
+        }
+      },
+      "wait": "PT10S",
+      "outputs": {}
+    },
+    {
+      "stepId": "step-4",
+      "name": "Verify RCA hypothesis generated",
+      "type": "KAFKA_CONSUME",
+      "config": {
+        "topic": "aurora.rca.hypotheses",
+        "timeout": "PT60S",
+        "filter": {
+          "correlationId": "${outputs.step-2.correlationId}"
+        }
+      },
+      "assertions": [
+        {"path": "$.rootCauseComponent", "operator": "NOT_NULL"},
+        {"path": "$.confidence", "operator": "GTE", "value": 0.6},
+        {"path": "$.suggestedRemediations", "operator": "NOT_EMPTY"}
+      ],
+      "outputs": {
+        "hypothesisId": "$.hypothesisId",
+        "incidentId": "$.incidentId",
+        "rootCauseComponent": "$.rootCauseComponent",
+        "confidence": "$.confidence"
+      }
+    },
+    {
+      "stepId": "step-5",
+      "name": "Verify remediation action dispatched",
+      "type": "KAFKA_CONSUME",
+      "config": {
+        "topic": "aurora.remediation.actions",
+        "timeout": "PT60S",
+        "filter": {
+          "incidentId": "${outputs.step-4.incidentId}"
+        }
+      },
+      "assertions": [
+        {"path": "$.remediationId", "operator": "NOT_NULL"},
+        {"path": "$.actionType", "operator": "NOT_NULL"},
+        {"path": "$.targetComponent", "operator": "EQUALS", "value": "${outputs.step-4.rootCauseComponent}"},
+        {"path": "$.executionMode", "operator": "IN", "values": ["PRODUCTION", "DRY_RUN"]}
+      ],
+      "outputs": {
+        "remediationId": "$.remediationId",
+        "actionType": "$.actionType"
+      }
+    },
+    {
+      "stepId": "step-6",
+      "name": "Verify incident via API",
+      "type": "HTTP",
+      "config": {
+        "method": "GET",
+        "url": "${AURORA_URL}/api/v1/incidents/${outputs.step-4.incidentId}",
+        "expectedStatus": 200
+      },
+      "assertions": [
+        {"path": "$.id", "operator": "EQUALS", "value": "${outputs.step-4.incidentId}"},
+        {"path": "$.status", "operator": "NOT_EQUALS", "value": "CLOSED"},
+        {"path": "$.hypothesesCount", "operator": "GTE", "value": 1}
+      ],
+      "outputs": {}
+    },
+    {
+      "stepId": "step-7",
+      "name": "Verify RCA via API",
+      "type": "HTTP",
+      "config": {
+        "method": "GET",
+        "url": "${AURORA_URL}/api/v1/incidents/${outputs.step-4.incidentId}/rca",
+        "expectedStatus": 200
+      },
+      "assertions": [
+        {"path": "$", "operator": "NOT_EMPTY"},
+        {"path": "$[0].confidence", "operator": "GTE", "value": "${sloTargets.rcaConfidenceMin}"}
+      ],
+      "outputs": {}
+    },
+    {
+      "stepId": "step-8",
+      "name": "Verify remediation status",
+      "type": "HTTP",
+      "config": {
+        "method": "GET",
+        "url": "${AURORA_URL}/api/v1/remediation/${outputs.step-5.remediationId}/status",
+        "expectedStatus": 200,
+        "retries": 3,
+        "retryDelay": "PT10S"
+      },
+      "assertions": [
+        {"path": "$.remediationId", "operator": "EQUALS", "value": "${outputs.step-5.remediationId}"},
+        {"path": "$.status", "operator": "IN", "values": ["COMPLETED", "IN_PROGRESS", "MONITORING"]}
+      ],
+      "outputs": {
+        "remediationStatus": "$.status"
+      }
+    },
+    {
+      "stepId": "step-9",
+      "name": "Cleanup: Reset chaos state",
+      "type": "HTTP",
+      "config": {
+        "method": "POST",
+        "url": "${AURORA_URL}/chaos/reset",
+        "expectedStatus": 200
+      },
+      "outputs": {}
+    }
+  ],
+  "validation": {
+    "sloChecks": [
+      {
+        "name": "RCA Confidence SLO",
+        "check": "${outputs.step-4.confidence} >= ${sloTargets.rcaConfidenceMin}",
+        "severity": "ERROR"
+      },
+      {
+        "name": "Remediation Dispatched",
+        "check": "${outputs.step-5.remediationId} != null",
+        "severity": "ERROR"
+      }
+    ]
+  },
+  "cleanup": {
+    "steps": [
+      {
+        "type": "HTTP",
+        "config": {
+          "method": "POST",
+          "url": "${AURORA_URL}/chaos/reset"
+        }
+      }
+    ]
+  }
+}

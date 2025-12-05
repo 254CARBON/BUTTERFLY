@@ -1,0 +1,304 @@
+{
+  "scenarioId": "aurora-chaos-immunization",
+  "name": "AURORA Chaos Immunization Learning",
+  "description": "Validates AURORA's chaos immunization - learning from incidents to prevent recurrence",
+  "version": "1.0.0",
+  "timeout": "PT15M",
+  "tags": ["aurora", "immunity", "learning", "chaos"],
+  "sloTargets": {
+    "immunityRuleConfidenceMin": 0.7,
+    "secondIncidentMttrReduction": 0.3,
+    "ruleApplicationLatency": "PT10S"
+  },
+  "prerequisites": {
+    "services": ["aurora-service", "perception-service"],
+    "kafkaTopics": ["aurora.anomalies.detected", "aurora.chaos.learnings"],
+    "healthChecks": [
+      {"service": "aurora-service", "endpoint": "/actuator/health"}
+    ]
+  },
+  "steps": [
+    {
+      "stepId": "step-1",
+      "name": "Setup: Clear existing immunity rules",
+      "type": "HTTP",
+      "config": {
+        "method": "POST",
+        "url": "${AURORA_URL}/api/v1/immunity/cleanup",
+        "expectedStatus": 200
+      },
+      "outputs": {}
+    },
+    {
+      "stepId": "step-2",
+      "name": "Inject first anomaly pattern",
+      "type": "KAFKA_PRODUCE",
+      "config": {
+        "topic": "aurora.anomalies.detected",
+        "key": "immunity-test-component",
+        "value": {
+          "anomalyId": "IMM-ANOMALY-1-${UUID}",
+          "rimNodeId": "rim:service:test:cache-service",
+          "timestamp": "${NOW_MS}",
+          "anomalyType": "RESOURCE_EXHAUSTION",
+          "severity": 0.78,
+          "affectedComponents": ["cache-service"],
+          "metrics": {
+            "memory_usage_percent": 95,
+            "cache_hit_rate": 0.12
+          },
+          "correlationId": "immunity-test-${UUID}",
+          "metadata": {
+            "pattern": "memory-exhaustion"
+          }
+        }
+      },
+      "wait": "PT5S",
+      "outputs": {
+        "firstCorrelationId": "$.value.correlationId"
+      }
+    },
+    {
+      "stepId": "step-3",
+      "name": "Inject second correlated anomaly",
+      "type": "KAFKA_PRODUCE",
+      "config": {
+        "topic": "aurora.anomalies.detected",
+        "key": "immunity-test-component",
+        "value": {
+          "anomalyId": "IMM-ANOMALY-2-${UUID}",
+          "rimNodeId": "rim:service:test:cache-service",
+          "timestamp": "${NOW_MS}",
+          "anomalyType": "LATENCY_SPIKE",
+          "severity": 0.65,
+          "affectedComponents": ["cache-service", "api-gateway"],
+          "metrics": {
+            "p99_latency_ms": 8500
+          },
+          "correlationId": "${outputs.step-2.firstCorrelationId}",
+          "metadata": {}
+        }
+      },
+      "wait": "PT30S",
+      "outputs": {}
+    },
+    {
+      "stepId": "step-4",
+      "name": "Wait for RCA and remediation to complete",
+      "type": "WAIT",
+      "config": {
+        "duration": "PT60S"
+      },
+      "outputs": {}
+    },
+    {
+      "stepId": "step-5",
+      "name": "Simulate incident resolution",
+      "type": "HTTP",
+      "config": {
+        "method": "GET",
+        "url": "${AURORA_URL}/api/v1/incidents?component=cache-service&status=OPEN",
+        "expectedStatus": 200
+      },
+      "outputs": {
+        "firstIncidentId": "$.incidents[0].id"
+      }
+    },
+    {
+      "stepId": "step-6",
+      "name": "Resolve first incident (trigger learning)",
+      "type": "HTTP",
+      "config": {
+        "method": "POST",
+        "url": "${AURORA_URL}/api/v1/incidents/${outputs.step-5.firstIncidentId}/resolve",
+        "body": {
+          "resolution": "Cache cleared and service restarted. Memory leak identified in cache eviction policy."
+        },
+        "expectedStatus": 200
+      },
+      "wait": "PT10S",
+      "outputs": {}
+    },
+    {
+      "stepId": "step-7",
+      "name": "Verify chaos learning emitted",
+      "type": "KAFKA_CONSUME",
+      "config": {
+        "topic": "aurora.chaos.learnings",
+        "timeout": "PT60S",
+        "filter": {
+          "component": "cache-service"
+        }
+      },
+      "assertions": [
+        {"path": "$.learningId", "operator": "NOT_NULL"},
+        {"path": "$.patternType", "operator": "NOT_NULL"},
+        {"path": "$.confidence", "operator": "GTE", "value": 0.5},
+        {"path": "$.ruleId", "operator": "NOT_NULL"}
+      ],
+      "outputs": {
+        "learningId": "$.learningId",
+        "ruleId": "$.ruleId",
+        "patternType": "$.patternType"
+      }
+    },
+    {
+      "stepId": "step-8",
+      "name": "Verify immunity rule created",
+      "type": "HTTP",
+      "config": {
+        "method": "GET",
+        "url": "${AURORA_URL}/api/v1/immunity/rules?component=cache-service",
+        "expectedStatus": 200
+      },
+      "assertions": [
+        {"path": "$.rules", "operator": "NOT_EMPTY"},
+        {"path": "$.rules[0].component", "operator": "EQUALS", "value": "cache-service"},
+        {"path": "$.rules[0].active", "operator": "EQUALS", "value": true}
+      ],
+      "outputs": {
+        "immunityRuleId": "$.rules[0].ruleId"
+      }
+    },
+    {
+      "stepId": "step-9",
+      "name": "Inject repeated anomaly pattern (should be handled faster)",
+      "type": "KAFKA_PRODUCE",
+      "config": {
+        "topic": "aurora.anomalies.detected",
+        "key": "immunity-test-component",
+        "value": {
+          "anomalyId": "IMM-ANOMALY-REPEAT-${UUID}",
+          "rimNodeId": "rim:service:test:cache-service",
+          "timestamp": "${NOW_MS}",
+          "anomalyType": "RESOURCE_EXHAUSTION",
+          "severity": 0.75,
+          "affectedComponents": ["cache-service"],
+          "metrics": {
+            "memory_usage_percent": 92,
+            "cache_hit_rate": 0.15
+          },
+          "correlationId": "immunity-repeat-${UUID}",
+          "metadata": {
+            "pattern": "memory-exhaustion-repeat"
+          }
+        }
+      },
+      "wait": "PT5S",
+      "outputs": {
+        "repeatCorrelationId": "$.value.correlationId"
+      }
+    },
+    {
+      "stepId": "step-10",
+      "name": "Inject second correlated anomaly (repeat pattern)",
+      "type": "KAFKA_PRODUCE",
+      "config": {
+        "topic": "aurora.anomalies.detected",
+        "key": "immunity-test-component",
+        "value": {
+          "anomalyId": "IMM-ANOMALY-REPEAT-2-${UUID}",
+          "rimNodeId": "rim:service:test:cache-service",
+          "timestamp": "${NOW_MS}",
+          "anomalyType": "LATENCY_SPIKE",
+          "severity": 0.60,
+          "affectedComponents": ["cache-service"],
+          "metrics": {
+            "p99_latency_ms": 7200
+          },
+          "correlationId": "${outputs.step-9.repeatCorrelationId}",
+          "metadata": {}
+        }
+      },
+      "outputs": {}
+    },
+    {
+      "stepId": "step-11",
+      "name": "Wait for immunity rule application",
+      "type": "WAIT",
+      "config": {
+        "duration": "PT30S"
+      },
+      "outputs": {}
+    },
+    {
+      "stepId": "step-12",
+      "name": "Verify immunity rule was applied",
+      "type": "HTTP",
+      "config": {
+        "method": "GET",
+        "url": "${AURORA_URL}/api/v1/immunity/rules/${outputs.step-8.immunityRuleId}",
+        "expectedStatus": 200
+      },
+      "assertions": [
+        {"path": "$.appliedCount", "operator": "GTE", "value": 1}
+      ],
+      "outputs": {
+        "appliedCount": "$.appliedCount"
+      }
+    },
+    {
+      "stepId": "step-13",
+      "name": "Verify immunity summary",
+      "type": "HTTP",
+      "config": {
+        "method": "GET",
+        "url": "${AURORA_URL}/api/v1/immunity/summary/cache-service",
+        "expectedStatus": 200
+      },
+      "assertions": [
+        {"path": "$.activeRules", "operator": "GTE", "value": 1},
+        {"path": "$.componentId", "operator": "EQUALS", "value": "cache-service"}
+      ],
+      "outputs": {}
+    },
+    {
+      "stepId": "step-14",
+      "name": "Cleanup: Reset state",
+      "type": "HTTP",
+      "config": {
+        "method": "POST",
+        "url": "${AURORA_URL}/chaos/reset",
+        "expectedStatus": 200
+      },
+      "outputs": {}
+    }
+  ],
+  "validation": {
+    "sloChecks": [
+      {
+        "name": "Immunity Rule Created",
+        "check": "${outputs.step-8.immunityRuleId} != null",
+        "severity": "ERROR"
+      },
+      {
+        "name": "Immunity Rule Applied",
+        "check": "${outputs.step-12.appliedCount} >= 1",
+        "severity": "ERROR"
+      },
+      {
+        "name": "Learning Event Generated",
+        "check": "${outputs.step-7.learningId} != null",
+        "severity": "ERROR"
+      }
+    ]
+  },
+  "cleanup": {
+    "steps": [
+      {
+        "type": "HTTP",
+        "config": {
+          "method": "POST",
+          "url": "${AURORA_URL}/chaos/reset"
+        }
+      },
+      {
+        "type": "HTTP",
+        "config": {
+          "method": "POST",
+          "url": "${AURORA_URL}/api/v1/immunity/cleanup"
+        }
+      }
+    ]
+  }
+}

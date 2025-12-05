@@ -1,0 +1,353 @@
+{
+  "name": "end-to-end-autonomous-healing",
+  "description": "E2E test scenario for autonomous healing flow: anomaly detection -> causal analysis -> counterfactual simulation -> healing action",
+  "version": "1.0.0",
+  "timeout": "PT15M",
+  "tags": ["perception", "odyssey", "anomaly", "causal", "healing", "e2e"],
+  "prerequisites": [
+    {
+      "name": "perception-anomaly-service",
+      "type": "service",
+      "healthEndpoint": "/actuator/health"
+    },
+    {
+      "name": "perception-causal-service",
+      "type": "service",
+      "healthEndpoint": "/actuator/health"
+    },
+    {
+      "name": "odyssey-service",
+      "type": "service",
+      "healthEndpoint": "/actuator/health"
+    },
+    {
+      "name": "kafka",
+      "type": "infrastructure",
+      "topics": [
+        "perception.signals.metrics",
+        "aurora.anomalies.detected",
+        "odyssey.simulation.results"
+      ]
+    }
+  ],
+  "testData": {
+    "normalMetrics": {
+      "nodeId": "test-node-001",
+      "metricName": "cpu_usage",
+      "baselineValue": 50.0,
+      "stdDev": 5.0,
+      "sampleCount": 100
+    },
+    "anomalousMetrics": {
+      "nodeId": "test-node-001",
+      "metricName": "cpu_usage",
+      "spikeValue": 95.0,
+      "dropValue": 5.0
+    },
+    "causalModel": {
+      "variables": ["cpu_usage", "memory_usage", "request_latency", "error_rate"],
+      "edges": [
+        {"cause": "cpu_usage", "effect": "request_latency"},
+        {"cause": "memory_usage", "effect": "request_latency"},
+        {"cause": "request_latency", "effect": "error_rate"}
+      ]
+    }
+  },
+  "steps": [
+    {
+      "name": "train-anomaly-detector",
+      "description": "Train statistical and isolation forest detectors with normal data",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/perception/anomaly/train",
+      "body": {
+        "subjectId": "${testData.normalMetrics.nodeId}",
+        "features": "${generateNormalSamples(testData.normalMetrics)}",
+        "detectors": ["Statistical", "IsolationForest"]
+      },
+      "assertions": [
+        {
+          "type": "STATUS_CODE",
+          "expected": 200
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.trained",
+          "expected": true
+        }
+      ]
+    },
+    {
+      "name": "publish-normal-metrics",
+      "description": "Publish normal metric values to Kafka",
+      "action": "KAFKA_PRODUCE",
+      "topic": "perception.signals.metrics",
+      "count": 20,
+      "message": {
+        "nodeId": "${testData.normalMetrics.nodeId}",
+        "metricName": "${testData.normalMetrics.metricName}",
+        "value": "${randomNormal(testData.normalMetrics.baselineValue, testData.normalMetrics.stdDev)}",
+        "timestamp": "${currentTimestamp()}"
+      },
+      "interval": "PT1S"
+    },
+    {
+      "name": "verify-no-anomaly-detected",
+      "description": "Verify no anomalies during normal operation",
+      "action": "KAFKA_CONSUME",
+      "topic": "aurora.anomalies.detected",
+      "timeout": "PT10S",
+      "expectEmpty": true,
+      "filter": {
+        "nodeId": "${testData.normalMetrics.nodeId}"
+      }
+    },
+    {
+      "name": "inject-cpu-spike-anomaly",
+      "description": "Inject CPU spike to trigger anomaly detection",
+      "action": "KAFKA_PRODUCE",
+      "topic": "perception.signals.metrics",
+      "count": 5,
+      "message": {
+        "nodeId": "${testData.normalMetrics.nodeId}",
+        "metricName": "${testData.normalMetrics.metricName}",
+        "value": "${testData.anomalousMetrics.spikeValue}",
+        "timestamp": "${currentTimestamp()}"
+      },
+      "interval": "PT500MS"
+    },
+    {
+      "name": "wait-for-anomaly-detection",
+      "description": "Wait for anomaly detection pipeline to process",
+      "action": "SLEEP",
+      "duration": "PT5S"
+    },
+    {
+      "name": "verify-anomaly-detected",
+      "description": "Verify anomaly was detected and published",
+      "action": "KAFKA_CONSUME",
+      "topic": "aurora.anomalies.detected",
+      "timeout": "PT30S",
+      "filter": {
+        "nodeId": "${testData.normalMetrics.nodeId}"
+      },
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.anomalyType",
+          "expected": "SPIKE"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.severity",
+          "matcher": "GREATER_THAN",
+          "expected": 0.5
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.confidence",
+          "matcher": "GREATER_THAN",
+          "expected": 0.5
+        }
+      ],
+      "saveAs": "detectedAnomaly"
+    },
+    {
+      "name": "build-causal-graph",
+      "description": "Build causal graph for root cause analysis",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/perception/causal/discover",
+      "body": {
+        "variables": "${testData.causalModel.variables}",
+        "algorithm": "PC",
+        "alpha": 0.05
+      },
+      "assertions": [
+        {
+          "type": "STATUS_CODE",
+          "expected": 200
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.edges.length()",
+          "matcher": "GREATER_THAN",
+          "expected": 0
+        }
+      ],
+      "saveAs": "causalGraph"
+    },
+    {
+      "name": "identify-root-cause",
+      "description": "Use causal graph to identify root cause of anomaly",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/perception/causal/root-cause",
+      "body": {
+        "effect": "error_rate",
+        "graphId": "${causalGraph.id}",
+        "anomalyContext": "${detectedAnomaly}"
+      },
+      "assertions": [
+        {
+          "type": "STATUS_CODE",
+          "expected": 200
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.causes",
+          "matcher": "CONTAINS",
+          "expected": "cpu_usage"
+        }
+      ],
+      "saveAs": "rootCauseAnalysis"
+    },
+    {
+      "name": "run-counterfactual-simulation",
+      "description": "Simulate what would happen if we reduce CPU usage",
+      "action": "HTTP_POST",
+      "endpoint": "/api/v1/odyssey/simulate",
+      "body": {
+        "scenario": {
+          "name": "heal-cpu-spike",
+          "type": "COUNTERFACTUAL",
+          "baseState": {
+            "variables": {
+              "cpu_usage": 95.0,
+              "memory_usage": 70.0,
+              "request_latency": 500.0,
+              "error_rate": 0.15
+            }
+          },
+          "interventions": [
+            {
+              "variable": "cpu_usage",
+              "type": "SET",
+              "value": 50.0
+            }
+          ],
+          "targetVariables": ["error_rate", "request_latency"],
+          "monteCarloSamples": 1000
+        },
+        "causalGraphId": "${causalGraph.id}"
+      },
+      "assertions": [
+        {
+          "type": "STATUS_CODE",
+          "expected": 200
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.status",
+          "expected": "COMPLETED"
+        }
+      ],
+      "saveAs": "simulationResult"
+    },
+    {
+      "name": "verify-simulation-published",
+      "description": "Verify simulation result published to Kafka",
+      "action": "KAFKA_CONSUME",
+      "topic": "odyssey.simulation.results",
+      "timeout": "PT30S",
+      "filter": {
+        "simulationId": "${simulationResult.simulationId}"
+      },
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.status",
+          "expected": "COMPLETED"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.confidence",
+          "matcher": "GREATER_THAN",
+          "expected": 0.8
+        }
+      ]
+    },
+    {
+      "name": "verify-healing-recommendation",
+      "description": "Verify simulation suggests healing action",
+      "action": "HTTP_GET",
+      "endpoint": "/api/v1/odyssey/simulation/${simulationResult.simulationId}/recommendation",
+      "assertions": [
+        {
+          "type": "JSON_PATH",
+          "path": "$.recommendedAction",
+          "expected": "NOT_NULL"
+        },
+        {
+          "type": "JSON_PATH",
+          "path": "$.expectedImprovement.error_rate",
+          "matcher": "LESS_THAN",
+          "expected": 0.15
+        }
+      ]
+    },
+    {
+      "name": "apply-healing-and-verify",
+      "description": "Apply healing action and verify system recovers",
+      "action": "KAFKA_PRODUCE",
+      "topic": "perception.signals.metrics",
+      "count": 10,
+      "message": {
+        "nodeId": "${testData.normalMetrics.nodeId}",
+        "metricName": "${testData.normalMetrics.metricName}",
+        "value": "${testData.normalMetrics.baselineValue}",
+        "timestamp": "${currentTimestamp()}"
+      },
+      "interval": "PT1S"
+    },
+    {
+      "name": "verify-system-recovered",
+      "description": "Verify no more anomalies after healing",
+      "action": "POLL",
+      "endpoint": "/api/v1/perception/anomaly/status/${testData.normalMetrics.nodeId}",
+      "interval": "PT2S",
+      "timeout": "PT30S",
+      "condition": {
+        "type": "JSON_PATH",
+        "path": "$.currentState",
+        "expected": "NORMAL"
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "action": "HTTP_DELETE",
+      "endpoint": "/api/v1/perception/anomaly/training/${testData.normalMetrics.nodeId}"
+    },
+    {
+      "action": "HTTP_DELETE",
+      "endpoint": "/api/v1/perception/causal/graph/${causalGraph.id}"
+    }
+  ],
+  "metrics": {
+    "collect": [
+      "perception.anomaly.detection.latency",
+      "perception.causal.discovery.duration",
+      "odyssey.simulation.duration",
+      "odyssey.counterfactual.query"
+    ],
+    "assertions": [
+      {
+        "metric": "perception.anomaly.detection.latency",
+        "percentile": "p99",
+        "lessThan": 5000
+      },
+      {
+        "metric": "odyssey.simulation.duration",
+        "percentile": "p95",
+        "lessThan": 10000
+      }
+    ]
+  },
+  "reports": {
+    "generateOn": ["COMPLETE", "FAILURE"],
+    "include": [
+      "step_durations",
+      "assertion_results",
+      "metrics_summary",
+      "kafka_message_counts"
+    ]
+  }
+}

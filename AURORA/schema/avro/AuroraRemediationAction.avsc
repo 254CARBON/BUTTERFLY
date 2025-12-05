@@ -1,0 +1,191 @@
+{
+  "namespace": "com.z254.butterfly.aurora.avro",
+  "type": "record",
+  "name": "AuroraRemediationAction",
+  "doc": "Remediation action dispatched by AURORA for SYNAPSE execution. Schema version 1.0.0",
+  "fields": [
+    {
+      "name": "schemaVersion",
+      "type": "string",
+      "default": "1.0.0",
+      "doc": "Schema version for compatibility tracking"
+    },
+    {
+      "name": "remediationId",
+      "type": "string",
+      "doc": "Unique remediation identifier"
+    },
+    {
+      "name": "incidentId",
+      "type": "string",
+      "doc": "Parent incident identifier"
+    },
+    {
+      "name": "hypothesisId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "RCA hypothesis that triggered this remediation"
+    },
+    {
+      "name": "timestamp",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Action creation timestamp (epoch ms)"
+    },
+    {
+      "name": "actionType",
+      "type": {
+        "type": "enum",
+        "name": "ActionType",
+        "doc": "Type of remediation action",
+        "symbols": [
+          "RESTART",
+          "SCALE_UP",
+          "SCALE_DOWN",
+          "CIRCUIT_BREAK",
+          "TRAFFIC_REDIRECT",
+          "CACHE_CLEAR",
+          "CONNECTION_POOL_RESET",
+          "ROLLBACK",
+          "FAILOVER",
+          "THROTTLE",
+          "NOTIFY",
+          "CUSTOM"
+        ]
+      },
+      "doc": "Type of remediation action"
+    },
+    {
+      "name": "targetComponent",
+      "type": "string",
+      "doc": "Component to apply remediation to"
+    },
+    {
+      "name": "parameters",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "doc": "Action parameters"
+    },
+    {
+      "name": "executionMode",
+      "type": {
+        "type": "enum",
+        "name": "ExecutionMode",
+        "symbols": ["PRODUCTION", "DRY_RUN", "SANDBOX"]
+      },
+      "doc": "Execution mode"
+    },
+    {
+      "name": "priority",
+      "type": "int",
+      "default": 0,
+      "doc": "Execution priority (higher = more urgent)"
+    },
+    {
+      "name": "blastRadius",
+      "type": "double",
+      "doc": "Estimated blast radius (affected entities)"
+    },
+    {
+      "name": "riskScore",
+      "type": "double",
+      "doc": "Risk score for this action (0.0 to 1.0)"
+    },
+    {
+      "name": "platoPlanId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "PLATO plan ID for governance tracking"
+    },
+    {
+      "name": "platoApprovalId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "PLATO approval ID if pre-approved"
+    },
+    {
+      "name": "requiresApproval",
+      "type": "boolean",
+      "default": false,
+      "doc": "Whether this action requires PLATO approval"
+    },
+    {
+      "name": "timeoutMs",
+      "type": "long",
+      "default": 300000,
+      "doc": "Execution timeout in milliseconds"
+    },
+    {
+      "name": "maxRetries",
+      "type": "int",
+      "default": 3,
+      "doc": "Maximum retry attempts"
+    },
+    {
+      "name": "rollbackPlan",
+      "type": ["null", {
+        "type": "record",
+        "name": "RollbackPlan",
+        "fields": [
+          {"name": "actionType", "type": "string"},
+          {"name": "targetComponent", "type": "string"},
+          {"name": "parameters", "type": {"type": "map", "values": "string"}},
+          {"name": "healthCheckUrl", "type": ["null", "string"], "default": null},
+          {"name": "healthWindowMs", "type": "long", "default": 300000}
+        ]
+      }],
+      "default": null,
+      "doc": "Rollback plan if remediation causes issues"
+    },
+    {
+      "name": "preChecks",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "PreCheck",
+          "fields": [
+            {"name": "checkType", "type": "string"},
+            {"name": "target", "type": "string"},
+            {"name": "expectedResult", "type": "string"}
+          ]
+        }
+      },
+      "default": [],
+      "doc": "Pre-execution checks"
+    },
+    {
+      "name": "synapseToolId",
+      "type": "string",
+      "doc": "SYNAPSE tool ID for execution"
+    },
+    {
+      "name": "correlationId",
+      "type": "string",
+      "doc": "Correlation ID for distributed tracing"
+    },
+    {
+      "name": "tenantId",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Tenant identifier"
+    },
+    {
+      "name": "namespace",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Namespace scope"
+    },
+    {
+      "name": "metadata",
+      "type": {
+        "type": "map",
+        "values": "string"
+      },
+      "default": {},
+      "doc": "Additional metadata"
+    }
+  ]
+}

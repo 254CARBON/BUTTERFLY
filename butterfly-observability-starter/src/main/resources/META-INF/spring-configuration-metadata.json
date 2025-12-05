@@ -1,0 +1,60 @@
+{
+  "groups": [
+    {
+      "name": "butterfly.observability",
+      "type": "com.z254.butterfly.common.observability.ObservabilityProperties",
+      "description": "BUTTERFLY observability configuration"
+    }
+  ],
+  "properties": [
+    {
+      "name": "butterfly.observability.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable BUTTERFLY observability features",
+      "defaultValue": true
+    },
+    {
+      "name": "butterfly.observability.correlation-id.header-name",
+      "type": "java.lang.String",
+      "description": "HTTP header name for correlation ID",
+      "defaultValue": "X-Correlation-ID"
+    },
+    {
+      "name": "butterfly.observability.correlation-id.generate-if-missing",
+      "type": "java.lang.Boolean",
+      "description": "Generate correlation ID if not present in request",
+      "defaultValue": true
+    },
+    {
+      "name": "butterfly.observability.correlation-id.propagate-to-kafka",
+      "type": "java.lang.Boolean",
+      "description": "Propagate correlation ID to Kafka message headers",
+      "defaultValue": true
+    },
+    {
+      "name": "butterfly.observability.tracing.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable distributed tracing",
+      "defaultValue": true
+    },
+    {
+      "name": "butterfly.observability.logging.structured",
+      "type": "java.lang.Boolean",
+      "description": "Use structured (JSON) logging format",
+      "defaultValue": true
+    },
+    {
+      "name": "butterfly.observability.agent-thoughts.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable agent thought visualization endpoints",
+      "defaultValue": true
+    },
+    {
+      "name": "butterfly.observability.agent-thoughts.kafka-topic",
+      "type": "java.lang.String",
+      "description": "Kafka topic for agent thoughts",
+      "defaultValue": "cortex.agent.thoughts"
+    }
+  ],
+  "hints": []
+}

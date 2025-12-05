@@ -1,0 +1,181 @@
+{
+  "name": "Database Healing - Pool Reset and Failover",
+  "description": "Validates database healing connector operations",
+  "tags": ["healing", "database", "synapse", "plan4"],
+  "setup": {
+    "services": ["synapse", "postgres"],
+    "timeout": 60000
+  },
+  "steps": [
+    {
+      "name": "Dry-run pool reset",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/database",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "reset_pool",
+          "dryRun": true,
+          "correlationId": "e2e-db-reset-${TIMESTAMP}"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "DRY_RUN_SUCCESS"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.output.dryRunDescription",
+          "condition": "contains",
+          "expected": "soft-evict"
+        }
+      ]
+    },
+    {
+      "name": "Dry-run terminate connections",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/database",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "terminate_connections",
+          "parameters": {
+            "count": 5,
+            "database": "synapse"
+          },
+          "dryRun": true
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "DRY_RUN_SUCCESS"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.output.dryRunDescription",
+          "condition": "contains",
+          "expected": "terminate"
+        }
+      ]
+    },
+    {
+      "name": "Dry-run vacuum table",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/database",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "vacuum_table",
+          "parameters": {
+            "tableName": "actions",
+            "analyze": true
+          },
+          "dryRun": true
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "expected": "DRY_RUN_SUCCESS"
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.output.dryRunDescription",
+          "condition": "contains",
+          "expected": "VACUUM"
+        }
+      ]
+    },
+    {
+      "name": "Failover replica check",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/database",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "failover_replica",
+          "parameters": {
+            "targetReplica": "replica-1"
+          },
+          "dryRun": true
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "condition": "isIn",
+          "expected": ["DRY_RUN_SUCCESS", "PARTIAL_SUCCESS"]
+        }
+      ]
+    },
+    {
+      "name": "Execute pool reset (sandbox mode)",
+      "request": {
+        "method": "POST",
+        "url": "${SYNAPSE_URL}/api/v1/healing/database",
+        "headers": {
+          "Authorization": "Bearer ${AUTH_TOKEN}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "operation": "reset_pool",
+          "dryRun": false,
+          "correlationId": "e2e-db-reset-exec-${TIMESTAMP}",
+          "auroraIncidentId": "incident-e2e-001"
+        }
+      },
+      "assertions": [
+        {
+          "type": "status",
+          "expected": 200
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.status",
+          "condition": "isIn",
+          "expected": ["SUCCESS", "PARTIAL_SUCCESS"]
+        },
+        {
+          "type": "jsonPath",
+          "path": "$.actions",
+          "condition": "isArray"
+        }
+      ]
+    }
+  ],
+  "cleanup": {}
+}

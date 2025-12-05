@@ -1,0 +1,227 @@
+# Chaos Experiment: Vector Store Failure
+#
+# Purpose:
+#   - Validate CORTEX/PERCEPTION handle vector DB unavailability
+#   - Confirm RAG fallback to cached embeddings or keyword search
+#   - Test agent operation without real-time similarity search
+#   - Verify embedding cache effectiveness
+#
+# Related Docs: docs/operations/runbooks/cortex-operations.md
+
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: vector-store-failure
+  namespace: butterfly-chaos
+  labels:
+    chaos.butterfly.io/category: failure
+    chaos.butterfly.io/target: cortex,perception
+    chaos.butterfly.io/severity: high
+spec:
+  entry: vector-failure-workflow
+  templates:
+    - name: vector-failure-workflow
+      templateType: Serial
+      deadline: 40m
+      children:
+        - capture-baseline
+        - warm-embedding-cache
+        - inject-vector-failure
+        - test-rag-queries
+        - verify-cache-fallback
+        - verify-agent-operation
+        - release-failure
+        - verify-recovery
+
+    - name: capture-baseline
+      templateType: Task
+      task:
+        container:
+          name: baseline
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Recording baseline vector store metrics..."
+              curl -s http://perception:8080/actuator/prometheus | grep -E "vector_|embedding_" || true
+              curl -s http://cortex:8080/actuator/prometheus | grep -E "rag_|embedding_cache" || true
+              
+              # Check vector store health
+              curl -s http://perception:8080/api/v1/perception/vector/health
+
+    - name: warm-embedding-cache
+      templateType: Task
+      task:
+        container:
+          name: cache-warm
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Pre-warming embedding cache with common queries..."
+              
+              # Execute some RAG queries to populate cache
+              curl -s -X POST http://cortex:8080/api/v1/cortex/rag/query \
+                -H "Content-Type: application/json" \
+                -d '{"query":"system health monitoring","cacheResult":true}'
+              
+              curl -s -X POST http://cortex:8080/api/v1/cortex/rag/query \
+                -H "Content-Type: application/json" \
+                -d '{"query":"performance optimization","cacheResult":true}'
+              
+              echo "Cache warming complete"
+              curl -s http://cortex:8080/actuator/prometheus | grep "embedding_cache_size"
+
+    - name: inject-vector-failure
+      templateType: PodChaos
+      podChaos:
+        selector:
+          namespaces:
+            - butterfly
+          labelSelectors:
+            app.kubernetes.io/name: milvus
+        mode: all
+        action: pod-kill
+        duration: "15m"
+
+    - name: test-rag-queries
+      templateType: Task
+      task:
+        container:
+          name: rag-test
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Testing RAG queries during vector store outage..."
+              sleep 30
+              
+              # Test cached query (should work from cache)
+              echo "Testing cached query:"
+              curl -s -X POST http://cortex:8080/api/v1/cortex/rag/query \
+                -H "Content-Type: application/json" \
+                -d '{"query":"system health monitoring"}'
+              
+              # Test new query (should fall back to keyword)
+              echo "Testing new query (should fallback):"
+              curl -s -X POST http://cortex:8080/api/v1/cortex/rag/query \
+                -H "Content-Type: application/json" \
+                -d '{"query":"novel query never seen before"}'
+
+    - name: verify-cache-fallback
+      templateType: Task
+      task:
+        container:
+          name: fallback-check
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying cache fallback behavior..."
+              sleep 15
+              
+              # Check cache hit metrics
+              curl -s http://cortex:8080/actuator/prometheus | grep -E "cache_hit|cache_miss" || true
+              
+              # Check fallback activation
+              curl -s http://cortex:8080/actuator/prometheus | grep "rag_fallback" || true
+              
+              # Check keyword search fallback
+              curl -s http://perception:8080/actuator/prometheus | grep "keyword_search" || true
+
+    - name: verify-agent-operation
+      templateType: Task
+      task:
+        container:
+          name: agent-test
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying agent can operate without vector store..."
+              
+              # Submit agent task
+              curl -s -X POST http://cortex:8080/api/v1/agents/rag-agent/tasks \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "taskId": "vector-chaos-task",
+                  "description": "Analyze recent system alerts",
+                  "constraints": {"requireRag": false}
+                }'
+              
+              sleep 30
+              
+              # Agent should still function
+              curl -s "http://cortex:8080/api/v1/agents/rag-agent/episodes/latest" | \
+                grep -E "status|progress"
+
+    - name: release-failure
+      templateType: Task
+      task:
+        container:
+          name: release
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Vector store pods should be restarting..."
+              sleep 60
+
+    - name: verify-recovery
+      templateType: Task
+      task:
+        container:
+          name: recovery
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Verifying vector store recovery..."
+              sleep 120
+              
+              # Vector store should be back
+              curl -s http://perception:8080/api/v1/perception/vector/health
+              
+              # RAG should work normally
+              curl -s -X POST http://cortex:8080/api/v1/cortex/rag/query \
+                -H "Content-Type: application/json" \
+                -d '{"query":"test recovery query"}'
+              
+              # Cache should not be stale
+              curl -s http://cortex:8080/actuator/prometheus | grep "cache_stale_entries"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vector-store-failure-criteria
+  namespace: butterfly-chaos
+data:
+  pass_criteria: |
+    - Cached RAG queries return results
+    - Non-cached queries fall back to keyword search
+    - Agents continue operating (degraded but functional)
+    - No data corruption in vector store after recovery
+    - Cache invalidation works correctly post-recovery
+    - Recovery is automatic when vector store returns
+
+  fail_criteria: |
+    - All RAG queries fail (no fallback)
+    - Agents crash or hang
+    - Cache data corruption
+    - Vector store doesn't recover
+    - Memory exhaustion from cache growth
+
+  remediation: |
+    1. Review embedding cache TTL and size limits
+    2. Verify keyword search fallback is configured
+    3. Check vector store HA configuration
+    4. Increase cache warm-up on startup
+    5. Consider read replicas for vector store
