@@ -1,5 +1,8 @@
 package com.z254.butterfly.security.secret;
 
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -13,8 +16,12 @@ import java.util.Optional;
  *   <li>Vault-backed provider - Enterprise with HashiCorp Vault</li>
  * </ul>
  * <p>
- * This interface is designed to support future integration with HashiCorp Vault
- * for centralized secret management across the BUTTERFLY ecosystem.
+ * Supports hybrid secret fetching patterns:
+ * <ul>
+ *   <li>Startup batch loading for common secrets (lower latency)</li>
+ *   <li>On-demand retrieval with short TTL for sensitive/rotating secrets</li>
+ *   <li>Connector-specific credential abstraction</li>
+ * </ul>
  */
 public interface SecretProvider {
 
@@ -35,6 +42,47 @@ public interface SecretProvider {
      */
     default String getSecretOrDefault(String path, String defaultValue) {
         return getSecret(path).orElse(defaultValue);
+    }
+
+    /**
+     * Retrieve a sensitive secret with a custom TTL cache.
+     * Use for highly sensitive or frequently rotating secrets.
+     *
+     * @param path the path/key for the secret
+     * @param ttl the cache time-to-live for this specific secret
+     * @return the secret value if found, empty otherwise
+     */
+    default Optional<String> getSensitiveSecret(String path, Duration ttl) {
+        // Default implementation falls back to regular getSecret
+        // Implementations can override for custom TTL behavior
+        return getSecret(path);
+    }
+
+    /**
+     * Bulk load secrets at startup for improved latency.
+     * Secrets are loaded into cache with the default TTL.
+     *
+     * @param paths list of secret paths to preload
+     * @return map of path to secret value for successfully loaded secrets
+     */
+    default Map<String, String> loadSecretsBatch(List<String> paths) {
+        // Default implementation loads secrets one by one
+        java.util.HashMap<String, String> result = new java.util.HashMap<>();
+        for (String path : paths) {
+            getSecret(path).ifPresent(value -> result.put(path, value));
+        }
+        return result;
+    }
+
+    /**
+     * Get connector credentials for a specific connector type.
+     * This provides a typed abstraction for connector authentication.
+     *
+     * @param connectorType the type of connector (e.g., "s3", "jira", "slack")
+     * @return the connector credentials if configured
+     */
+    default Optional<ConnectorCredentials> getConnectorCredentials(String connectorType) {
+        return Optional.empty();
     }
 
     /**
@@ -94,4 +142,13 @@ public interface SecretProvider {
      * @return the provider type (e.g., "inmemory", "vault", "database")
      */
     String getProviderType();
+
+    /**
+     * Invalidate cached secret(s) to force re-fetch.
+     *
+     * @param path the path to invalidate, or null to invalidate all
+     */
+    default void invalidateCache(String path) {
+        // Default no-op for providers without caching
+    }
 }

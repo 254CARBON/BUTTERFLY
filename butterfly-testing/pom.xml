@@ -39,6 +39,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Spring Security Test (for SecurityMockMvcRequestPostProcessors) -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>compile</scope>
+        </dependency>
+
         <!-- Spring Kafka Test -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>

@@ -20,6 +20,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.*;
@@ -34,6 +36,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>Multiple authentication methods (Token, AppRole, Kubernetes)</li>
  *   <li>Automatic token renewal</li>
  *   <li>Secret caching with TTL</li>
+ *   <li>Hybrid fetching (startup batch + on-demand with custom TTL)</li>
+ *   <li>Connector credential abstraction</li>
  *   <li>Retry with exponential backoff</li>
  *   <li>Health checking</li>
  * </ul>
@@ -141,7 +145,7 @@ public class VaultSecretProvider implements SecretProvider {
         // Update cache
         if (properties.isCacheEnabled()) {
             secretCache.put(path, new CachedSecret(value, 
-                    Instant.now().plus(properties.getCacheTtl())));
+                    Instant.now().plus(properties.getCacheTtl()), Instant.now()));
         }
         
         incrementCounter(secretWriteCounter);
@@ -194,7 +198,7 @@ public class VaultSecretProvider implements SecretProvider {
         // Cache the secret value
         if (properties.isCacheEnabled()) {
             secretCache.put(path, new CachedSecret(secret, 
-                    Instant.now().plus(properties.getCacheTtl())));
+                    Instant.now().plus(properties.getCacheTtl()), Instant.now()));
         }
         
         incrementCounter(secretWriteCounter);
@@ -216,6 +220,245 @@ public class VaultSecretProvider implements SecretProvider {
     @Override
     public String getProviderType() {
         return PROVIDER_TYPE;
+    }
+
+    // =========================================================================
+    // Hybrid Fetching Methods
+    // =========================================================================
+
+    @Override
+    public Optional<String> getSensitiveSecret(String path, Duration ttl) {
+        if (!healthy.get()) {
+            log.warn("Vault is unhealthy, cannot retrieve sensitive secret: {}", path);
+            return Optional.empty();
+        }
+
+        // For sensitive secrets with custom TTL, check cache with custom expiry
+        if (properties.isCacheEnabled() && ttl != null) {
+            CachedSecret cached = secretCache.get(path);
+            // For sensitive secrets, we use a shorter TTL even if cached value exists
+            if (cached != null) {
+                Duration age = Duration.between(cached.createdAt(), Instant.now());
+                if (age.compareTo(ttl) < 0 && !cached.isExpired()) {
+                    incrementCounter(secretCacheHitCounter);
+                    return Optional.ofNullable(cached.value());
+                }
+            }
+            incrementCounter(secretCacheMissCounter);
+        }
+
+        // Read from Vault with custom TTL caching
+        return readFromVaultWithTtl(path, ttl);
+    }
+
+    @Override
+    public Map<String, String> loadSecretsBatch(List<String> paths) {
+        if (!healthy.get()) {
+            log.warn("Vault is unhealthy, cannot batch load secrets");
+            return Map.of();
+        }
+
+        log.info("Batch loading {} secrets from Vault", paths.size());
+        Map<String, String> results = new HashMap<>();
+        int successCount = 0;
+        int failureCount = 0;
+
+        for (String path : paths) {
+            try {
+                Optional<String> secret = readFromVault(path);
+                if (secret.isPresent()) {
+                    results.put(path, secret.get());
+                    successCount++;
+                } else {
+                    failureCount++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load secret at path {}: {}", path, e.getMessage());
+                failureCount++;
+            }
+        }
+
+        log.info("Batch load complete: {} succeeded, {} failed", successCount, failureCount);
+        return results;
+    }
+
+    @Override
+    public Optional<ConnectorCredentials> getConnectorCredentials(String connectorType) {
+        if (!healthy.get()) {
+            log.warn("Vault is unhealthy, cannot retrieve connector credentials: {}", connectorType);
+            return Optional.empty();
+        }
+
+        String basePath = properties.getBasePath() + "/connectors/" + connectorType;
+        
+        // Determine credential type and build appropriate credentials
+        return switch (connectorType.toLowerCase()) {
+            case "s3", "aws" -> buildAwsCredentials(basePath, connectorType);
+            case "database", "postgres", "mysql" -> buildDatabaseCredentials(basePath, connectorType);
+            case "jira", "pagerduty", "github", "datadog" -> buildApiKeyCredentials(basePath, connectorType);
+            case "slack", "teams", "discord" -> buildOAuthOrApiKeyCredentials(basePath, connectorType);
+            default -> buildGenericCredentials(basePath, connectorType);
+        };
+    }
+
+    @Override
+    public void invalidateCache(String path) {
+        if (path == null) {
+            int size = secretCache.size();
+            secretCache.clear();
+            log.info("Invalidated all {} cached secrets", size);
+        } else {
+            CachedSecret removed = secretCache.remove(path);
+            if (removed != null) {
+                log.debug("Invalidated cached secret at path: {}", path);
+            }
+        }
+    }
+
+    // =========================================================================
+    // Connector Credential Builders
+    // =========================================================================
+
+    private Optional<ConnectorCredentials> buildAwsCredentials(String basePath, String connectorType) {
+        try {
+            Optional<String> accessKey = getSensitiveSecret(basePath + "/access-key-id", Duration.ofMinutes(1));
+            Optional<String> secretKey = getSensitiveSecret(basePath + "/secret-access-key", Duration.ofMinutes(1));
+
+            if (accessKey.isEmpty() || secretKey.isEmpty()) {
+                log.debug("AWS credentials not found for connector: {}", connectorType);
+                return Optional.empty();
+            }
+
+            String region = getSecretOrDefault(basePath + "/region", "us-east-1");
+            Optional<String> sessionToken = getSecret(basePath + "/session-token");
+            Optional<String> roleArn = getSecret(basePath + "/role-arn");
+
+            ConnectorCredentials.AwsCredentials.Builder builder = ConnectorCredentials.AwsCredentials.builder()
+                    .accessKeyId(accessKey.get())
+                    .secretAccessKey(secretKey.get())
+                    .region(region);
+
+            sessionToken.ifPresent(builder::sessionToken);
+            roleArn.ifPresent(builder::roleArn);
+
+            return Optional.of(builder.build());
+        } catch (Exception e) {
+            log.error("Failed to build AWS credentials for {}: {}", connectorType, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<ConnectorCredentials> buildDatabaseCredentials(String basePath, String connectorType) {
+        try {
+            Optional<String> username = getSecret(basePath + "/username");
+            Optional<String> password = getSensitiveSecret(basePath + "/password", Duration.ofMinutes(1));
+
+            if (username.isEmpty() || password.isEmpty()) {
+                log.debug("Database credentials not found for connector: {}", connectorType);
+                return Optional.empty();
+            }
+
+            ConnectorCredentials.DatabaseCredentials.Builder builder = 
+                    ConnectorCredentials.DatabaseCredentials.builder()
+                            .username(username.get())
+                            .password(password.get());
+
+            getSecret(basePath + "/host").ifPresent(builder::host);
+            getSecret(basePath + "/port").map(Integer::parseInt).ifPresent(builder::port);
+            getSecret(basePath + "/database").ifPresent(builder::database);
+            getSecret(basePath + "/jdbc-url").ifPresent(builder::jdbcUrl);
+
+            return Optional.of(builder.build());
+        } catch (Exception e) {
+            log.error("Failed to build database credentials for {}: {}", connectorType, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<ConnectorCredentials> buildApiKeyCredentials(String basePath, String connectorType) {
+        try {
+            Optional<String> apiKey = getSensitiveSecret(basePath + "/api-key", Duration.ofMinutes(1));
+            if (apiKey.isEmpty()) {
+                apiKey = getSensitiveSecret(basePath + "/api-token", Duration.ofMinutes(1));
+            }
+            if (apiKey.isEmpty()) {
+                apiKey = getSensitiveSecret(basePath + "/token", Duration.ofMinutes(1));
+            }
+
+            if (apiKey.isEmpty()) {
+                log.debug("API key not found for connector: {}", connectorType);
+                return Optional.empty();
+            }
+
+            ConnectorCredentials.ApiKeyCredentials.Builder builder = 
+                    ConnectorCredentials.ApiKeyCredentials.builder()
+                            .connectorType(connectorType)
+                            .apiKey(apiKey.get());
+
+            getSecret(basePath + "/header-name").ifPresent(builder::headerName);
+            getSecret(basePath + "/prefix").ifPresent(builder::prefix);
+
+            return Optional.of(builder.build());
+        } catch (Exception e) {
+            log.error("Failed to build API key credentials for {}: {}", connectorType, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<ConnectorCredentials> buildOAuthOrApiKeyCredentials(String basePath, String connectorType) {
+        // First try OAuth
+        try {
+            Optional<String> accessToken = getSensitiveSecret(basePath + "/access-token", Duration.ofMinutes(1));
+            Optional<String> clientId = getSecret(basePath + "/client-id");
+
+            if (accessToken.isPresent() || clientId.isPresent()) {
+                ConnectorCredentials.OAuthCredentials.Builder builder = 
+                        ConnectorCredentials.OAuthCredentials.builder()
+                                .connectorType(connectorType);
+
+                clientId.ifPresent(builder::clientId);
+                getSensitiveSecret(basePath + "/client-secret", Duration.ofMinutes(1)).ifPresent(builder::clientSecret);
+                accessToken.ifPresent(builder::accessToken);
+                getSecret(basePath + "/refresh-token").ifPresent(builder::refreshToken);
+                getSecret(basePath + "/token-url").ifPresent(builder::tokenUrl);
+                getSecret(basePath + "/scope").ifPresent(builder::scope);
+
+                return Optional.of(builder.build());
+            }
+
+            // Fall back to API key
+            return buildApiKeyCredentials(basePath, connectorType);
+        } catch (Exception e) {
+            log.error("Failed to build OAuth/API credentials for {}: {}", connectorType, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Optional<ConnectorCredentials> buildGenericCredentials(String basePath, String connectorType) {
+        try {
+            // Try to detect credential type based on what's available
+            Optional<String> accessKey = getSecret(basePath + "/access-key-id");
+            if (accessKey.isPresent()) {
+                return buildAwsCredentials(basePath, connectorType);
+            }
+
+            Optional<String> username = getSecret(basePath + "/username");
+            Optional<String> password = getSecret(basePath + "/password");
+            if (username.isPresent() && password.isPresent()) {
+                return buildDatabaseCredentials(basePath, connectorType);
+            }
+
+            Optional<String> apiKey = getSecret(basePath + "/api-key");
+            if (apiKey.isPresent()) {
+                return buildApiKeyCredentials(basePath, connectorType);
+            }
+
+            log.debug("No recognizable credentials found for connector: {}", connectorType);
+            return Optional.empty();
+        } catch (Exception e) {
+            log.error("Failed to build generic credentials for {}: {}", connectorType, e.getMessage());
+            return Optional.empty();
+        }
     }
 
     // =========================================================================
@@ -337,7 +580,7 @@ public class VaultSecretProvider implements SecretProvider {
                     // Update cache
                     if (properties.isCacheEnabled()) {
                         secretCache.put(path, new CachedSecret(value, 
-                                Instant.now().plus(properties.getCacheTtl())));
+                                Instant.now().plus(properties.getCacheTtl()), Instant.now()));
                     }
                     
                     incrementCounter(secretReadCounter);
@@ -544,9 +787,58 @@ public class VaultSecretProvider implements SecretProvider {
         }
     }
 
-    private record CachedSecret(String value, Instant expiry) {
+    private record CachedSecret(String value, Instant expiry, Instant createdAt) {
+        CachedSecret(String value, Instant expiry) {
+            this(value, expiry, Instant.now());
+        }
+        
         boolean isExpired() {
             return Instant.now().isAfter(expiry);
+        }
+    }
+
+    /**
+     * Read a secret from Vault with a custom TTL for caching.
+     */
+    private Optional<String> readFromVaultWithTtl(String path, Duration ttl) {
+        String fullPath = properties.buildSecretPath(path);
+        String url = properties.getUri() + "/v1/" + fullPath;
+
+        Timer.Sample sample = Timer.start();
+        try {
+            HttpHeaders headers = createHeaders();
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
+            
+            ResponseEntity<JsonNode> response = restTemplate.exchange(
+                    url, HttpMethod.GET, entity, JsonNode.class);
+            
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                JsonNode data = response.getBody().path("data").path("data");
+                if (!data.isMissingNode()) {
+                    String value = data.has("value") 
+                            ? data.get("value").asText() 
+                            : data.has("secret") ? data.get("secret").asText() : null;
+                    
+                    if (value != null) {
+                        // Use custom TTL for sensitive secrets
+                        Duration effectiveTtl = ttl != null ? ttl : properties.getCacheTtl();
+                        if (properties.isCacheEnabled()) {
+                            secretCache.put(path, new CachedSecret(value, 
+                                    Instant.now().plus(effectiveTtl), Instant.now()));
+                        }
+                        
+                        incrementCounter(secretReadCounter);
+                        return Optional.of(value);
+                    }
+                }
+            }
+            
+            return Optional.empty();
+        } catch (RestClientException e) {
+            log.error("Failed to read sensitive secret from Vault: {}", path, e);
+            return Optional.empty();
+        } finally {
+            recordTimer(sample, secretReadTimer);
         }
     }
 }

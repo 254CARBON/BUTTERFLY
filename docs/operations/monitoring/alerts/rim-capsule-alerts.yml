@@ -1,0 +1,320 @@
+# RIM CAPSULE Prometheus Alert Rules
+# These alerts cover RIM-CAPSULE integration health, DLQ, consistency, and contract violations
+
+groups:
+  - name: rim-capsule-health
+    rules:
+      # =============================================================
+      # DLQ Alerts
+      # =============================================================
+      
+      - alert: RimCapsuleDlqDepthWarning
+        expr: rim_capsule_dlq_depth > 100
+        for: 10m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE DLQ depth is elevated"
+          description: "DLQ depth is {{ $value }} (threshold: 100). Check CAPSULE service health and run DLQ replay."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-dlq-operations"
+          dashboard: "https://grafana.butterfly.internal/d/rim-capsule-health"
+      
+      - alert: RimCapsuleDlqDepthCritical
+        expr: rim_capsule_dlq_depth > 500
+        for: 5m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE DLQ depth is critical"
+          description: "DLQ depth is {{ $value }} (threshold: 500). Immediate action required."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-dlq-operations"
+          dashboard: "https://grafana.butterfly.internal/d/rim-capsule-health"
+      
+      - alert: RimCapsuleDlqOldMessages
+        expr: rim_capsule_dlq_oldest_message_age_seconds > 3600
+        for: 15m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE DLQ has old unprocessed messages"
+          description: "Oldest DLQ message is {{ $value | humanizeDuration }} old. Run DLQ replay."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-dlq-operations"
+      
+      # =============================================================
+      # Write Failure Alerts
+      # =============================================================
+      
+      - alert: RimCapsuleWriteFailureRate
+        expr: |
+          (
+            sum(rate(rim_capsule_write_total{result="failure"}[5m])) 
+            / sum(rate(rim_capsule_write_total[5m]))
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE write failure rate elevated"
+          description: "{{ $value | printf \"%.1f\" }}% of CAPSULE writes are failing. Check CAPSULE service."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-capsule-failure-modes"
+      
+      - alert: RimCapsuleWriteFailureCritical
+        expr: |
+          (
+            sum(rate(rim_capsule_write_total{result="failure"}[5m])) 
+            / sum(rate(rim_capsule_write_total[5m]))
+          ) * 100 > 25
+        for: 2m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE write failure rate critical"
+          description: "{{ $value | printf \"%.1f\" }}% of CAPSULE writes are failing. CAPSULE service may be down."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-capsule-failure-modes"
+      
+      - alert: RimCapsuleServiceUnavailable
+        expr: rim_capsule_circuit_breaker_state{state="open"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE circuit breaker is OPEN"
+          description: "CAPSULE service is unavailable. Circuit breaker has tripped."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-capsule-failure-modes#fm-001-capsule-service-unavailable"
+      
+      # =============================================================
+      # Sync Lag Alerts
+      # =============================================================
+      
+      - alert: RimCapsuleSyncLagWarning
+        expr: avg(rim_capsule_sync_lag_seconds) > 300
+        for: 10m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE sync lag is elevated"
+          description: "Average sync lag is {{ $value | humanizeDuration }}. Some nodes may have stale CAPSULE data."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency#issue-3-capsule-sync-lag"
+      
+      - alert: RimCapsuleSyncLagCritical
+        expr: avg(rim_capsule_sync_lag_seconds) > 1800
+        for: 5m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-capsule
+        annotations:
+          summary: "RIM CAPSULE sync lag is critical"
+          description: "Average sync lag is {{ $value | humanizeDuration }}. Historical queries may be inconsistent."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency#issue-3-capsule-sync-lag"
+
+  - name: rim-consistency-alerts
+    rules:
+      # =============================================================
+      # Mesh Consistency Alerts
+      # =============================================================
+      
+      - alert: RimMeshConsistencyDegraded
+        expr: rim_mesh_consistency_score < 0.95
+        for: 10m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-mesh
+        annotations:
+          summary: "RIM mesh consistency score is degraded"
+          description: "Consistency score is {{ $value | printf \"%.2f\" }} (threshold: 0.95). Check for inconsistent nodes."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency"
+          dashboard: "https://grafana.butterfly.internal/d/rim-mesh-consistency"
+      
+      - alert: RimMeshConsistencyCritical
+        expr: rim_mesh_consistency_score < 0.90
+        for: 5m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-mesh
+        annotations:
+          summary: "RIM mesh consistency score is critical"
+          description: "Consistency score is {{ $value | printf \"%.2f\" }} (threshold: 0.90). Immediate investigation required."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency"
+      
+      - alert: RimMeshInconsistentNodesHigh
+        expr: rim_mesh_inconsistent_nodes_total > 20
+        for: 15m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-mesh
+        annotations:
+          summary: "High number of inconsistent RIM nodes"
+          description: "{{ $value }} nodes are inconsistent. Run consistency check."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency#common-issues"
+      
+      - alert: RimMeshBrokenRelationships
+        expr: rim_mesh_broken_relationships_total > 50
+        for: 15m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-mesh
+        annotations:
+          summary: "High number of broken relationships in RIM mesh"
+          description: "{{ $value }} broken relationships detected. Run repair procedure."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency#issue-2-broken-relationships"
+
+  - name: rim-identity-alerts
+    rules:
+      # =============================================================
+      # Identity Validation Alerts
+      # =============================================================
+      
+      - alert: RimIdempotencyCollisions
+        expr: increase(rim_identity_collision_total{type="idempotency"}[1h]) > 0
+        for: 1m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-identity
+        annotations:
+          summary: "RIM idempotency key collisions detected"
+          description: "{{ $value }} collision(s) detected in the last hour. Check for duplicate data."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-identity-troubleshooting#issue-3-idempotency-key-collision"
+      
+      - alert: RimIdempotencyCollisionsCritical
+        expr: increase(rim_identity_collision_total{type="idempotency"}[1h]) > 10
+        for: 5m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-identity
+        annotations:
+          summary: "High rate of RIM idempotency collisions"
+          description: "{{ $value }} collisions in the last hour. Possible data integrity issue."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-identity-troubleshooting#issue-3-idempotency-key-collision"
+      
+      - alert: RimIdentityViolations
+        expr: increase(rim_identity_violation_total[1h]) > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-identity
+        annotations:
+          summary: "RIM identity violations detected"
+          description: "{{ $value }} identity violations in the last hour. Check source systems."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-identity-troubleshooting"
+
+  - name: rim-contract-alerts
+    rules:
+      # =============================================================
+      # Schema & Contract Alerts
+      # =============================================================
+      
+      - alert: RimSchemaValidationFailures
+        expr: increase(rim_contract_validation_total{result="failure"}[1h]) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-contract
+        annotations:
+          summary: "RIM schema validation failures detected"
+          description: "{{ $value }} validation failures in the last hour. Check for schema mismatches."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-capsule-failure-modes#fm-004-schema-version-mismatch"
+      
+      - alert: RimSchemaValidationFailuresCritical
+        expr: |
+          (
+            increase(rim_contract_validation_total{result="failure"}[1h]) 
+            / increase(rim_contract_validation_total[1h])
+          ) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-contract
+        annotations:
+          summary: "RIM schema validation failure rate critical"
+          description: "{{ $value | printf \"%.1f\" }}% of validations failing. Schema contract may be broken."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-capsule-failure-modes#fm-004-schema-version-mismatch"
+      
+      - alert: RimSchemaDriftDetected
+        expr: increase(rim_schema_drift_detected_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-contract
+        annotations:
+          summary: "RIM schema drift detected"
+          description: "{{ $value }} schema drift event(s) detected. Review CAPSULE mapping."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-capsule-failure-modes#fm-004-schema-version-mismatch"
+      
+      - alert: RimSchemaVersionMismatch
+        expr: rim_schema_version_mismatch_total > 10
+        for: 30m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-contract
+        annotations:
+          summary: "RIM nodes with outdated schema versions"
+          description: "{{ $value }} nodes using outdated schema. Run migration."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency#issue-4-schema-divergence"
+
+  - name: rim-anomaly-alerts
+    rules:
+      # =============================================================
+      # Anomaly Detection Alerts
+      # =============================================================
+      
+      - alert: RimAnomalyBurstDetected
+        expr: increase(rim_anomaly_detected_total[15m]) > 20
+        for: 5m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-anomaly
+        annotations:
+          summary: "RIM anomaly burst detected"
+          description: "{{ $value }} anomalies detected in 15 minutes. Investigate mesh health."
+          dashboard: "https://grafana.butterfly.internal/d/rim-mesh-consistency"
+      
+      - alert: RimCriticalAnomalies
+        expr: rim_anomaly_active_total{severity="critical"} > 5
+        for: 5m
+        labels:
+          severity: critical
+          service: perception
+          component: rim-anomaly
+        annotations:
+          summary: "Critical RIM anomalies active"
+          description: "{{ $value }} critical anomalies are active. Review immediately."
+          dashboard: "https://grafana.butterfly.internal/d/rim-mesh-consistency"
+      
+      - alert: RimCoverageDropAnomaly
+        expr: increase(rim_anomaly_detected_total{type="COVERAGE_DROP"}[1h]) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: perception
+          component: rim-anomaly
+        annotations:
+          summary: "Multiple coverage drop anomalies detected"
+          description: "{{ $value }} coverage drop events. Data sources may be degraded."
+          runbook: "https://docs.butterfly.internal/runbooks/rim-mesh-consistency"

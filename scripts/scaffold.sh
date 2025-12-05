@@ -16,6 +16,8 @@
 #   test            Add test scaffolding (unit, integration, chaos)
 #   connector       [PERCEPTION] Add acquisition connector (route, processors, config)
 #   signal-detector [PERCEPTION] Add signal detector implementation
+#   reasoning-rule  [PERCEPTION] Add reasoning rule implementation
+#   scenario-type   [PERCEPTION] Add scenario type handler
 #   scenario        [PERCEPTION] Add scenario generation school
 #
 # Examples:
@@ -24,6 +26,8 @@
 #   ./scripts/scaffold.sh entity --service ODYSSEY --name Actor --table actors
 #   ./scripts/scaffold.sh connector --name WebScraper --type WEB_CRAWL
 #   ./scripts/scaffold.sh signal-detector --name Anomaly
+#   ./scripts/scaffold.sh reasoning-rule --name TemporalConstraint
+#   ./scripts/scaffold.sh scenario-type --name ContingencyPlan
 #   ./scripts/scaffold.sh scenario --name EmergingThreat --school PATTERN_MATCHING
 #
 # Related Epic: .github/dx-issues/epic-scaffolding-cli.md
@@ -102,6 +106,8 @@ COMMANDS:
     docs            Generate documentation from templates
     connector       [PERCEPTION] Add acquisition connector
     signal-detector [PERCEPTION] Add signal detector
+    reasoning-rule  [PERCEPTION] Add reasoning rule
+    scenario-type   [PERCEPTION] Add scenario type handler
     scenario        [PERCEPTION] Add scenario generation school
     help            Show this help message
 
@@ -1928,6 +1934,651 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
+# Command: reasoning-rule (PERCEPTION-specific)
+# -----------------------------------------------------------------------------
+
+cmd_reasoning_rule() {
+    local name=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$name" ]]; then
+        log_error "Rule name is required (--name)"
+        exit 1
+    fi
+    
+    local pascal_name=$(to_pascal_case "$name")
+    local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+    local name_camel=$(to_camel_case "$name")
+    
+    local base_package="com.z254.butterfly.perception.reasoning"
+    local base_path="${PROJECT_ROOT}/PERCEPTION/perception-reasoning/src/main/java/com/z254/butterfly/perception/reasoning"
+    local test_path="${PROJECT_ROOT}/PERCEPTION/perception-reasoning/src/test/java/com/z254/butterfly/perception/reasoning"
+    
+    local rule_file="${base_path}/rule/impl/${pascal_name}Rule.java"
+    local config_file="${base_path}/rule/impl/${pascal_name}RuleConfig.java"
+    local test_file="${test_path}/rule/impl/${pascal_name}RuleTest.java"
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create:"
+        echo "  - $rule_file"
+        echo "  - $config_file"
+        echo "  - $test_file"
+        return
+    fi
+    
+    mkdir -p "${base_path}/rule/impl"
+    mkdir -p "${test_path}/rule/impl"
+    
+    log_info "Generating ${pascal_name}Rule..."
+    
+    # Generate rule
+    cat > "$rule_file" << EOF
+package ${base_package}.rule.impl;
+
+import ${base_package}.ReasoningContext;
+import ${base_package}.rule.ReasoningRule;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+/**
+ * ${pascal_name} reasoning rule.
+ * <p>
+ * TODO: Describe what this rule evaluates and how it adjusts plausibility.
+ * </p>
+ *
+ * @see ${pascal_name}RuleConfig
+ */
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class ${pascal_name}Rule implements ReasoningRule {
+
+    private final MeterRegistry meterRegistry;
+
+    @Getter
+    @Setter
+    private ${pascal_name}RuleConfig config = new ${pascal_name}RuleConfig();
+
+    @Getter
+    @Setter
+    private boolean enabled = true;
+
+    // Metrics
+    private Counter applicationsCounter;
+
+    @Override
+    public String getName() {
+        return "${name_lower}";
+    }
+
+    @Override
+    public String getDescription() {
+        return "${pascal_name} reasoning rule - TODO: add description";
+    }
+
+    @Override
+    public int getPriority() {
+        return 100;  // Adjust as needed
+    }
+
+    @Override
+    public boolean appliesTo(String interpretation, ReasoningContext context) {
+        if (!enabled || interpretation == null || interpretation.isBlank()) {
+            return false;
+        }
+        // TODO: Implement applicability check
+        return true;
+    }
+
+    @Override
+    public double apply(String interpretation, double currentPlausibility, ReasoningContext context) {
+        getApplicationsCounter().increment();
+
+        log.debug("Applying ${name_lower} rule to: {}",
+            interpretation.substring(0, Math.min(100, interpretation.length())));
+
+        // TODO: Implement plausibility adjustment logic
+        // Example patterns:
+        // - Penalty: return Math.max(0.0, currentPlausibility - penalty);
+        // - Boost: return Math.min(1.0, currentPlausibility + boost);
+        // - Scale: return currentPlausibility * confidenceFactor;
+
+        return currentPlausibility;
+    }
+
+    private Counter getApplicationsCounter() {
+        if (applicationsCounter == null) {
+            applicationsCounter = Counter.builder("reasoning.${name_lower}.applications")
+                .description("Total ${name_lower} rule applications")
+                .register(meterRegistry);
+        }
+        return applicationsCounter;
+    }
+}
+EOF
+    log_success "Created: $rule_file"
+    
+    # Generate config
+    cat > "$config_file" << EOF
+package ${base_package}.rule.impl;
+
+import ${base_package}.rule.BaseRuleConfig;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+/**
+ * Configuration for ${pascal_name}Rule.
+ */
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class ${pascal_name}RuleConfig extends BaseRuleConfig {
+
+    /**
+     * Maximum penalty to apply (0.0 - 1.0).
+     */
+    private double maxPenalty = 0.5;
+
+    /**
+     * Maximum boost to apply (0.0 - 1.0).
+     */
+    private double maxBoost = 0.2;
+
+    /**
+     * Threshold for triggering the rule.
+     */
+    private double threshold = 0.5;
+
+    /**
+     * Whether to apply strict evaluation.
+     */
+    private boolean strictMode = false;
+}
+EOF
+    log_success "Created: $config_file"
+    
+    # Generate test
+    cat > "$test_file" << EOF
+package ${base_package}.rule.impl;
+
+import ${base_package}.ReasoningContext;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@DisplayName("${pascal_name}Rule")
+class ${pascal_name}RuleTest {
+
+    private SimpleMeterRegistry meterRegistry;
+    private ${pascal_name}Rule rule;
+
+    @BeforeEach
+    void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
+        rule = new ${pascal_name}Rule(meterRegistry);
+    }
+
+    @Nested
+    @DisplayName("appliesTo")
+    class AppliesTo {
+
+        @Test
+        @DisplayName("should not apply when disabled")
+        void shouldNotApplyWhenDisabled() {
+            rule.setEnabled(false);
+            var context = ReasoningContext.empty();
+
+            assertThat(rule.appliesTo("test interpretation", context)).isFalse();
+        }
+
+        @Test
+        @DisplayName("should not apply to empty interpretation")
+        void shouldNotApplyToEmptyInterpretation() {
+            var context = ReasoningContext.empty();
+
+            assertThat(rule.appliesTo("", context)).isFalse();
+            assertThat(rule.appliesTo(null, context)).isFalse();
+        }
+
+        @Test
+        @DisplayName("should apply to valid interpretation")
+        void shouldApplyToValidInterpretation() {
+            var context = ReasoningContext.empty();
+
+            assertThat(rule.appliesTo("valid interpretation", context)).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("apply")
+    class Apply {
+
+        @Test
+        @DisplayName("should return plausibility in valid range")
+        void shouldReturnValidPlausibility() {
+            var context = ReasoningContext.empty();
+            double initialPlausibility = 0.5;
+
+            double result = rule.apply("test interpretation", initialPlausibility, context);
+
+            assertThat(result).isBetween(0.0, 1.0);
+        }
+
+        @Test
+        @DisplayName("should record metrics")
+        void shouldRecordMetrics() {
+            var context = ReasoningContext.empty();
+
+            rule.apply("test interpretation", 0.5, context);
+
+            assertThat(meterRegistry.counter("reasoning.${name_lower}.applications").count())
+                .isGreaterThan(0);
+        }
+    }
+
+    @Test
+    @DisplayName("should return rule name")
+    void shouldReturnRuleName() {
+        assertThat(rule.getName()).isEqualTo("${name_lower}");
+    }
+
+    @Test
+    @DisplayName("should return description")
+    void shouldReturnDescription() {
+        assertThat(rule.getDescription()).isNotBlank();
+    }
+}
+EOF
+    log_success "Created: $test_file"
+    
+    log_success "Reasoning rule ${pascal_name} scaffolded successfully!"
+    log_info "Next steps:"
+    echo "  1. Implement appliesTo() logic in ${pascal_name}Rule"
+    echo "  2. Implement apply() logic for plausibility adjustment"
+    echo "  3. Add configuration properties to application.yml"
+    echo "  4. Write tests for your rule logic"
+    echo "  5. Document in PERCEPTION/docs/guides/ADDING_A_REASONING_RULE.md"
+}
+
+# -----------------------------------------------------------------------------
+# Command: scenario-type (PERCEPTION-specific)
+# -----------------------------------------------------------------------------
+
+cmd_scenario_type() {
+    local name=""
+    local dry_run=false
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -n|--name) name="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            *) log_error "Unknown option: $1"; exit 1 ;;
+        esac
+    done
+    
+    if [[ -z "$name" ]]; then
+        log_error "Handler name is required (--name)"
+        exit 1
+    fi
+    
+    local pascal_name=$(to_pascal_case "$name")
+    local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+    local name_upper=$(echo "$name" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+    local name_camel=$(to_camel_case "$name")
+    
+    local base_package="com.z254.butterfly.perception.scenarios"
+    local base_path="${PROJECT_ROOT}/PERCEPTION/perception-scenarios/src/main/java/com/z254/butterfly/perception/scenarios"
+    local test_path="${PROJECT_ROOT}/PERCEPTION/perception-scenarios/src/test/java/com/z254/butterfly/perception/scenarios"
+    
+    local handler_file="${base_path}/handler/impl/${pascal_name}Handler.java"
+    local config_file="${base_path}/handler/impl/${pascal_name}Config.java"
+    local test_file="${test_path}/handler/impl/${pascal_name}HandlerTest.java"
+    
+    if [[ "$dry_run" == true ]]; then
+        log_info "[DRY RUN] Would create:"
+        echo "  - $handler_file"
+        echo "  - $config_file"
+        echo "  - $test_file"
+        return
+    fi
+    
+    mkdir -p "${base_path}/handler/impl"
+    mkdir -p "${test_path}/handler/impl"
+    
+    log_info "Generating ${pascal_name}Handler..."
+    
+    # Generate handler
+    cat > "$handler_file" << EOF
+package ${base_package}.handler.impl;
+
+import ${base_package}.handler.ProcessingContext;
+import ${base_package}.handler.ScenarioTypeHandler;
+import ${base_package}.handler.ValidationResult;
+import ${base_package}.model.ScenarioType;
+import ${base_package}.model.StackableScenario;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.time.Instant;
+import java.util.*;
+
+/**
+ * Handler for ${name_upper} scenario types.
+ * <p>
+ * TODO: Describe what this handler validates and processes.
+ * </p>
+ *
+ * @see ${pascal_name}Config
+ */
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class ${pascal_name}Handler implements ScenarioTypeHandler {
+
+    private final MeterRegistry meterRegistry;
+
+    @Getter
+    @Setter
+    private ${pascal_name}Config config = new ${pascal_name}Config();
+
+    // Metrics
+    private Counter processedCounter;
+    private Counter validationFailedCounter;
+
+    @Override
+    public ScenarioType getType() {
+        // TODO: Return the appropriate ScenarioType enum value
+        // You may need to add ${name_upper} to the ScenarioType enum first
+        return ScenarioType.OPERATIONAL;  // Placeholder - update this
+    }
+
+    @Override
+    public ValidationResult validate(StackableScenario scenario) {
+        List<String> errors = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+
+        // TODO: Implement validation logic
+        // Example validations:
+        // - Check required fields in metadata
+        // - Validate confidence thresholds
+        // - Check for mandatory relationships
+
+        Map<String, Object> metadata = scenario.getMetadata();
+        for (String field : config.getRequiredFields()) {
+            if (!metadata.containsKey(field) || metadata.get(field) == null) {
+                errors.add("Missing required field: " + field);
+            }
+        }
+
+        if (!errors.isEmpty()) {
+            getValidationFailedCounter().increment();
+        }
+
+        return ValidationResult.builder()
+            .valid(errors.isEmpty())
+            .errors(errors)
+            .warnings(warnings)
+            .build();
+    }
+
+    @Override
+    public StackableScenario process(StackableScenario scenario, ProcessingContext context) {
+        getProcessedCounter().increment();
+
+        log.debug("Processing ${name_lower} scenario: {}", scenario.getId());
+
+        // Create mutable copy
+        StackableScenario processed = scenario.toBuilder().build();
+        Map<String, Object> metadata = new HashMap<>(processed.getMetadata());
+
+        // Add processing metadata
+        metadata.put("processedAt", Instant.now());
+        metadata.put("processedBy", getType().name());
+
+        // TODO: Add type-specific processing
+        // Example: Calculate scores, add derived fields, etc.
+
+        processed.setMetadata(metadata);
+        return processed;
+    }
+
+    @Override
+    public Map<String, Object> enrich(StackableScenario scenario) {
+        Map<String, Object> enrichment = new HashMap<>();
+
+        // TODO: Add type-specific enrichment
+        enrichment.put("scenarioCategory", "${name_lower}");
+        enrichment.put("handlerVersion", "1.0");
+
+        return enrichment;
+    }
+
+    @Override
+    public double adjustConfidence(StackableScenario scenario) {
+        double confidence = scenario.getConfidence();
+
+        // TODO: Apply type-specific confidence adjustments
+        // Example: Boost for validated scenarios, penalize for stale data
+
+        return confidence;
+    }
+
+    // ==========================================================================
+    // Metrics
+    // ==========================================================================
+
+    private Counter getProcessedCounter() {
+        if (processedCounter == null) {
+            processedCounter = Counter.builder("scenarios.${name_lower}.processed")
+                .description("Total ${name_lower} scenarios processed")
+                .register(meterRegistry);
+        }
+        return processedCounter;
+    }
+
+    private Counter getValidationFailedCounter() {
+        if (validationFailedCounter == null) {
+            validationFailedCounter = Counter.builder("scenarios.${name_lower}.validation_failed")
+                .description("Total ${name_lower} scenario validation failures")
+                .register(meterRegistry);
+        }
+        return validationFailedCounter;
+    }
+}
+EOF
+    log_success "Created: $handler_file"
+    
+    # Generate config
+    cat > "$config_file" << EOF
+package ${base_package}.handler.impl;
+
+import ${base_package}.handler.BaseHandlerConfig;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+import java.util.List;
+
+/**
+ * Configuration for ${pascal_name}Handler.
+ */
+@Data
+@EqualsAndHashCode(callSuper = true)
+public class ${pascal_name}Config extends BaseHandlerConfig {
+
+    /**
+     * Required metadata fields for this scenario type.
+     */
+    private List<String> requiredFields = List.of();
+
+    /**
+     * Minimum confidence threshold for processing.
+     */
+    private double minConfidence = 0.5;
+
+    /**
+     * Whether to require approval before activation.
+     */
+    private boolean requiresApproval = false;
+
+    /**
+     * Maximum days until scenario review is required.
+     */
+    private int maxDaysUntilReview = 90;
+}
+EOF
+    log_success "Created: $config_file"
+    
+    # Generate test
+    cat > "$test_file" << EOF
+package ${base_package}.handler.impl;
+
+import ${base_package}.handler.ProcessingContext;
+import ${base_package}.handler.ValidationResult;
+import ${base_package}.model.StackableScenario;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@DisplayName("${pascal_name}Handler")
+class ${pascal_name}HandlerTest {
+
+    private SimpleMeterRegistry meterRegistry;
+    private ${pascal_name}Handler handler;
+
+    @BeforeEach
+    void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
+        handler = new ${pascal_name}Handler(meterRegistry);
+    }
+
+    @Test
+    @DisplayName("should return scenario type")
+    void shouldReturnScenarioType() {
+        assertThat(handler.getType()).isNotNull();
+    }
+
+    @Nested
+    @DisplayName("validate")
+    class Validate {
+
+        @Test
+        @DisplayName("should pass validation for valid scenario")
+        void shouldPassForValidScenario() {
+            StackableScenario scenario = createValidScenario();
+
+            ValidationResult result = handler.validate(scenario);
+
+            assertThat(result.isValid()).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("process")
+    class Process {
+
+        @Test
+        @DisplayName("should add processing metadata")
+        void shouldAddProcessingMetadata() {
+            StackableScenario scenario = createValidScenario();
+
+            StackableScenario processed = handler.process(scenario, ProcessingContext.empty());
+
+            assertThat(processed.getMetadata().get("processedAt")).isNotNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("enrich")
+    class Enrich {
+
+        @Test
+        @DisplayName("should add enrichment data")
+        void shouldAddEnrichmentData() {
+            StackableScenario scenario = createValidScenario();
+
+            Map<String, Object> enrichment = handler.enrich(scenario);
+
+            assertThat(enrichment).isNotEmpty();
+            assertThat(enrichment.get("scenarioCategory")).isEqualTo("${name_lower}");
+        }
+    }
+
+    @Nested
+    @DisplayName("adjustConfidence")
+    class AdjustConfidence {
+
+        @Test
+        @DisplayName("should return valid confidence")
+        void shouldReturnValidConfidence() {
+            StackableScenario scenario = createValidScenario();
+
+            double adjusted = handler.adjustConfidence(scenario);
+
+            assertThat(adjusted).isBetween(0.0, 1.0);
+        }
+    }
+
+    // ==========================================================================
+    // Test Helpers
+    // ==========================================================================
+
+    private StackableScenario createValidScenario() {
+        Map<String, Object> metadata = new HashMap<>();
+        // TODO: Add required metadata fields
+
+        return StackableScenario.builder()
+            .id("scenario-test-123")
+            .title("Test ${pascal_name} Scenario")
+            .description("A test scenario for ${pascal_name}Handler")
+            .confidence(0.85)
+            .impactScore(0.6)
+            .metadata(metadata)
+            .build();
+    }
+}
+EOF
+    log_success "Created: $test_file"
+    
+    log_success "Scenario type handler ${pascal_name} scaffolded successfully!"
+    log_info "Next steps:"
+    echo "  1. Add ${name_upper} to ScenarioType enum (if new type)"
+    echo "  2. Update getType() to return the correct ScenarioType"
+    echo "  3. Implement validate() with type-specific rules"
+    echo "  4. Implement process() with type-specific processing"
+    echo "  5. Add configuration properties to application.yml"
+    echo "  6. Write tests for your handler logic"
+    echo "  7. Document in PERCEPTION/docs/guides/ADDING_A_SCENARIO_TYPE.md"
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 
@@ -1950,6 +2601,8 @@ main() {
         docs)            cmd_docs "$@" ;;
         connector)       cmd_connector "$@" ;;
         signal-detector) cmd_signal_detector "$@" ;;
+        reasoning-rule)  cmd_reasoning_rule "$@" ;;
+        scenario-type)   cmd_scenario_type "$@" ;;
         scenario)        cmd_scenario "$@" ;;
         help|--help|-h)  show_help ;;
         *)

@@ -22,6 +22,11 @@ public class SecretsConfigurationProperties {
     private String provider = "inmemory";
 
     /**
+     * Base path for secrets in the provider (used for connector credentials).
+     */
+    private String basePath = "butterfly";
+
+    /**
      * Environment variable prefix used when resolving API key secrets.
      */
     private String envPrefix = "BUTTERFLY";
@@ -56,6 +61,14 @@ public class SecretsConfigurationProperties {
 
     public void setProvider(String provider) {
         this.provider = provider;
+    }
+
+    public String getBasePath() {
+        return basePath;
+    }
+
+    public void setBasePath(String basePath) {
+        this.basePath = basePath;
     }
 
     public String getEnvPrefix() {
