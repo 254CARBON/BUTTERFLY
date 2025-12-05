@@ -220,22 +220,17 @@ public class OllamaProvider implements LLMProvider {
         if (message.getToolCalls() != null && !message.getToolCalls().isEmpty()) {
             List<Map<String, Object>> toolCalls = message.getToolCalls().stream()
                     .map(tc -> {
+                        Map<String, Object> functionMap = new HashMap<>();
+                        Map<String, Object> functionPayload = new HashMap<>();
+                        functionPayload.put("name", tc.getFunction().getName());
                         try {
-                            return Map.of(
-                                    "function", Map.of(
-                                            "name", tc.getFunction().getName(),
-                                            "arguments", objectMapper.readValue(
-                                                    tc.getFunction().getArguments(), Map.class)
-                                    )
-                            );
+                            functionPayload.put("arguments",
+                                    objectMapper.readValue(tc.getFunction().getArguments(), Map.class));
                         } catch (JsonProcessingException e) {
-                            return Map.of(
-                                    "function", Map.of(
-                                            "name", tc.getFunction().getName(),
-                                            "arguments", Map.of()
-                                    )
-                            );
+                            functionPayload.put("arguments", Map.of());
                         }
+                        functionMap.put("function", functionPayload);
+                        return functionMap;
                     })
                     .collect(Collectors.toList());
             msg.put("tool_calls", toolCalls);

@@ -1,13 +1,12 @@
 package com.z254.butterfly.cortex.config;
 
+import com.z254.butterfly.cortex.api.websocket.AgentWebSocketHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
-import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.server.support.WebSocketHandlerAdapter;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -23,24 +22,10 @@ public class WebSocketConfig {
     }
 
     @Bean
-    public HandlerMapping webSocketHandlerMapping(
-            Map<String, WebSocketHandler> webSocketHandlers) {
-        Map<String, WebSocketHandler> map = new HashMap<>();
-        
-        // Register WebSocket handlers
-        webSocketHandlers.forEach((path, handler) -> {
-            map.put(path, handler);
-        });
-
+    public HandlerMapping webSocketHandlerMapping(AgentWebSocketHandler agentWebSocketHandler) {
         SimpleUrlHandlerMapping handlerMapping = new SimpleUrlHandlerMapping();
-        handlerMapping.setOrder(1);
-        handlerMapping.setUrlMap(map);
+        handlerMapping.setOrder(-1);
+        handlerMapping.setUrlMap(Map.of("/ws/agents", agentWebSocketHandler));
         return handlerMapping;
-    }
-
-    @Bean
-    public Map<String, WebSocketHandler> webSocketHandlers() {
-        // Handlers will be added by AgentWebSocketHandler component
-        return new HashMap<>();
     }
 }

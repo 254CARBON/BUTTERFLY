@@ -52,10 +52,10 @@ public class AgentWebSocketHandler implements WebSocketHandler {
         log.info("WebSocket session opened: {}", sessionId);
 
         // Handle incoming messages
-        Flux<Void> input = session.receive()
+        Mono<Void> input = session.receive()
                 .doOnNext(msg -> log.debug("Received message: {}", msg.getPayloadAsText()))
                 .flatMap(msg -> handleMessage(state, msg))
-                .then(Mono.empty());
+                .then();
 
         // Send outgoing messages
         Flux<WebSocketMessage> output = state.getOutboundSink().asFlux()

@@ -3,13 +3,13 @@ package com.z254.butterfly.cortex.client.impl;
 import com.z254.butterfly.cortex.client.PlatoGovernanceClient;
 import com.z254.butterfly.cortex.config.CortexProperties;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
-import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -46,7 +46,7 @@ public class WebClientPlatoGovernanceClient implements PlatoGovernanceClient {
 
     @Override
     @CircuitBreaker(name = "plato")
-    @Retry(name = "llm")
+    @io.github.resilience4j.retry.annotation.Retry(name = "llm")
     public Mono<PolicyEvaluation> evaluatePolicy(PolicyEvaluationRequest request) {
         if (stubMode) {
             return Mono.just(new PolicyEvaluation(
@@ -70,7 +70,7 @@ public class WebClientPlatoGovernanceClient implements PlatoGovernanceClient {
 
     @Override
     @CircuitBreaker(name = "plato")
-    @Retry(name = "llm")
+    @io.github.resilience4j.retry.annotation.Retry(name = "llm")
     public Mono<PlanSubmission> submitPlan(PlanSubmissionRequest request) {
         if (stubMode) {
             String planId = "stub-plan-" + System.currentTimeMillis();
@@ -146,10 +146,9 @@ public class WebClientPlatoGovernanceClient implements PlatoGovernanceClient {
                             status.updatedAt()
                     ));
                 })
-                .retryWhen(reactor.util.retry.Retry.backoff(config.getApprovalPollMaxRetries(), 
-                        Duration.ofSeconds(5))
+                .retryWhen(Retry.backoff(config.getApprovalPollMaxRetries(), Duration.ofSeconds(5))
                         .maxBackoff(Duration.ofMinutes(1))
-                        .filter(e -> e.getMessage().contains("pending")))
+                        .filter(e -> e.getMessage() != null && e.getMessage().contains("pending")))
                 .timeout(config.getApprovalTimeout());
     }
 

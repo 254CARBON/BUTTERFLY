@@ -29,7 +29,7 @@ public class AgentTaskConsumer {
     private final AgentService agentService;
     private final AgentResultProducer resultProducer;
     private final ReactiveRedisTemplate<String, String> redisTemplate;
-    private final CortexProperties.KafkaTopicsProperties topics;
+    private final CortexProperties.KafkaProperties.TopicProperties topics;
     private final Counter taskConsumedCounter;
     private final Counter taskSuccessCounter;
     private final Counter taskFailureCounter;
@@ -54,8 +54,8 @@ public class AgentTaskConsumer {
     }
 
     @KafkaListener(
-            topics = "${cortex.kafka.topics.tasks}",
-            groupId = "${cortex.kafka.consumer-group}",
+            topics = "${cortex.kafka.topics.agent-tasks}",
+            groupId = "${spring.kafka.consumer.group-id:cortex-service}",
             containerFactory = "kafkaListenerContainerFactory"
     )
     public void consume(ConsumerRecord<String, Map<String, Object>> record, Acknowledgment ack) {

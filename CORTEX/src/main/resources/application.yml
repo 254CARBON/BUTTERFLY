@@ -123,8 +123,10 @@ cortex:
       output-validation-enabled: true
     
     quotas:
-      max-tasks-per-user: 100
-      max-tasks-per-namespace: 1000
+      max-tasks-per-user-per-day: 100
+      max-tasks-per-agent-per-day: 500
+      max-tasks-per-namespace-per-day: 1000
+      max-requests-per-minute: 30
       max-concurrent-tasks: 10
       quota-window: 1h
     
@@ -133,6 +135,10 @@ cortex:
       default-timeout: 30s
       max-concurrent-calls: 5
       max-calls-per-task: 20
+      max-consecutive-same-tool-calls: 3
+      max-parameter-count: 10
+      max-parameter-size: 2048
+      high-risk-timeout: 15s
       mock-external-calls: false
 
   agent:
@@ -180,6 +186,8 @@ cortex:
       timeout: 30s
       max-retries: 3
       circuit-breaker-enabled: true
+      approval-poll-max-retries: 12
+      approval-timeout: 10m
     
     capsule:
       base-url: ${CAPSULE_URL:http://localhost:8081}

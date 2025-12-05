@@ -115,9 +115,9 @@ public class ToolSandbox {
         
         // Check total calls
         int totalCalls = usage.getTotalCalls();
-        if (totalCalls >= config.getMaxToolCallsPerTask()) {
+        if (totalCalls >= config.getMaxCallsPerTask()) {
             return SandboxCheckResult.denied(
-                    "Maximum tool calls per task reached: " + config.getMaxToolCallsPerTask());
+                    "Maximum tool calls per task reached: " + config.getMaxCallsPerTask());
         }
 
         // Check consecutive calls to same tool
@@ -128,7 +128,7 @@ public class ToolSandbox {
                     config.getMaxConsecutiveSameToolCalls());
         }
 
-        return SandboxCheckResult.allowed(config.getMaxToolCallsPerTask() - totalCalls);
+        return SandboxCheckResult.allowed(config.getMaxCallsPerTask() - totalCalls);
     }
 
     /**

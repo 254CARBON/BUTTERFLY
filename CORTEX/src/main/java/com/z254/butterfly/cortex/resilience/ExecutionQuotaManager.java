@@ -38,7 +38,7 @@ public class ExecutionQuotaManager {
             CortexProperties cortexProperties,
             MeterRegistry meterRegistry) {
         this.redisTemplate = redisTemplate;
-        this.config = cortexProperties.getSafety().getQuota();
+        this.config = cortexProperties.getSafety().getQuotas();
         
         this.quotaExceededCounter = Counter.builder("cortex.quota.exceeded").register(meterRegistry);
         this.quotaWarningCounter = Counter.builder("cortex.quota.warning").register(meterRegistry);

@@ -141,8 +141,10 @@ public class CortexProperties {
 
         @Data
         public static class QuotaProperties {
-            private int maxTasksPerUser = 100;
-            private int maxTasksPerNamespace = 1000;
+            private int maxTasksPerUserPerDay = 100;
+            private int maxTasksPerAgentPerDay = 500;
+            private int maxTasksPerNamespacePerDay = 1000;
+            private int maxRequestsPerMinute = 30;
             private int maxConcurrentTasks = 10;
             private Duration quotaWindow = Duration.ofHours(1);
         }
@@ -153,6 +155,10 @@ public class CortexProperties {
             private Duration defaultTimeout = Duration.ofSeconds(30);
             private int maxConcurrentCalls = 5;
             private int maxCallsPerTask = 20;
+            private int maxConsecutiveSameToolCalls = 3;
+            private int maxParameterCount = 10;
+            private int maxParameterSize = 2048;
+            private Duration highRiskTimeout = Duration.ofSeconds(15);
             private boolean mockExternalCalls = false;
         }
     }
@@ -233,6 +239,8 @@ public class CortexProperties {
             private Duration timeout = Duration.ofSeconds(30);
             private int maxRetries = 3;
             private boolean circuitBreakerEnabled = true;
+            private int approvalPollMaxRetries = 12;
+            private Duration approvalTimeout = Duration.ofMinutes(5);
         }
 
         @Data

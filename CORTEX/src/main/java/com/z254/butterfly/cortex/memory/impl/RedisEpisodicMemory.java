@@ -98,7 +98,7 @@ public class RedisEpisodicMemory implements EpisodicMemory {
                 .size(streamKey)
                 .flatMap(sizeBefore -> redisTemplate.execute(connection ->
                         connection.streamCommands().xTrim(
-                                streamKey.getBytes(),
+                                java.nio.ByteBuffer.wrap(streamKey.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                                 minId,
                                 true  // approximate
                         ))

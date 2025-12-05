@@ -167,12 +167,22 @@ public class Agent {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class GovernanceConfig {
+        @Builder.Default
+        private boolean enabled = true;
         private boolean policyCheckEnabled;
         private Set<String> policyIds;
         private boolean approvalRequired;
         private String approvalLevel;
         private boolean auditEnabled;
         private Double maxRiskScore;
+        private String defaultPolicyId;
+        @Builder.Default
+        private boolean requireApprovalForTools = false;
+        private Map<String, String> toolPolicies;
+        private Set<String> highRiskTools;
+        @Builder.Default
+        private boolean outputValidationEnabled = false;
+        private String outputPolicyId;
     }
 
     /**

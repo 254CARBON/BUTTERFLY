@@ -83,7 +83,7 @@ public interface AgentTool {
      * @return validation result
      */
     default Mono<ValidationResult> validate(Map<String, Object> parameters) {
-        return Mono.just(ValidationResult.valid());
+        return Mono.just(ValidationResult.success());
     }
 
     /**
@@ -103,11 +103,11 @@ public interface AgentTool {
             boolean valid,
             String message
     ) {
-        public static ValidationResult valid() {
+        public static ValidationResult success() {
             return new ValidationResult(true, null);
         }
 
-        public static ValidationResult invalid(String message) {
+        public static ValidationResult failure(String message) {
             return new ValidationResult(false, message);
         }
     }

@@ -24,7 +24,7 @@ import java.util.concurrent.CompletableFuture;
 public class AgentResultProducer {
 
     private final KafkaTemplate<String, Object> kafkaTemplate;
-    private final CortexProperties.KafkaTopicsProperties topics;
+    private final CortexProperties.KafkaProperties.TopicProperties topics;
     private final Counter resultProducedCounter;
     private final Counter thoughtProducedCounter;
 
@@ -45,8 +45,8 @@ public class AgentResultProducer {
     public void publishResult(AgentResult result) {
         Map<String, Object> message = mapResult(result);
         
-        CompletableFuture<SendResult<String, Object>> future = 
-                kafkaTemplate.send(topics.getResults(), result.getTaskId(), message);
+        CompletableFuture<SendResult<String, Object>> future =
+                kafkaTemplate.send(topics.getAgentResults(), result.getTaskId(), message);
         
         future.whenComplete((sendResult, ex) -> {
             if (ex != null) {
@@ -68,7 +68,7 @@ public class AgentResultProducer {
         Map<String, Object> message = mapThought(thought);
         
         CompletableFuture<SendResult<String, Object>> future =
-                kafkaTemplate.send(topics.getThoughts(), thought.getTaskId(), message);
+                kafkaTemplate.send(topics.getAgentThoughts(), thought.getTaskId(), message);
         
         future.whenComplete((sendResult, ex) -> {
             if (ex != null) {
@@ -101,7 +101,6 @@ public class AgentResultProducer {
         message.put("durationMs", result.getDuration() != null ? result.getDuration().toMillis() : 0);
         message.put("startedAt", result.getStartedAt() != null ? result.getStartedAt().toEpochMilli() : 0);
         message.put("completedAt", result.getCompletedAt() != null ? result.getCompletedAt().toEpochMilli() : Instant.now().toEpochMilli());
-        message.put("capsuleId", result.getCapsuleId());
         
         return message;
     }
