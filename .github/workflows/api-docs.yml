@@ -71,6 +71,12 @@ jobs:
           - name: synapse
             path: SYNAPSE
             port: 8086
+          - name: cortex
+            path: CORTEX
+            port: 8087
+          - name: aurora
+            path: AURORA
+            port: 8088
 
     steps:
       - name: Checkout code
@@ -179,6 +185,8 @@ jobs:
               | **PLATO** | AI reasoning & LLM orchestration | [View Spec](./plato-openapi.yaml) |
               | **NEXUS** | Authentication & authorization | [View Spec](./nexus-openapi.yaml) |
               | **SYNAPSE** | External system connector mesh | [View Spec](./synapse-openapi.yaml) |
+              | **CORTEX** | AI Agent orchestration layer | [View Spec](./cortex-openapi.yaml) |
+              | **AURORA** | Self-healing and remediation engine | [View Spec](./aurora-openapi.yaml) |
               
               ## Quick Links
               
@@ -210,6 +218,10 @@ jobs:
               description: Authentication and identity
             - name: SYNAPSE
               description: External system integration
+            - name: CORTEX
+              description: AI Agent orchestration and LLM abstraction
+            - name: AURORA
+              description: Self-healing and automated remediation
           paths: {}
           EOF
 
@@ -344,6 +356,16 @@ jobs:
                   <p>External system connector mesh and integration hub</p>
                   <a href="./synapse.html">View API Docs →</a>
                 </div>
+                <div class="service-card">
+                  <h2>CORTEX</h2>
+                  <p>AI Agent orchestration layer with LLM abstraction and memory systems</p>
+                  <a href="./cortex.html">View API Docs →</a>
+                </div>
+                <div class="service-card">
+                  <h2>AURORA</h2>
+                  <p>Self-healing and automated remediation engine</p>
+                  <a href="./aurora.html">View API Docs →</a>
+                </div>
               </div>
             </div>
           </body>
@@ -405,7 +427,7 @@ jobs:
     strategy:
       matrix:
         language: [typescript, python]
-        service: [capsule, odyssey, perception, plato, nexus, synapse]
+        service: [capsule, odyssey, perception, plato, nexus, synapse, cortex, aurora]
     
     steps:
       - name: Checkout code
